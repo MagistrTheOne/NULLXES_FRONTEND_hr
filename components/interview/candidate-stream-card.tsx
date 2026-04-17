@@ -12,6 +12,7 @@ import {
   useCallStateHooks
 } from "@stream-io/video-react-sdk";
 import { releaseCandidateAdmission, sendRealtimeEvent } from "@/lib/api";
+import { formatCandidateMeetingLobbyMessage, isMeetingNotYetOpen } from "@/lib/meeting-at-guard";
 import type { InterviewStartContext, InterviewStartResult } from "@/hooks/use-interview-session";
 import { Button } from "@/components/ui/button";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
@@ -161,6 +162,10 @@ export function CandidateStreamCard({
   }, [call, client, meetingId]);
 
   const startStream = useCallback(async () => {
+    if (isMeetingNotYetOpen(meetingAt)) {
+      setError(formatCandidateMeetingLobbyMessage(meetingAt!.trim()));
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -230,21 +235,27 @@ export function CandidateStreamCard({
     if (!enabled || !meetingId || !sessionId || call || busy) {
       return;
     }
+    if (isMeetingNotYetOpen(meetingAt)) {
+      return;
+    }
     const autoJoinKey = `${meetingId}:${sessionId}`;
     if (autoJoinAttemptForRef.current === autoJoinKey) {
       return;
     }
     autoJoinAttemptForRef.current = autoJoinKey;
     void startStream();
-  }, [busy, call, enabled, meetingId, sessionId, startStream]);
+  }, [busy, call, enabled, meetingAt, meetingId, sessionId, startStream]);
 
   useEffect(() => {
     if (!autoConnectOnEntry || autoEntryAttemptRef.current || call || busy) {
       return;
     }
+    if (isMeetingNotYetOpen(meetingAt)) {
+      return;
+    }
     autoEntryAttemptRef.current = true;
     void startStream();
-  }, [autoConnectOnEntry, busy, call, startStream]);
+  }, [autoConnectOnEntry, busy, call, meetingAt, startStream]);
 
   useEffect(() => {
     if (enabled && meetingId && sessionId) {
@@ -282,7 +293,17 @@ export function CandidateStreamCard({
 
           {!call && showControls ? (
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" className="rounded-full px-3" onClick={startStream} disabled={busy}>
+              <Button
+                size="sm"
+                className="rounded-full px-3"
+                onClick={() => void startStream()}
+                disabled={busy || isMeetingNotYetOpen(meetingAt)}
+                title={
+                  isMeetingNotYetOpen(meetingAt) && meetingAt?.trim()
+                    ? formatCandidateMeetingLobbyMessage(meetingAt.trim())
+                    : undefined
+                }
+              >
                 Подключиться
               </Button>
             </div>

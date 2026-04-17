@@ -23,6 +23,7 @@ import {
   type ObserverControlState
 } from "@/lib/observer-control";
 import { extractEntryCandidateFromPastedUrl, withCandidateEntryQuery } from "@/lib/candidate-entry-url";
+import { formatCandidateMeetingLobbyMessage } from "@/lib/meeting-at-guard";
 import { AvatarStreamCard } from "./avatar-stream-card";
 import { CandidateStreamCard } from "./candidate-stream-card";
 import { InterviewsTablePreview } from "./interviews-table-preview";
@@ -354,7 +355,7 @@ export function InterviewShell() {
       }
     }
     if (meetingAtRaw && !meetingPassed) {
-      return `Встреча станет доступна с ${new Date(meetingAtRaw).toLocaleString("ru-RU")}.`;
+      return formatCandidateMeetingLobbyMessage(meetingAtRaw);
     }
     if (js !== "received" && js !== "pending") {
       return "Ожидайте, пока интервью будет готово к старту (статус JobAI должен позволять подключение).";
