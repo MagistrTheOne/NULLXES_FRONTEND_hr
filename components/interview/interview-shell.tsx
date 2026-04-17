@@ -209,8 +209,10 @@ export function InterviewShell() {
 
   const recoveredMeetingId =
     meetingId ?? selectedRow?.nullxesMeetingId ?? selectedInterviewDetailMatched?.projection.nullxesMeetingId ?? null;
-  const recoveredSessionId =
+  const recoveredSessionIdRaw =
     sessionId ?? selectedRow?.sessionId ?? selectedInterviewDetailMatched?.projection.sessionId ?? null;
+  const recoveredSessionId =
+    typeof recoveredSessionIdRaw === "string" && recoveredSessionIdRaw.trim() ? recoveredSessionIdRaw.trim() : null;
   const recoveredRuntimeActive =
     (selectedRow?.nullxesStatus ?? selectedInterviewDetailMatched?.projection.nullxesStatus) === "in_meeting";
   const selectedNullxesStatus = selectedRow?.nullxesStatus ?? selectedInterviewDetailMatched?.projection.nullxesStatus;
@@ -758,7 +760,7 @@ export function InterviewShell() {
           sessionId={recoveredSessionId}
           jobAiId={selectedRow?.jobAiId}
           companyName={selectedRow?.companyName}
-          meetingAt={selectedRow?.meetingAt}
+          meetingAt={selectedInterviewDetailMatched?.interview.meetingAt ?? selectedRow?.meetingAt}
           prototypeEntryUrl={
             selectedRow && origin ? toAbsoluteUrl(selectedCandidateEntryPath, origin) : undefined
           }
@@ -767,7 +769,7 @@ export function InterviewShell() {
           onStart={() => {
             void (async () => {
               let contextForStart = interviewStartContext;
-              const activeInterviewId = selectedRow?.jobAiId;
+              const activeInterviewId = selectedInterviewId ?? selectedRow?.jobAiId ?? undefined;
               if (
                 activeInterviewId &&
                 (!selectedInterviewDetailMatched ||
@@ -808,7 +810,7 @@ export function InterviewShell() {
               await start({
                 triggerSource: "manual_start_button",
                 interviewId: activeInterviewId,
-                meetingAt: selectedRow?.meetingAt,
+                meetingAt: selectedInterviewDetailMatched?.interview.meetingAt ?? selectedRow?.meetingAt,
                 interviewContext: contextForStart
               });
             })();
@@ -820,7 +822,7 @@ export function InterviewShell() {
           startDisabled={
             phase === "connected" ||
             busy ||
-            !selectedRow ||
+            !(selectedInterviewId ?? selectedRow?.jobAiId) ||
             completedInterviewLocked ||
             (HARD_CONTEXT_GUARD_ENABLED && !contextHardReady)
           }

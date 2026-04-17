@@ -232,19 +232,21 @@ export function CandidateStreamCard({
   }, [getParticipantId, interviewContext, interviewId, meetingAt, meetingId, onEnsureInterviewStart, participantName, sessionId]);
 
   useEffect(() => {
-    if (!enabled || !meetingId || !sessionId || call || busy) {
+    // Match HR avatar card: join Stream as soon as meeting exists + session is connected.
+    // Do not require `sessionId` here — it can lag behind hook state and would block auto-join forever.
+    if (!enabled || !meetingId || call || busy) {
       return;
     }
     if (isMeetingNotYetOpen(meetingAt)) {
       return;
     }
-    const autoJoinKey = `${meetingId}:${sessionId}`;
+    const autoJoinKey = meetingId;
     if (autoJoinAttemptForRef.current === autoJoinKey) {
       return;
     }
     autoJoinAttemptForRef.current = autoJoinKey;
     void startStream();
-  }, [busy, call, enabled, meetingAt, meetingId, sessionId, startStream]);
+  }, [busy, call, enabled, meetingAt, meetingId, startStream]);
 
   useEffect(() => {
     if (!autoConnectOnEntry || autoEntryAttemptRef.current || call || busy) {
@@ -258,11 +260,11 @@ export function CandidateStreamCard({
   }, [autoConnectOnEntry, busy, call, meetingAt, startStream]);
 
   useEffect(() => {
-    if (enabled && meetingId && sessionId) {
+    if (enabled && meetingId) {
       return;
     }
     void disconnectStream();
-  }, [disconnectStream, enabled, meetingId, sessionId]);
+  }, [disconnectStream, enabled, meetingId]);
 
   const handleLeaveFromControls = useCallback(
     async (err?: Error) => {
