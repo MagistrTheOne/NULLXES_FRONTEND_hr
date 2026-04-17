@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -61,11 +62,25 @@ function resolveNullxesBadge(row: InterviewListRow): { key: string; label: strin
   }
 }
 
-function openPath(path: string): void {
+function navigateSameOrigin(router: ReturnType<typeof useRouter>, path: string): void {
   if (typeof window === "undefined") {
     return;
   }
-  window.open(`${window.location.origin}${path}`, "_blank", "noopener,noreferrer");
+  if (/^https?:\/\//i.test(path)) {
+    try {
+      const url = new URL(path);
+      if (url.origin === window.location.origin) {
+        void router.push(`${url.pathname}${url.search}${url.hash}`);
+        return;
+      }
+    } catch {
+      // fall through
+    }
+    window.location.assign(path);
+    return;
+  }
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  void router.push(normalized);
 }
 
 function copyText(text: string): void {
@@ -138,6 +153,7 @@ export function InterviewsTablePreview({
   onSelect,
   onPageChange
 }: InterviewsTablePreviewProps) {
+  const router = useRouter();
   const showSpectatorActions = process.env.NEXT_PUBLIC_ENABLE_SPECTATOR !== "0";
   const showInternalDebugUi = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
   const [refOpen, setRefOpen] = useState(false);
@@ -285,14 +301,18 @@ export function InterviewsTablePreview({
                           >
                             Ссылка наблюдателя
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => openPath(spectatorEntryPath)}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => navigateSameOrigin(router, spectatorEntryPath)}
+                          >
                             Вход наблюдателя
                           </Button>
                           <Button
                             size="icon"
                             variant="secondary"
                             aria-label="Открыть наблюдателя"
-                            onClick={() => openPath(spectatorEntryPath)}
+                            onClick={() => navigateSameOrigin(router, spectatorEntryPath)}
                           >
                             <ExternalLink className="size-4" />
                           </Button>

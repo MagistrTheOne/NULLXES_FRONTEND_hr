@@ -3,6 +3,7 @@
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { markHrWorkspaceInBrowser } from "@/lib/hr-workspace-session";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -29,6 +30,7 @@ export default function LoginPage() {
         const payload = (await response.json().catch(() => ({}))) as { message?: string };
         throw new Error(payload.message ?? "Login failed");
       }
+      markHrWorkspaceInBrowser();
       router.replace("/");
       router.refresh();
     } catch (err) {

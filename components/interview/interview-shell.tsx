@@ -24,6 +24,7 @@ import {
 } from "@/lib/observer-control";
 import { extractEntryCandidateFromPastedUrl, withCandidateEntryQuery } from "@/lib/candidate-entry-url";
 import { formatCandidateMeetingLobbyMessage } from "@/lib/meeting-at-guard";
+import { hasHrWorkspaceInBrowser, markHrWorkspaceInBrowser } from "@/lib/hr-workspace-session";
 import { AvatarStreamCard } from "./avatar-stream-card";
 import { CandidateStreamCard } from "./candidate-stream-card";
 import { InterviewsTablePreview } from "./interviews-table-preview";
@@ -115,7 +116,50 @@ export function InterviewShell() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname() || "/";
-  const isCandidateEntry = useMemo(() => searchParams.get("entry") === "candidate", [searchParams]);
+  const [prototypeAuthState, setPrototypeAuthState] = useState<"loading" | "in" | "out">("loading");
+
+  useEffect(() => {
+    if (searchParams.get("entry") !== "candidate") {
+      markHrWorkspaceInBrowser();
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/prototype-auth/session", { credentials: "include" })
+      .then((res) => res.json())
+      .then((data: { authenticated?: boolean }) => {
+        if (cancelled) {
+          return;
+        }
+        setPrototypeAuthState(data.authenticated ? "in" : "out");
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPrototypeAuthState("out");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const isCandidateEntry = useMemo(() => {
+    if (searchParams.get("hr") === "1") {
+      return false;
+    }
+    if (searchParams.get("entry") !== "candidate") {
+      return false;
+    }
+    if (prototypeAuthState === "in") {
+      return false;
+    }
+    if (hasHrWorkspaceInBrowser()) {
+      return false;
+    }
+    return true;
+  }, [prototypeAuthState, searchParams]);
+
   const requestedInterviewId = useMemo(() => {
     const raw = searchParams.get("jobAiId");
     if (!raw) {
@@ -1041,6 +1085,11 @@ export function InterviewShell() {
             }}
             onSelect={(row) => {
               setSelectedInterviewId(row.jobAiId);
+              markHrWorkspaceInBrowser();
+              const params = new URLSearchParams();
+              params.set("jobAiId", String(row.jobAiId));
+              const q = params.toString();
+              router.replace(q ? `${pathname}?${q}` : pathname);
             }}
             onPageChange={(nextPage) => {
               setRowsPage(nextPage);
