@@ -18,7 +18,7 @@
 - [ ] Агент: одно приветствие без двойного self-intro; сценарий **intro → вопросы → closing → summary**.
 - [ ] Длинный `vacancyText` (>12k символов): в промпте обрезка с пометкой; UI/саммари помечают `vacancyTruncated` при необходимости.
 - [ ] После стопа отображается блок **«Итог интервью (саммари)»**; на `/spectator` саммари подтягивается из `GET /meetings/:id` после `completed`.
-- [ ] Ссылка кандидата с `?jobAiId=…&entry=candidate`: без таблицы HR, один поток; до `meetingAt` — ожидание; после — авто-старт при статусах `received`/`pending`; при `in_meeting` с `meetingId`/`sessionId` — гидрация сессии.
+- [ ] Ссылка с `?jobAiId=…&entry=candidate`: тот же полный UI (шапка, три колонки, список); до `meetingAt` — подсказка в синем баннере; после — авто-старт при статусах `received`/`pending`; при `in_meeting` с `meetingId`/`sessionId` — гидрация сессии.
 - [ ] Вставка URL в поле прототипа у HR: в адресной строке появляются `jobAiId` и при необходимости `entry=candidate`.
 
 ## Notes

@@ -24,7 +24,6 @@ import {
 } from "@/lib/observer-control";
 import { extractEntryCandidateFromPastedUrl, withCandidateEntryQuery } from "@/lib/candidate-entry-url";
 import { formatCandidateMeetingLobbyMessage } from "@/lib/meeting-at-guard";
-import { hasHrWorkspaceInBrowser, markHrWorkspaceInBrowser } from "@/lib/hr-workspace-session";
 import { AvatarStreamCard } from "./avatar-stream-card";
 import { CandidateStreamCard } from "./candidate-stream-card";
 import { InterviewsTablePreview } from "./interviews-table-preview";
@@ -116,49 +115,8 @@ export function InterviewShell() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname() || "/";
-  const [prototypeAuthState, setPrototypeAuthState] = useState<"loading" | "in" | "out">("loading");
-
-  useEffect(() => {
-    if (searchParams.get("entry") !== "candidate") {
-      markHrWorkspaceInBrowser();
-    }
-  }, [searchParams]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch("/api/prototype-auth/session", { credentials: "include" })
-      .then((res) => res.json())
-      .then((data: { authenticated?: boolean }) => {
-        if (cancelled) {
-          return;
-        }
-        setPrototypeAuthState(data.authenticated ? "in" : "out");
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setPrototypeAuthState("out");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const isCandidateEntry = useMemo(() => {
-    if (searchParams.get("hr") === "1") {
-      return false;
-    }
-    if (searchParams.get("entry") !== "candidate") {
-      return false;
-    }
-    if (prototypeAuthState === "in") {
-      return false;
-    }
-    if (hasHrWorkspaceInBrowser()) {
-      return false;
-    }
-    return true;
-  }, [prototypeAuthState, searchParams]);
+  /** URL flag for candidate-side polling / auto-start / lobby hints — layout is always the full 3-column operator UI. */
+  const isCandidateFlow = useMemo(() => searchParams.get("entry") === "candidate", [searchParams]);
 
   const requestedInterviewId = useMemo(() => {
     const raw = searchParams.get("jobAiId");
@@ -205,7 +163,7 @@ export function InterviewShell() {
 
   useEffect(() => {
     candidateRuntimeBootstrapRef.current = false;
-  }, [selectedInterviewId, isCandidateEntry]);
+  }, [selectedInterviewId, isCandidateFlow]);
 
   useEffect(() => {
     if (!audioRef.current) {
@@ -367,7 +325,7 @@ export function InterviewShell() {
     contextReadiness.questionsReady;
 
   const candidateWaitingHint = useMemo(() => {
-    if (!isCandidateEntry) {
+    if (!isCandidateFlow) {
       return null;
     }
     if (completedInterviewLocked) {
@@ -413,7 +371,7 @@ export function InterviewShell() {
     completedInterviewLocked,
     contextHardReady,
     detailError,
-    isCandidateEntry,
+    isCandidateFlow,
     phase,
     selectedInterviewDetailMatched,
     selectedRow?.meetingAt
@@ -524,14 +482,14 @@ export function InterviewShell() {
   }, [loadInterviewDetail, rows, selectedInterviewId]);
 
   useEffect(() => {
-    if (!isCandidateEntry || !selectedInterviewId) {
+    if (!isCandidateFlow || !selectedInterviewId) {
       return;
     }
     const timer = setInterval(() => {
       void loadInterviewDetail(selectedInterviewId, true);
     }, 2500);
     return () => clearInterval(timer);
-  }, [isCandidateEntry, loadInterviewDetail, selectedInterviewId]);
+  }, [isCandidateFlow, loadInterviewDetail, selectedInterviewId]);
 
   const handleEntryUrlCommit = useCallback(
     (value: string) => {
@@ -658,7 +616,7 @@ export function InterviewShell() {
   );
 
   useEffect(() => {
-    if (!isCandidateEntry || !selectedInterviewId) {
+    if (!isCandidateFlow || !selectedInterviewId) {
       return;
     }
     if (phase === "connected" || phase === "starting" || busy) {
@@ -776,7 +734,7 @@ export function InterviewShell() {
     contextHardReady,
     hydrateActiveSession,
     interviewStartContext,
-    isCandidateEntry,
+    isCandidateFlow,
     phase,
     selectedInterviewDetailMatched,
     selectedInterviewId,
@@ -787,26 +745,13 @@ export function InterviewShell() {
   return (
     <div className="min-h-screen w-full bg-[#dfe4ec] px-4 py-6 sm:px-6 sm:py-8 md:px-10">
       <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-10">
-        {isCandidateEntry && !requestedInterviewId ? (
+        {isCandidateFlow && !requestedInterviewId ? (
           <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-sm">
             В ссылке для кандидата не указан <span className="font-mono">jobAiId</span>. Попросите HR отправить корректную
             ссылку.
           </p>
         ) : null}
-        {isCandidateEntry ? (
-          <div className="rounded-2xl border border-slate-200 bg-white/80 px-6 py-5 shadow-sm">
-            <h1 className="text-lg font-semibold text-slate-900">Собеседование</h1>
-            <p className="mt-1 text-sm text-slate-600">
-              {selectedInterviewId ? `Интервью #${selectedInterviewId}` : "—"} · {statusLabel}
-            </p>
-            {candidateWaitingHint ? (
-              <p className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
-                {candidateWaitingHint}
-              </p>
-            ) : null}
-          </div>
-        ) : (
-          <>
+        <>
         <MeetingHeader
           statusLabel={statusLabel}
           meetingId={recoveredMeetingId}
@@ -888,8 +833,12 @@ export function InterviewShell() {
           summary={lastInterviewSummary ?? meetingSummaryFromServer}
           title="Итог интервью (саммари)"
         />
-          </>
-        )}
+        </>
+        {isCandidateFlow && candidateWaitingHint ? (
+          <p className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-900 shadow-sm">
+            {candidateWaitingHint}
+          </p>
+        ) : null}
 
         {error ? (
           <p className="rounded-xl bg-rose-100 px-4 py-2 text-sm text-rose-700 shadow-sm">{error}</p>
@@ -904,12 +853,12 @@ export function InterviewShell() {
             Восстанавливаем runtime после обновления страницы. Подключение может занять несколько секунд.
           </p>
         ) : null}
-        {SHOW_INTERNAL_DEBUG_UI && !isCandidateEntry && candidateAdmissionError ? (
+        {SHOW_INTERNAL_DEBUG_UI && candidateAdmissionError ? (
           <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 shadow-sm">
             {candidateAdmissionError}
           </p>
         ) : null}
-        {SHOW_INTERNAL_DEBUG_UI && !isCandidateEntry && candidateAdmission && (candidateAdmission.pending.length > 0 || candidateAdmission.owner) ? (
+        {SHOW_INTERNAL_DEBUG_UI && candidateAdmission && (candidateAdmission.pending.length > 0 || candidateAdmission.owner) ? (
           <section className="rounded-xl border border-slate-200 bg-white/70 px-4 py-3 text-sm text-slate-700 shadow-sm">
             <p className="font-medium text-slate-800">Admission control кандидата</p>
             <p className="mt-1">
@@ -986,7 +935,7 @@ export function InterviewShell() {
             Эта сессия уже завершена. Повторный старт отключен.
           </p>
         ) : null}
-        {SHOW_INTERNAL_DEBUG_UI && !isCandidateEntry ? (
+        {SHOW_INTERNAL_DEBUG_UI ? (
           <section className="grid gap-3 md:grid-cols-2">
             <div className="rounded-xl border border-slate-200 bg-white/70 px-4 py-3 text-sm text-slate-700 shadow-sm">
               <p className="font-medium text-slate-800">Сигнал HR-аватара</p>
@@ -1005,13 +954,7 @@ export function InterviewShell() {
           </section>
         ) : null}
 
-        <main
-          className={
-            isCandidateEntry
-              ? "mt-4 grid grid-cols-1 gap-8"
-              : "mt-4 grid grid-cols-1 gap-8 lg:grid-cols-3 lg:items-stretch"
-          }
-        >
+        <main className="mt-4 grid grid-cols-1 gap-8 lg:grid-cols-3 lg:items-stretch">
           <CandidateStreamCard
             meetingId={recoveredMeetingId}
             sessionId={recoveredSessionId}
@@ -1024,78 +967,71 @@ export function InterviewShell() {
             onEnsureInterviewStart={ensureInterviewStart}
             showControls
           />
-          {!isCandidateEntry ? (
-            <>
-              <AvatarStreamCard
-                participantName="HR ассистент"
-                enabled={phase === "connected"}
-                avatarReady={avatarReady}
-                meetingId={recoveredMeetingId}
-                showStreamToolbar={false}
-                showStatusBadge
-              />
-              <ObserverStreamCard
-                title="Наблюдатель"
-                participantName="Наблюдатель"
-                meetingId={recoveredMeetingId}
-                enabled={phase === "connected"}
-                visible={observerVisible}
-                talkMode={observerTalkMode}
-                mutePlayback
-                allowVisibilityToggle
-                allowTalkToggle
-                onVisibleChange={(nextVisible) => {
-                  if (!selectedInterviewId) {
-                    return;
-                  }
-                  const nextState = resolveObserverVisibilityState(observerControl, nextVisible);
-                  setObserverControlState(selectedInterviewId, {
-                    visibility: nextState.visibility,
-                    talk: nextState.talk,
-                    updatedAt: new Date().toISOString()
-                  });
-                }}
-                onTalkModeChange={(nextTalkMode) => {
-                  if (!selectedInterviewId) {
-                    return;
-                  }
-                  const nextState = resolveObserverTalkState(observerControl, nextTalkMode);
-                  setObserverControlState(selectedInterviewId, {
-                    visibility: nextState.visibility,
-                    talk: nextState.talk,
-                    updatedAt: new Date().toISOString()
-                  });
-                }}
-              />
-            </>
-          ) : null}
-        </main>
-        {!isCandidateEntry ? (
-          <InterviewsTablePreview
-            rows={rows}
-            page={rowsPage}
-            pageSize={INTERVIEWS_PAGE_SIZE}
-            totalCount={rowsTotalCount}
-            selectedInterviewId={selectedInterviewId}
-            duplicateJobAiIds={duplicateJobAiIds}
-            loading={loadingRows}
-            error={rowsError}
-            onRefresh={() => {
-              void loadInterviews();
+          <AvatarStreamCard
+            participantName="HR ассистент"
+            enabled={phase === "connected"}
+            avatarReady={avatarReady}
+            meetingId={recoveredMeetingId}
+            showStreamToolbar={false}
+            showStatusBadge
+          />
+          <ObserverStreamCard
+            title="Наблюдатель"
+            participantName="Наблюдатель"
+            meetingId={recoveredMeetingId}
+            enabled={phase === "connected"}
+            visible={observerVisible}
+            talkMode={observerTalkMode}
+            mutePlayback
+            allowVisibilityToggle
+            allowTalkToggle
+            onVisibleChange={(nextVisible) => {
+              if (!selectedInterviewId) {
+                return;
+              }
+              const nextState = resolveObserverVisibilityState(observerControl, nextVisible);
+              setObserverControlState(selectedInterviewId, {
+                visibility: nextState.visibility,
+                talk: nextState.talk,
+                updatedAt: new Date().toISOString()
+              });
             }}
-            onSelect={(row) => {
-              setSelectedInterviewId(row.jobAiId);
-              markHrWorkspaceInBrowser();
-              const params = new URLSearchParams();
-              params.set("jobAiId", String(row.jobAiId));
-              const q = params.toString();
-              router.replace(q ? `${pathname}?${q}` : pathname);
-            }}
-            onPageChange={(nextPage) => {
-              setRowsPage(nextPage);
+            onTalkModeChange={(nextTalkMode) => {
+              if (!selectedInterviewId) {
+                return;
+              }
+              const nextState = resolveObserverTalkState(observerControl, nextTalkMode);
+              setObserverControlState(selectedInterviewId, {
+                visibility: nextState.visibility,
+                talk: nextState.talk,
+                updatedAt: new Date().toISOString()
+              });
             }}
           />
-        ) : null}
+        </main>
+        <InterviewsTablePreview
+          rows={rows}
+          page={rowsPage}
+          pageSize={INTERVIEWS_PAGE_SIZE}
+          totalCount={rowsTotalCount}
+          selectedInterviewId={selectedInterviewId}
+          duplicateJobAiIds={duplicateJobAiIds}
+          loading={loadingRows}
+          error={rowsError}
+          onRefresh={() => {
+            void loadInterviews();
+          }}
+          onSelect={(row) => {
+            setSelectedInterviewId(row.jobAiId);
+            const params = new URLSearchParams();
+            params.set("jobAiId", String(row.jobAiId));
+            const q = params.toString();
+            router.replace(q ? `${pathname}?${q}` : pathname);
+          }}
+          onPageChange={(nextPage) => {
+            setRowsPage(nextPage);
+          }}
+        />
         <audio ref={audioRef} autoPlay />
       </div>
     </div>
