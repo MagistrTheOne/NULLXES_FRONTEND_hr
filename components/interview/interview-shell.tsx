@@ -8,6 +8,7 @@ import {
   getCandidateAdmissionStatus,
   getInterviewById,
   getMeetingDetail,
+  isApiRequestError,
   listInterviews,
   type CandidateAdmissionStatus,
   type InterviewDetail,
@@ -259,6 +260,13 @@ export function InterviewShell() {
       return;
     }
     let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const stopPolling = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
     const load = async () => {
       try {
         const res = await getMeetingDetail(meetingId);
@@ -267,19 +275,25 @@ export function InterviewShell() {
           return;
         }
         setMeetingSummaryFromServer(raw as InterviewSummaryPayload);
-      } catch {
-        if (!cancelled) {
+      } catch (err) {
+        if (cancelled) return;
+        if (isApiRequestError(err) && err.status === 404) {
+          // meeting record was purged on backend (e.g. after restart without persisted store) —
+          // stop polling permanently so we don't flood gateway logs with 404s.
           setMeetingSummaryFromServer(null);
+          stopPolling();
+          return;
         }
+        setMeetingSummaryFromServer(null);
       }
     };
     void load();
-    const timer = setInterval(() => {
+    timer = setInterval(() => {
       void load();
     }, 8000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      stopPolling();
     };
   }, [selectedRow?.nullxesMeetingId, selectedRow?.nullxesStatus]);
 

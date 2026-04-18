@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ObserverStreamCard, type ObserverConnectionStatus } from "@/components/interview/observer-stream-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getInterviewById, getMeetingDetail, type InterviewDetail } from "@/lib/api";
+import { getInterviewById, getMeetingDetail, isApiRequestError, type InterviewDetail } from "@/lib/api";
 import type { InterviewSummaryPayload } from "@/lib/interview-summary";
 import { InterviewSummaryDisplay } from "@/components/interview/interview-summary-display";
 import {
@@ -116,6 +116,13 @@ function SpectatorBody() {
       return;
     }
     let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const stopPolling = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
     const loadSummary = async () => {
       try {
         const res = await getMeetingDetail(meetingId);
@@ -123,19 +130,24 @@ function SpectatorBody() {
         if (!cancelled && raw && typeof raw === "object") {
           setMeetingSummary(raw as InterviewSummaryPayload);
         }
-      } catch {
-        if (!cancelled) {
+      } catch (err) {
+        if (cancelled) return;
+        if (isApiRequestError(err) && err.status === 404) {
+          // meeting record gone on backend — stop polling, no summary will ever arrive.
           setMeetingSummary(null);
+          stopPolling();
+          return;
         }
+        setMeetingSummary(null);
       }
     };
     void loadSummary();
-    const timer = setInterval(() => {
+    timer = setInterval(() => {
       void loadSummary();
     }, 8000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      stopPolling();
     };
   }, [detail?.projection.nullxesStatus, meetingId]);
 
