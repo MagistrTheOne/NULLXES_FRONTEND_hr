@@ -103,6 +103,56 @@ export class WebRtcInterviewClient {
       }
       this.flushPendingEvents();
     };
+    // Listen to OpenAI Realtime events sent back over the same DataChannel.
+    // Without this we never see `response.error`, `error`, `response.done`, etc. —
+    // and silent failures (e.g. invalid session.update) make the agent appear "stuck".
+    dataChannel.onmessage = (event: MessageEvent<string>) => {
+      let parsed: { type?: string; [k: string]: unknown } | null = null;
+      try {
+        parsed = JSON.parse(event.data) as { type?: string; [k: string]: unknown };
+      } catch {
+        return;
+      }
+      if (!parsed || typeof parsed.type !== "string") return;
+      const type = parsed.type;
+      const isCritical =
+        type === "error" ||
+        type.endsWith(".error") ||
+        type === "response.created" ||
+        type === "response.done" ||
+        type === "response.cancelled" ||
+        type === "session.created" ||
+        type === "session.updated" ||
+        type === "rate_limits.updated";
+      if (typeof console !== "undefined") {
+        if (type === "error" || type.endsWith(".error")) {
+          console.error("[OpenAI Realtime]", type, parsed);
+        } else if (isCritical) {
+          console.debug("[OpenAI Realtime]", type, parsed);
+        }
+      }
+      if (isCritical && this.sessionId) {
+        void sendRealtimeEvent(this.sessionId, {
+          type: `openai.${type}`,
+          source: "openai",
+          payload: parsed
+        }).catch(() => {
+          // best-effort telemetry; never let upstream errors block the agent
+        });
+      }
+    };
+    dataChannel.onerror = (event: Event) => {
+      if (typeof console !== "undefined") {
+        console.error("[OpenAI Realtime] datachannel error", event);
+      }
+      if (this.sessionId) {
+        void sendRealtimeEvent(this.sessionId, {
+          type: "openai.datachannel.error",
+          source: "frontend",
+          message: "datachannel error event"
+        }).catch(() => undefined);
+      }
+    };
 
     const isAborted = (state: RTCSignalingState | string): boolean =>
       this.peerConnection !== pc || String(state) === "closed";
