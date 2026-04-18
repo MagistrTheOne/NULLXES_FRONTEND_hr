@@ -14,6 +14,7 @@ import {
   type InterviewListRow
 } from "@/lib/api";
 import { extractCoreFieldsFromInterviewRaw, mergeStartContextWithInterviewDetail } from "@/lib/interview-detail-fields";
+import { normalizeInterviewListRows } from "@/lib/normalize-interview-list-row";
 import { sortInterviewListRowsNewestFirst } from "@/lib/sort-interview-list-rows";
 import type { InterviewSummaryPayload } from "@/lib/interview-summary";
 import {
@@ -479,7 +480,7 @@ export function InterviewShell() {
         }
       }
 
-      const ordered = sortInterviewListRowsNewestFirst(list.interviews);
+      const ordered = sortInterviewListRowsNewestFirst(normalizeInterviewListRows(list.interviews));
       setRows(ordered);
       setRowsTotalCount(list.count);
       setSelectedInterviewId((current) => {

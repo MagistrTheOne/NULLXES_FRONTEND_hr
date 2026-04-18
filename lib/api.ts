@@ -1,3 +1,5 @@
+import { sanitizeInterviewDetail } from "./gateway-projection-sanitize";
+
 export type SessionTokenResponse = {
   sessionId: string;
   token: string;
@@ -419,15 +421,17 @@ export async function listInterviews(params?: { skip?: number; take?: number; sy
 
 export async function getInterviewById(id: number, sync = false): Promise<InterviewDetail> {
   const suffix = sync ? "?sync=1" : "";
-  return requestJson<InterviewDetail>(`interviews/${id}${suffix}`, { method: "GET" });
+  const detail = await requestJson<InterviewDetail>(`interviews/${id}${suffix}`, { method: "GET" });
+  return sanitizeInterviewDetail(detail) as InterviewDetail;
 }
 
 /** Сохранить ФИО кандидата в проекции gateway (разбор: первая лексема → фамилия, остальное → имя+отчество). */
 export async function savePrototypeCandidateFio(jobAiId: number, fullName: string): Promise<InterviewDetail> {
-  return requestJson<InterviewDetail>(`interviews/${jobAiId}/prototype-candidate-fio`, {
+  const detail = await requestJson<InterviewDetail>(`interviews/${jobAiId}/prototype-candidate-fio`, {
     method: "POST",
     body: JSON.stringify({ fullName })
   });
+  return sanitizeInterviewDetail(detail) as InterviewDetail;
 }
 
 export async function linkInterviewSession(input: {
@@ -436,7 +440,7 @@ export async function linkInterviewSession(input: {
   sessionId?: string;
   nullxesStatus?: InterviewListRow["nullxesStatus"];
 }): Promise<InterviewDetail> {
-  return requestJsonWithRetry<InterviewDetail>(`interviews/${input.interviewId}/session-link`, {
+  const detail = await requestJsonWithRetry<InterviewDetail>(`interviews/${input.interviewId}/session-link`, {
     method: "POST",
     body: JSON.stringify({
       meetingId: input.meetingId,
@@ -444,6 +448,7 @@ export async function linkInterviewSession(input: {
       nullxesStatus: input.nullxesStatus
     })
   });
+  return sanitizeInterviewDetail(detail) as InterviewDetail;
 }
 
 function postJobAiIngestNotification(id: number, status: string): void {
@@ -464,7 +469,7 @@ export async function updateInterviewStatus(id: number, status: JobAiInterviewSt
     body: JSON.stringify({ status }),
   });
   postJobAiIngestNotification(id, status);
-  return detail;
+  return sanitizeInterviewDetail(detail) as InterviewDetail;
 }
 
 export async function getJobAiSourceStatus(): Promise<JobAiSourceStatus> {
