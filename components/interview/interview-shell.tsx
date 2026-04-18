@@ -14,6 +14,7 @@ import {
   type InterviewListRow
 } from "@/lib/api";
 import { extractCoreFieldsFromInterviewRaw, mergeStartContextWithInterviewDetail } from "@/lib/interview-detail-fields";
+import { sortInterviewListRowsNewestFirst } from "@/lib/sort-interview-list-rows";
 import type { InterviewSummaryPayload } from "@/lib/interview-summary";
 import {
   getObserverControlState,
@@ -25,6 +26,14 @@ import {
 } from "@/lib/observer-control";
 import { extractEntryCandidateFromPastedUrl, withCandidateEntryQuery } from "@/lib/candidate-entry-url";
 import { formatCandidateMeetingLobbyMessage } from "@/lib/meeting-at-guard";
+import {
+  buildGatewayVsExtractorHint,
+  diagnosticsFromInterviewDetail,
+  isInterviewContextDebugEnabled,
+  logInterviewContextDiagnostics
+} from "@/lib/interview-context-diagnostics";
+import { deriveSessionUiState, type SessionUIState } from "@/lib/session-ui-state";
+import { cn } from "@/lib/utils";
 import { AvatarStreamCard } from "./avatar-stream-card";
 import { CandidateStreamCard } from "./candidate-stream-card";
 import { InterviewsTablePreview } from "./interviews-table-preview";
@@ -141,7 +150,8 @@ export function InterviewShell() {
     setObserverTalkIsolation,
     hydrateActiveSession,
     runtimeRecoveryState,
-    lastInterviewSummary
+    lastInterviewSummary,
+    lastAgentContextTrace
   } =
     useInterviewSession();
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -219,6 +229,10 @@ export function InterviewShell() {
   const selectedNullxesStatus = selectedRow?.nullxesStatus ?? selectedInterviewDetailMatched?.projection.nullxesStatus;
   const selectedJobAiStatus = selectedRow?.jobAiStatus ?? selectedInterviewDetailMatched?.projection.jobAiStatus;
   const completedInterviewLocked = selectedNullxesStatus === "completed" || selectedJobAiStatus === "completed";
+  /** Одинаковый «арбитр» для трёх Stream-колонок: не поднимаем видео до meeting+session, чтобы кандидат и HR не расходились по фазе. */
+  const streamSurfaceEnabled =
+    phase === "connected" && !completedInterviewLocked && Boolean(recoveredMeetingId && recoveredSessionId);
+  const hasInterviewSelection = Boolean(selectedRow || selectedInterviewDetailMatched);
 
   const candidateFio = useMemo(() => {
     const sourceFullName = selectedInterviewDetailMatched?.prototypeCandidate?.sourceFullName?.trim();
@@ -263,10 +277,26 @@ export function InterviewShell() {
       greetingSpeech:
         (inv?.greetingSpeechResolved as string | undefined) ?? inv?.greetingSpeech,
       finalSpeech: (inv?.finalSpeechResolved as string | undefined) ?? inv?.finalSpeech,
-      questions: inv?.specialty?.questions,
-      specialtyName: ext.specialtyName ?? inv?.specialty?.name
+      questions: ext.questions ?? (typeof inv?.specialty === "object" && inv?.specialty ? inv.specialty.questions : undefined),
+      specialtyName: ext.specialtyName ?? (typeof inv?.specialty === "object" && inv?.specialty ? inv.specialty.name : undefined)
     };
   }, [candidateFio, selectedInterviewDetailMatched, selectedRow]);
+
+  useEffect(() => {
+    if (!isInterviewContextDebugEnabled() || !selectedInterviewDetailMatched) {
+      return;
+    }
+    const diag = diagnosticsFromInterviewDetail(
+      selectedInterviewDetailMatched,
+      interviewStartContext,
+      "shell:interviewStartContext",
+      { interviewId: selectedInterviewDetailMatched.interview.id }
+    );
+    const raw = selectedInterviewDetailMatched.interview as Record<string, unknown>;
+    logInterviewContextDiagnostics("shell:interviewStartContext", diag, {
+      gatewayHint: buildGatewayVsExtractorHint(raw)
+    });
+  }, [interviewStartContext, selectedInterviewDetailMatched]);
 
   useEffect(() => {
     const meetingId = selectedRow?.nullxesMeetingId;
@@ -380,6 +410,51 @@ export function InterviewShell() {
     selectedRow?.meetingAt
   ]);
 
+  const sessionUiState: SessionUIState = useMemo(
+    () =>
+      deriveSessionUiState({
+        phase,
+        completedInterviewLocked,
+        contextHardReady,
+        hardContextGuardEnabled: HARD_CONTEXT_GUARD_ENABLED,
+        hasInterviewSelection
+      }),
+    [phase, completedInterviewLocked, contextHardReady, hasInterviewSelection]
+  );
+
+  const prioritizedSessionBanner = useMemo(() => {
+    if (hasInterviewSelection && completedInterviewLocked) {
+      return {
+        tone: "completed" as const,
+        className: "border-amber-200 bg-amber-50 text-amber-900",
+        body: "Эта сессия уже завершена. Повторный старт отключен."
+      };
+    }
+    if (hasInterviewSelection && !contextHardReady) {
+      return {
+        tone: "blocked" as const,
+        className: "border-amber-200 bg-amber-50 text-amber-900",
+        body: HARD_CONTEXT_GUARD_ENABLED
+          ? "Start Session заблокирован: для безопасного запуска агента нужны кандидат, должность, текст вакансии, компания и вопросы из JobAI."
+          : "Внимание: контекст интервью неполный (кандидат/должность/текст вакансии/компания/вопросы)."
+      };
+    }
+    if (isCandidateFlow && candidateWaitingHint) {
+      return {
+        tone: "lobby" as const,
+        className: "border-sky-200 bg-sky-50 text-sky-950",
+        body: candidateWaitingHint
+      };
+    }
+    return null;
+  }, [
+    candidateWaitingHint,
+    completedInterviewLocked,
+    contextHardReady,
+    hasInterviewSelection,
+    isCandidateFlow
+  ]);
+
   const duplicateJobAiIds = useMemo(() => {
     const byFingerprint = new Map<string, number[]>();
     for (const row of rows) {
@@ -424,16 +499,17 @@ export function InterviewShell() {
         }
       }
 
-      setRows(list.interviews);
+      const ordered = sortInterviewListRowsNewestFirst(list.interviews);
+      setRows(ordered);
       setRowsTotalCount(list.count);
       setSelectedInterviewId((current) => {
         if (requestedInterviewId) {
           return requestedInterviewId;
         }
-        if (current && list.interviews.some((item) => item.jobAiId === current)) {
+        if (current && ordered.some((item) => item.jobAiId === current)) {
           return current;
         }
-        return list.interviews[0]?.jobAiId ?? null;
+        return ordered[0]?.jobAiId ?? null;
       });
     } catch (loadError) {
       setRowsError(loadError instanceof Error ? loadError.message : "Failed to load interviews");
@@ -678,7 +754,8 @@ export function InterviewShell() {
           !contextForStart?.companyName ||
           (contextForStart?.questions?.length ?? 0) === 0;
 
-        if (needSync) {
+        // Кандидат по ссылке: projection списка часто без полного JD / вопросов — всегда тянем sync=1 перед стартом.
+        if (needSync || isCandidateFlow) {
           const syncedDetail = await getInterviewById(selectedInterviewId, true);
           setSelectedInterviewDetail(syncedDetail);
           contextForStart = mergeStartContextWithInterviewDetail(interviewStartContext, syncedDetail);
@@ -779,12 +856,6 @@ export function InterviewShell() {
           title="Итог интервью (саммари)"
         />
         </>
-        {isCandidateFlow && candidateWaitingHint ? (
-          <p className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-900 shadow-sm">
-            {candidateWaitingHint}
-          </p>
-        ) : null}
-
         {error ? (
           <p className="rounded-xl bg-rose-100 px-4 py-2 text-sm text-rose-700 shadow-sm">{error}</p>
         ) : null}
@@ -868,16 +939,13 @@ export function InterviewShell() {
             Не удалось загрузить детали собеседования. Повторите попытку. ({detailError})
           </p>
         ) : null}
-        {(selectedRow || selectedInterviewDetailMatched) && !contextHardReady ? (
-          <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-sm">
-            {HARD_CONTEXT_GUARD_ENABLED
-              ? "Start Session заблокирован: для безопасного запуска агента нужны кандидат, должность, текст вакансии, компания и вопросы из JobAI."
-              : "Внимание: контекст интервью неполный (кандидат/должность/текст вакансии/компания/вопросы)."}
-          </p>
-        ) : null}
-        {(selectedRow || selectedInterviewDetailMatched) && completedInterviewLocked ? (
-          <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-sm">
-            Эта сессия уже завершена. Повторный старт отключен.
+        {prioritizedSessionBanner ? (
+          <p
+            className={`rounded-xl border px-4 py-2 text-sm shadow-sm ${prioritizedSessionBanner.className}`}
+            role="status"
+            data-session-banner={prioritizedSessionBanner.tone}
+          >
+            {prioritizedSessionBanner.body}
           </p>
         ) : null}
         {SHOW_INTERNAL_DEBUG_UI ? (
@@ -896,25 +964,44 @@ export function InterviewShell() {
                 {contextReadiness.questionsReady ? "✅" : "⬜"} Вопросы ({contextReadiness.questionsCount})
               </p>
             </div>
+            {lastAgentContextTrace?.diagnostics ? (
+              <div className="md:col-span-2 rounded-xl border border-slate-200 bg-white/70 px-4 py-3 text-slate-700 shadow-sm">
+                <p className="text-sm font-medium text-slate-800">Последний контекст, ушедший в агента (session.update)</p>
+                <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-slate-50 p-2 text-xs leading-snug">
+                  {JSON.stringify(lastAgentContextTrace.diagnostics, null, 2)}
+                </pre>
+              </div>
+            ) : null}
           </section>
         ) : null}
 
-        <main className="mt-4 grid grid-cols-1 gap-8 lg:grid-cols-3 lg:items-stretch">
+        <main
+          className={cn(
+            "mt-4 grid grid-cols-1 gap-8 lg:grid-cols-3 lg:items-stretch lg:gap-6",
+            sessionUiState === "completed" && "pointer-events-none opacity-60"
+          )}
+          aria-busy={sessionUiState === "completed" ? "true" : undefined}
+        >
+          <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
           <CandidateStreamCard
             meetingId={recoveredMeetingId}
             sessionId={recoveredSessionId}
-            enabled={phase === "connected"}
-            autoConnectOnEntry={phase === "connected"}
+            enabled={streamSurfaceEnabled}
+            autoConnectOnEntry={streamSurfaceEnabled}
             participantName={candidateFio.trim() || "Кандидат"}
             interviewId={selectedInterviewId ?? selectedRow?.jobAiId}
             meetingAt={selectedInterviewDetailMatched?.interview.meetingAt ?? selectedRow?.meetingAt}
             interviewContext={interviewStartContext}
             onEnsureInterviewStart={ensureInterviewStart}
             showControls
+            sessionEnded={completedInterviewLocked}
+            uiState={sessionUiState}
           />
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
           <AvatarStreamCard
             participantName="HR ассистент"
-            enabled={phase === "connected"}
+            enabled={streamSurfaceEnabled}
             avatarReady={avatarReady}
             meetingId={recoveredMeetingId}
             showStreamToolbar={false}
@@ -925,17 +1012,24 @@ export function InterviewShell() {
               const jid = selectedInterviewId ?? selectedRow?.jobAiId;
               void stop(typeof jid === "number" ? { interviewId: jid } : undefined);
             }}
+            sessionEnded={completedInterviewLocked}
+            uiState={sessionUiState}
+            emphasizePrimary
           />
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
           <ObserverStreamCard
             title="Наблюдатель"
             participantName="Наблюдатель"
             meetingId={recoveredMeetingId}
-            enabled={phase === "connected"}
+            enabled={streamSurfaceEnabled}
             visible={observerVisible}
             talkMode={observerTalkMode}
             mutePlayback
             allowVisibilityToggle
             allowTalkToggle
+            sessionEnded={completedInterviewLocked}
+            uiState={sessionUiState}
             onVisibleChange={(nextVisible) => {
               if (!selectedInterviewId) {
                 return;
@@ -959,6 +1053,7 @@ export function InterviewShell() {
               });
             }}
           />
+          </div>
         </main>
         <InterviewsTablePreview
           rows={rows}

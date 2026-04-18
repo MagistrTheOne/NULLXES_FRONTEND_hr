@@ -16,9 +16,11 @@ import {
   type JobAiInterviewStatus
 } from "@/lib/api";
 import { buildInterviewInstructions, buildOpeningUtterance } from "@/lib/interview-agent-prompt";
+import { createAgentContextTrace, type AgentContextTrace } from "@/lib/interview-context-diagnostics";
 import { extractCoreFieldsFromInterviewRaw, mergeStartContextWithInterviewDetail } from "@/lib/interview-detail-fields";
 import type { InterviewStartContext } from "@/lib/interview-start-context";
-import { buildInterviewSummaryPayload, type InterviewSummaryPayload } from "@/lib/interview-summary";
+import type { InterviewSummaryPayload } from "@/lib/interview-summary";
+import { resolveInterviewSummaryPayload } from "@/lib/resolve-interview-summary";
 import { WebRtcInterviewClient, type WebRtcConnectionState } from "@/lib/webrtc-client";
 
 export type InterviewPhase = "idle" | "starting" | "connected" | "stopping" | "failed";
@@ -29,17 +31,7 @@ export type InterviewStartResult = {
 export type RuntimeRecoveryState = "idle" | "recovering" | "failed";
 
 export type { InterviewStartContext } from "@/lib/interview-start-context";
-
-export type AgentContextTrace = {
-  sentAt: string;
-  interviewId?: number;
-  meetingId: string;
-  sessionId: string;
-  candidateFullName?: string;
-  companyName?: string;
-  jobTitle?: string;
-  questionsCount: number;
-};
+export type { AgentContextTrace };
 
 type StartOptions = {
   triggerSource?: string;
@@ -302,10 +294,23 @@ export function useInterviewSession() {
             avatarPollTimerRef.current = null;
           }
         }
-      } catch {
-        if (!cancelled) {
-          setAvatarReady(false);
+      } catch (error) {
+        if (cancelled) {
+          return;
         }
+        // Gateway без GET /realtime/session/:id отдаёт 404 — это не «аватар мёртв», а отсутствие телеметрии.
+        if (error instanceof ApiRequestError && error.status === 404) {
+          console.warn(
+            "[interview] getRealtimeSessionState: upstream 404 — на gateway нет GET /realtime/session/:id; опрос avatar_ready отключён, WebRTC не страдает."
+          );
+          setAvatarReady(true);
+          if (avatarPollTimerRef.current) {
+            clearInterval(avatarPollTimerRef.current);
+            avatarPollTimerRef.current = null;
+          }
+          return;
+        }
+        setAvatarReady(false);
       }
     };
 
@@ -405,6 +410,55 @@ export function useInterviewSession() {
 
   const start = useCallback(async (options?: StartOptions): Promise<InterviewStartResult> => {
     if (phase === "connected" && meetingId && sessionId) {
+      const interviewIdForContext = options?.interviewId;
+      if (
+        typeof interviewIdForContext === "number" &&
+        (options?.triggerSource === "join_stream" || Boolean(options?.interviewContext))
+      ) {
+        const rtc = rtcRef.current;
+        if (rtc?.getSessionId() === sessionId) {
+          let effectiveContext: InterviewStartContext | undefined = options?.interviewContext;
+          let syncDetail: InterviewDetail | undefined;
+          try {
+            const freshDetail = await getInterviewById(interviewIdForContext, true);
+            syncDetail = freshDetail;
+            effectiveContext = mergeStartContextWithInterviewDetail(effectiveContext, freshDetail);
+          } catch {
+            /* keep passed UI context */
+          }
+          const requiredContext = evaluateRequiredContext(effectiveContext);
+          const contextOk =
+            !HARD_CONTEXT_GUARD_ENABLED ||
+            (requiredContext.candidateReady &&
+              requiredContext.companyReady &&
+              requiredContext.jobTitleReady &&
+              requiredContext.vacancyTextReady &&
+              requiredContext.questionsReady);
+          if (contextOk && effectiveContext) {
+            try {
+              lastInterviewContextRef.current = effectiveContext;
+              const runtimeInstructions = buildInterviewInstructions(effectiveContext);
+              setLastAgentContextTrace(
+                createAgentContextTrace(effectiveContext, syncDetail, {
+                  meetingId,
+                  sessionId,
+                  interviewId: interviewIdForContext,
+                  stage: "start:session_update_connected",
+                  triggerSource: options?.triggerSource
+                })
+              );
+              await rtc.postEvent({
+                type: "session.update",
+                session: {
+                  instructions: runtimeInstructions
+                }
+              });
+            } catch {
+              /* best-effort: stream join must not fail if context sync misses */
+            }
+          }
+        }
+      }
       return { meetingId, sessionId };
     }
     if (phase === "starting") {
@@ -422,9 +476,11 @@ export function useInterviewSession() {
     }
 
     let effectiveContext: InterviewStartContext | undefined = options?.interviewContext;
+    let detailAfterFetch: InterviewDetail | undefined;
     if (options?.interviewId) {
       try {
         const freshDetail = await getInterviewById(options.interviewId, true);
+        detailAfterFetch = freshDetail;
         effectiveContext = mergeStartContextWithInterviewDetail(effectiveContext, freshDetail);
       } catch {
         /* оставляем контекст с UI; без сети старт всё равно может быть нужен для отладки */
@@ -496,21 +552,15 @@ export function useInterviewSession() {
 
       lastInterviewContextRef.current = effectiveContext ?? null;
       const runtimeInstructions = buildInterviewInstructions(effectiveContext);
-      setLastAgentContextTrace({
-        sentAt: new Date().toISOString(),
-        interviewId: options?.interviewId,
-        meetingId: internalMeetingId,
-        sessionId: connected.sessionId,
-        candidateFullName:
-          effectiveContext?.candidateFullName ||
-          [effectiveContext?.candidateFirstName, effectiveContext?.candidateLastName]
-            .filter(Boolean)
-            .join(" ")
-            .trim(),
-        companyName: effectiveContext?.companyName,
-        jobTitle: effectiveContext?.jobTitle,
-        questionsCount: effectiveContext?.questions?.length ?? 0
-      });
+      setLastAgentContextTrace(
+        createAgentContextTrace(effectiveContext, detailAfterFetch, {
+          meetingId: internalMeetingId,
+          sessionId: connected.sessionId,
+          interviewId: options?.interviewId,
+          stage: "start:after_merge",
+          triggerSource
+        })
+      );
       await rtc.postEvent({
         type: "session.update",
         session: {
@@ -582,7 +632,7 @@ export function useInterviewSession() {
         }
       }
 
-      const summaryPayload = buildInterviewSummaryPayload(summaryInput);
+      const summaryPayload = await resolveInterviewSummaryPayload(summaryInput);
       setLastInterviewSummary(summaryPayload);
 
       if (activeSessionId) {

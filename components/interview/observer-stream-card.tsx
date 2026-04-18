@@ -10,9 +10,12 @@ import {
   StreamVideoClient,
   useCallStateHooks
 } from "@stream-io/video-react-sdk";
+import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
+import type { SessionUIState } from "@/lib/session-ui-state";
+import { cn } from "@/lib/utils";
 
 type StreamTokenResponse = {
   apiKey: string;
@@ -72,11 +75,11 @@ function ObserverCallBody({ localUserId, onParticipantsDetected }: ObserverCallB
   }, [onParticipantsDetected, orderedParticipants.length]);
 
   if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
-    return <div className="flex h-full items-center justify-center text-sm text-slate-500">Подключение наблюдателя...</div>;
+    return <div className="flex h-full items-center justify-center text-sm text-slate-600">Подключение наблюдателя…</div>;
   }
 
   if (orderedParticipants.length === 0) {
-    return <div className="flex h-full items-center justify-center text-sm text-slate-500">Ожидание участников</div>;
+    return <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание участников</div>;
   }
 
   return (
@@ -103,6 +106,8 @@ type ObserverStreamCardProps = {
   mutePlayback?: boolean;
   title?: string;
   onStatusChange?: (status: ObserverConnectionStatus) => void;
+  sessionEnded?: boolean;
+  uiState?: SessionUIState;
 };
 
 export function ObserverStreamCard({
@@ -117,7 +122,9 @@ export function ObserverStreamCard({
   allowTalkToggle = true,
   mutePlayback = true,
   title = "Наблюдатель",
-  onStatusChange
+  onStatusChange,
+  sessionEnded = false,
+  uiState
 }: ObserverStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
@@ -129,7 +136,8 @@ export function ObserverStreamCard({
   const autoJoinAttemptForRef = useRef<string | null>(null);
   const sessionSuffixRef = useRef<string>(Math.random().toString(36).slice(2, 8));
 
-  const canConnect = enabled && visible && Boolean(meetingId);
+  const ended = Boolean(sessionEnded) || uiState === "completed";
+  const canConnect = enabled && visible && Boolean(meetingId) && !ended;
   const status: ObserverConnectionStatus = useMemo(() => {
     if (!visible && allowVisibilityToggle) {
       return "idle_hidden";
@@ -151,6 +159,28 @@ export function ObserverStreamCard({
     }
     return "waiting_meeting";
   }, [allowVisibilityToggle, busy, call, canConnect, enabled, error, hasParticipants, meetingId, visible]);
+
+  const statusBadgeLabel = useMemo(() => {
+    if (ended) {
+      return "Завершено";
+    }
+    switch (status) {
+      case "waiting_meeting":
+        return "Ожидаем запуск";
+      case "joining":
+        return "Подключаемся…";
+      case "joined":
+        return "В эфире";
+      case "no_participants":
+        return "В эфире (нет участников)";
+      case "error":
+        return "Ошибка";
+      case "idle_hidden":
+        return "Скрыт";
+      default:
+        return "—";
+    }
+  }, [ended, status]);
 
   useEffect(() => {
     onStatusChange?.(status);
@@ -186,7 +216,16 @@ export function ObserverStreamCard({
     setLocalUserId(null);
   }, [call, client]);
 
+  useEffect(() => {
+    if (ended) {
+      void disconnectStream();
+    }
+  }, [disconnectStream, ended]);
+
   const startStream = useCallback(async () => {
+    if (ended) {
+      return;
+    }
     if (!meetingId) {
       return;
     }
@@ -218,9 +257,13 @@ export function ObserverStreamCard({
         user: payload.user
       });
       const streamCall = streamClient.call(payload.callType, payload.callId);
+      await streamCall.camera.disable().catch(() => undefined);
+      await streamCall.microphone.disable().catch(() => undefined);
       // Allow observer to create the call to avoid race conditions
       // when spectator joins slightly earlier than candidate/HR.
       await streamCall.join({ create: true, video: false });
+      await streamCall.camera.disable().catch(() => undefined);
+      await streamCall.microphone.disable().catch(() => undefined);
 
       setClient(streamClient);
       setCall(streamCall);
@@ -233,7 +276,7 @@ export function ObserverStreamCard({
     } finally {
       setBusy(false);
     }
-  }, [meetingId, participantName]);
+  }, [ended, meetingId, participantName]);
 
   useEffect(() => {
     if (!canConnect || call || busy) {
@@ -278,57 +321,62 @@ export function ObserverStreamCard({
     [disconnectStream]
   );
 
+  const showJoinLoader = (busy || (canConnect && !call && !ended)) && visible;
+
   return (
     <StreamParticipantShell
       title={title}
       videoRef={streamViewportRef}
+      videoClassName={cn(
+        (!visible || !client || !call) && "bg-slate-300/70",
+        ended && "pointer-events-none opacity-70"
+      )}
       footer={
         <>
-          <div className="flex flex-wrap items-center justify-between gap-2 text-slate-600">
-            <p className="min-h-5 min-w-0 flex-1 truncate text-sm leading-snug">{participantName}</p>
-            <div className="flex items-center gap-1.5">
-              <Badge variant="secondary" className="rounded-full px-2.5">
-                {status === "joined"
-                  ? "Connected"
-                  : status === "no_participants"
-                    ? "Connected: no participants"
-                    : status === "joining"
-                      ? "Connecting"
-                      : status === "error"
-                        ? "Error"
-                        : status === "idle_hidden"
-                          ? "Hidden"
-                          : "Waiting meeting"}
-              </Badge>
-              <Badge variant={talkMode === "on" ? "default" : "outline"} className="rounded-full px-2.5">
-                {talkMode === "on" ? "Talk: On" : "Talk: Off"}
-              </Badge>
-            </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+            <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{participantName}</p>
+            <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+              <span className="mr-1 text-slate-500" aria-hidden>
+                ●
+              </span>
+              {statusBadgeLabel}
+            </Badge>
           </div>
-          <div className="flex flex-wrap gap-2">
+          {allowTalkToggle && visible ? (
+            <p className="text-[11px] text-slate-500">
+              Микрофон для эфира: <span className="font-medium text-slate-700">{talkMode === "on" ? "вкл" : "выкл"}</span>
+            </p>
+          ) : null}
+          <div className="flex min-h-10 flex-wrap gap-2">
             {allowVisibilityToggle ? (
               <Button
-                size="sm"
+                type="button"
                 variant="secondary"
-                className="rounded-full px-3"
+                className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2 disabled:opacity-50"
+                disabled={ended}
                 onClick={() => onVisibleChange?.(!visible)}
               >
-                {visible ? "Скрыть observer" : "Показать observer"}
+                {visible ? "Скрыть" : "Показать observer"}
               </Button>
             ) : null}
             {allowTalkToggle ? (
               <Button
-                size="sm"
+                type="button"
                 variant={talkMode === "on" ? "default" : "outline"}
-                className="rounded-full px-3"
-                disabled={!call}
+                className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2 disabled:opacity-50"
+                disabled={!call || ended}
                 onClick={() => onTalkModeChange?.(talkMode === "on" ? "off" : "on")}
               >
                 {talkMode === "on" ? "Выключить разговор" : "Разрешить говорить"}
               </Button>
             ) : null}
             {!call && canConnect ? (
-              <Button size="sm" className="rounded-full px-3" onClick={startStream} disabled={busy}>
+              <Button
+                type="button"
+                className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+                onClick={() => void startStream()}
+                disabled={busy || ended}
+              >
                 Подключиться
               </Button>
             ) : null}
@@ -338,9 +386,12 @@ export function ObserverStreamCard({
       error={error ? <p className="w-full rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
     >
       {!visible && allowVisibilityToggle ? (
-        <div className="flex h-full items-center justify-center text-sm text-slate-400">Observer скрыт</div>
+        <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+          <p className="text-sm font-medium text-slate-700">{statusBadgeLabel}</p>
+          <p className="text-xs text-slate-600">Включите отображение, чтобы видеть потоки участников</p>
+        </div>
       ) : client && call && localUserId ? (
-        <div className="h-full w-full">
+        <div className={cn("h-full w-full", ended && "opacity-80")}>
           <StreamVideo client={client}>
             <StreamTheme>
               <StreamCall call={call}>
@@ -350,8 +401,12 @@ export function ObserverStreamCard({
           </StreamVideo>
         </div>
       ) : (
-        <div className="flex h-full items-center justify-center text-sm text-slate-400">
-          {canConnect ? "Подключение observer..." : "Ожидание активной сессии"}
+        <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+          {showJoinLoader ? <Loader2 className="h-7 w-7 shrink-0 animate-spin text-slate-600" aria-hidden /> : null}
+          <p className="text-sm font-medium text-slate-700">{statusBadgeLabel}</p>
+          {!canConnect && !ended ? (
+            <p className="text-xs text-slate-600">Ожидание активной сессии интервью</p>
+          ) : null}
         </div>
       )}
     </StreamParticipantShell>

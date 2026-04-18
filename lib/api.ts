@@ -407,9 +407,14 @@ export async function listInterviews(params?: { skip?: number; take?: number; sy
   const skip = params?.skip ?? 0;
   const take = params?.take ?? 20;
   const sync = params?.sync ? "&sync=1" : "";
-  return requestJson<{ interviews: InterviewListRow[]; count: number }>(`interviews?skip=${skip}&take=${take}${sync}`, {
-    method: "GET"
-  });
+  /** Подсказка gateway: отдавать сначала недавно созданные; при отсутствии поддержки сортировка дублируется на клиенте. */
+  const sort = "&sort=newest_first";
+  return requestJson<{ interviews: InterviewListRow[]; count: number }>(
+    `interviews?skip=${skip}&take=${take}${sync}${sort}`,
+    {
+      method: "GET"
+    }
+  );
 }
 
 export async function getInterviewById(id: number, sync = false): Promise<InterviewDetail> {

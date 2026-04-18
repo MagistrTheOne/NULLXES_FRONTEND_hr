@@ -83,7 +83,7 @@ export function buildVacancyDigestForSummary(
   };
 }
 
-function verdictToHiringRecommendation(verdict: InterviewSummaryVerdict): HiringRecommendation {
+export function hiringRecommendationFromVerdict(verdict: InterviewSummaryVerdict): HiringRecommendation {
   if (verdict === "strong_fit") {
     return "hire";
   }
@@ -171,12 +171,84 @@ export function buildInterviewSummaryPayload(input: InterviewSummaryContextInput
       communication1to10: null,
       thinking1to10: null
     },
-    hiringRecommendation: verdictToHiringRecommendation(verdict),
+    hiringRecommendation: hiringRecommendationFromVerdict(verdict),
     evaluationPending: true,
     vacancyDigest,
     vacancyTruncated: truncated || digestWasTruncated || undefined,
     notes: hasStructuredPlan
       ? "Ниже — выдержка вакансии, попавшая в контекст интервью. Рубрика 1–10 и итоговая рекомендация hire/maybe/reject заполняются после анализа записи; устный summary в конце звонка задаётся инструкциями агента."
       : "Заполните вакансию и вопросы в интервью, чтобы итог опирался на полный контекст. Рубрика 1–10 — после транскрипта или ручного разбора."
+  };
+}
+
+const VERDICTS: InterviewSummaryVerdict[] = ["strong_fit", "maybe", "no_fit"];
+const CONFIDENCES: InterviewSummaryConfidence[] = ["low", "medium", "high"];
+
+function pickVerdict(value: unknown): InterviewSummaryVerdict | undefined {
+  return typeof value === "string" && (VERDICTS as string[]).includes(value) ? (value as InterviewSummaryVerdict) : undefined;
+}
+
+function pickConfidence(value: unknown): InterviewSummaryConfidence | undefined {
+  return typeof value === "string" && (CONFIDENCES as string[]).includes(value)
+    ? (value as InterviewSummaryConfidence)
+    : undefined;
+}
+
+function pickStringArray(value: unknown, maxItems = 12): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const out = value
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean)
+    .slice(0, maxItems);
+  return out.length ? out : undefined;
+}
+
+/**
+ * Накладывает JSON-ответ LLM на детерминированный baseline.
+ * Покрытие вопросов и числовые scores без транскрипта остаются из baseline.
+ */
+export function mergeInterviewSummaryAiDraft(
+  baseline: InterviewSummaryPayload,
+  draft: unknown,
+  meta?: { model: string }
+): InterviewSummaryPayload {
+  if (!draft || typeof draft !== "object") {
+    return baseline;
+  }
+  const d = draft as Record<string, unknown>;
+  const verdict = pickVerdict(d.verdict) ?? baseline.verdict;
+  const confidence = pickConfidence(d.confidence) ?? baseline.confidence;
+  const roleFit = typeof d.roleFit === "string" && d.roleFit.trim() ? d.roleFit.trim() : baseline.roleFit;
+  const strengths = pickStringArray(d.strengths) ?? baseline.strengths;
+  const gaps = pickStringArray(d.gaps) ?? baseline.gaps;
+  const risks = pickStringArray(d.risks) ?? baseline.risks;
+  const redFlags = pickStringArray(d.redFlags) ?? baseline.redFlags;
+  const weaknesses = pickStringArray(d.weaknesses) ?? baseline.weaknesses;
+  const recommendedNextStep =
+    typeof d.recommendedNextStep === "string" && d.recommendedNextStep.trim()
+      ? d.recommendedNextStep.trim()
+      : baseline.recommendedNextStep;
+  const aiNotes = typeof d.notes === "string" && d.notes.trim() ? d.notes.trim() : "";
+  const modelLine = meta?.model ? `\n\n[Итог дополнен моделью ${meta.model} по JD и сценарию вопросов; без транскрипта сессии.]` : "";
+  const notes = [baseline.notes, aiNotes, modelLine].filter(Boolean).join("\n\n");
+
+  return {
+    ...baseline,
+    verdict,
+    confidence,
+    roleFit,
+    strengths,
+    gaps,
+    risks,
+    redFlags,
+    weaknesses,
+    recommendedNextStep,
+    notes,
+    hiringRecommendation: hiringRecommendationFromVerdict(verdict),
+    questionCoverage: baseline.questionCoverage,
+    scores: baseline.scores,
+    evaluationPending: baseline.evaluationPending
   };
 }

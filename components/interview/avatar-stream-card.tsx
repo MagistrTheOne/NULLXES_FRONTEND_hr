@@ -1,9 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CallControls, CallingState, ParticipantView, StreamCall, StreamTheme, StreamVideo, StreamVideoClient, useCallStateHooks } from "@stream-io/video-react-sdk";
+import { Loader2 } from "lucide-react";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
 import { Badge } from "@/components/ui/badge";
+import type { SessionUIState } from "@/lib/session-ui-state";
+import { cn } from "@/lib/utils";
 
 type StreamTokenResponse = {
   apiKey: string;
@@ -30,7 +33,7 @@ function AvatarCallBody({ showStreamToolbar, meetingId, onLeave }: AvatarCallBod
   const avatarParticipant =
     participants.find((participant) => participant.userId === `agent-${meetingId}`) ?? participants[0] ?? null;
   if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
-    return <div className="flex h-full items-center justify-center text-sm text-slate-500">Ожидание подключения аватара...</div>;
+    return <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание потока аватара…</div>;
   }
   return (
     <div className="stream-call-ui h-full w-full">
@@ -38,7 +41,7 @@ function AvatarCallBody({ showStreamToolbar, meetingId, onLeave }: AvatarCallBod
         {avatarParticipant ? (
           <ParticipantView participant={avatarParticipant} trackType="videoTrack" />
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-slate-500">Ожидание HR-аватара</div>
+          <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание HR-аватара</div>
         )}
       </div>
       {showStreamToolbar ? (
@@ -63,6 +66,10 @@ type AvatarStreamCardProps = {
   showStopAI?: boolean;
   onStopAI?: () => void;
   stopAIDisabled?: boolean;
+  sessionEnded?: boolean;
+  uiState?: SessionUIState;
+  /** Визуально выделить колонку HR как основную (AI-интервьюер). */
+  emphasizePrimary?: boolean;
 };
 
 export function AvatarStreamCard({
@@ -75,11 +82,15 @@ export function AvatarStreamCard({
   showStopAI = false,
   onStopAI,
   stopAIDisabled = false,
+  sessionEnded = false,
+  uiState,
+  emphasizePrimary = true,
 }: AvatarStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
   const canRenderAvatarWindow = enabled && Boolean(client && call);
   const [busy, setBusy] = useState(false);
+  const ended = Boolean(sessionEnded) || uiState === "completed";
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
   const autoJoinAttemptForRef = useRef<string | null>(null);
   const callRoomId = meetingId ?? "unknown-meeting";
@@ -115,6 +126,9 @@ export function AvatarStreamCard({
   }, [call, client]);
 
   const startStream = useCallback(async () => {
+    if (ended) {
+      return;
+    }
     if (!meetingId) {
       return;
     }
@@ -144,7 +158,11 @@ export function AvatarStreamCard({
         user: payload.user
       });
       const streamCall = streamClient.call(payload.callType, payload.callId);
+      await streamCall.camera.disable().catch(() => undefined);
+      await streamCall.microphone.disable().catch(() => undefined);
       await streamCall.join({ create: true, video: false });
+      await streamCall.camera.disable().catch(() => undefined);
+      await streamCall.microphone.disable().catch(() => undefined);
 
       setClient(streamClient);
       setCall(streamCall);
@@ -153,10 +171,26 @@ export function AvatarStreamCard({
     } finally {
       setBusy(false);
     }
-  }, [meetingId, participantName]);
+  }, [ended, meetingId, participantName]);
+
+  const hrStatusLabel = useMemo(() => {
+    if (ended) {
+      return "Сессия завершена";
+    }
+    if (canRenderAvatarWindow) {
+      return "В эфире";
+    }
+    if (!enabled || !meetingId) {
+      return "Ожидаем запуск";
+    }
+    if (busy || !call) {
+      return "Подключаемся…";
+    }
+    return "Подключаемся…";
+  }, [busy, call, canRenderAvatarWindow, enabled, ended, meetingId]);
 
   useEffect(() => {
-    if (!enabled || !meetingId || call || busy) {
+    if (!enabled || ended || !meetingId || call || busy) {
       return;
     }
     const autoJoinKey = meetingId;
@@ -165,7 +199,7 @@ export function AvatarStreamCard({
     }
     autoJoinAttemptForRef.current = autoJoinKey;
     void startStream();
-  }, [busy, call, enabled, meetingId, startStream]);
+  }, [busy, call, enabled, ended, meetingId, startStream]);
 
   useEffect(() => {
     if (enabled && meetingId) {
@@ -173,6 +207,12 @@ export function AvatarStreamCard({
     }
     void disconnectStream();
   }, [disconnectStream, enabled, meetingId]);
+
+  useEffect(() => {
+    if (ended) {
+      void disconnectStream();
+    }
+  }, [disconnectStream, ended]);
 
   const handleLeaveFromControls = useCallback(
     async (err?: Error) => {
@@ -188,33 +228,43 @@ export function AvatarStreamCard({
     <StreamParticipantShell
       title="HR аватар"
       videoRef={streamViewportRef}
+      videoClassName={cn(
+        !canRenderAvatarWindow && "bg-slate-300/70",
+        emphasizePrimary && uiState === "active" && "ring-2 ring-indigo-400/35 ring-offset-2 ring-offset-[#d9dee7]",
+        ended && "pointer-events-none opacity-70"
+      )}
       footer={
         <>
-          <div className="flex flex-wrap items-center justify-between gap-2 text-slate-600">
-            <p className="min-h-5 min-w-0 flex-1 truncate text-sm leading-snug">{participantName}</p>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+            <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{participantName}</p>
             {showStatusBadge ? (
-              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                <Badge variant="secondary" className="shrink-0 rounded-full px-2.5">
-                  {canRenderAvatarWindow ? "Connected" : avatarReady ? "Ready" : "Idle"}
-                </Badge>
-              </div>
+              <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+                <span className="mr-1 text-indigo-600" aria-hidden>
+                  ●
+                </span>
+                {hrStatusLabel}
+              </Badge>
             ) : null}
           </div>
-          {showStopAI && onStopAI ? (
-            <button
-              type="button"
-              disabled={stopAIDisabled}
-              onClick={onStopAI}
-              className="w-full rounded-xl border border-rose-300/80 bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.15)] transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Стоп
-            </button>
-          ) : null}
+          <div className="flex min-h-10 flex-wrap items-stretch gap-2">
+            {showStopAI && onStopAI ? (
+              <button
+                type="button"
+                disabled={stopAIDisabled || ended}
+                onClick={onStopAI}
+                className="h-10 min-h-10 w-full rounded-xl border border-rose-300/80 bg-rose-600 px-4 text-sm font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.15)] transition hover:bg-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Остановить бота
+              </button>
+            ) : ended ? (
+              <p className="w-full text-xs text-slate-600">Интервью завершено, управление отключено.</p>
+            ) : null}
+          </div>
         </>
       }
     >
       {canRenderAvatarWindow && client && call ? (
-        <div className="h-full w-full">
+        <div className={cn("h-full w-full", ended && "pointer-events-none opacity-80")}>
           <StreamVideo client={client}>
             <StreamTheme>
               <StreamCall call={call}>
@@ -228,7 +278,15 @@ export function AvatarStreamCard({
           </StreamVideo>
         </div>
       ) : (
-        <div className="flex h-full items-center justify-center text-sm text-slate-400">Загрузка</div>
+        <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+          {(busy || (enabled && meetingId && !call)) && !ended ? (
+            <Loader2 className="h-7 w-7 shrink-0 animate-spin text-slate-600" aria-hidden />
+          ) : null}
+          <p className="text-sm font-medium text-slate-700">{hrStatusLabel}</p>
+          {!ended && !canRenderAvatarWindow && avatarReady ? (
+            <p className="text-xs text-slate-600">Сигнал готовности получен, подключаем поток…</p>
+          ) : null}
+        </div>
       )}
     </StreamParticipantShell>
   );

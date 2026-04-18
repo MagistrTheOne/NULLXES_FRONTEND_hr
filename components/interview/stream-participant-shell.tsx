@@ -10,6 +10,8 @@ export const STREAM_CARD_FOOTER_CLASS = "flex min-h-[56px] w-full shrink-0 flex-
 
 type StreamParticipantShellProps = {
   title: string;
+  /** Подзаголовок под названием колонки (подсказка, UX). */
+  description?: ReactNode;
   children: ReactNode;
   footer: ReactNode;
   error?: ReactNode;
@@ -19,6 +21,7 @@ type StreamParticipantShellProps = {
 
 export function StreamParticipantShell({
   title,
+  description,
   children,
   footer,
   error,
@@ -26,9 +29,14 @@ export function StreamParticipantShell({
   videoClassName
 }: StreamParticipantShellProps) {
   return (
-    <section className="flex h-full min-h-0 w-full flex-col items-center gap-3">
-      <h3 className="h-9 shrink-0 text-center text-xl font-medium leading-none text-slate-600 sm:text-[30px]">{title}</h3>
-      <Card className="flex w-full min-h-0 flex-1 flex-col rounded-2xl border-0 bg-[#d9dee7] p-3 shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]">
+    <section className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col items-center gap-3">
+      <div className="flex w-full flex-col items-center gap-1">
+        <h3 className="h-9 shrink-0 text-center text-xl font-medium leading-none text-slate-600 sm:text-[30px]">{title}</h3>
+        {description ? (
+          <p className="max-w-[min(100%,20rem)] text-center text-[11px] leading-snug text-slate-500 sm:text-xs">{description}</p>
+        ) : null}
+      </div>
+      <Card className="flex w-full min-h-0 min-w-0 flex-1 flex-col rounded-2xl border-0 bg-[#d9dee7] p-3 shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]">
         <CardContent className="flex min-h-0 flex-1 flex-col gap-2 p-2">
           <div ref={videoRef} className={cn(STREAM_VIDEO_BOX_CLASS, videoClassName)}>
             {children}

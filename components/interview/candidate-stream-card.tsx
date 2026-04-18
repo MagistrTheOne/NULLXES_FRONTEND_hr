@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CallControls,
   CallingState,
@@ -14,8 +14,12 @@ import {
 import { releaseCandidateAdmission, sendRealtimeEvent } from "@/lib/api";
 import { formatCandidateMeetingLobbyMessage, isMeetingNotYetOpen } from "@/lib/meeting-at-guard";
 import type { InterviewStartContext, InterviewStartResult } from "@/hooks/use-interview-session";
+import type { SessionUIState } from "@/lib/session-ui-state";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
+import { cn } from "@/lib/utils";
+import { VideoOff } from "lucide-react";
 
 type StreamTokenResponse = {
   apiKey: string;
@@ -42,7 +46,7 @@ function CandidateCallBody({ showControls, meetingId, onLeave }: CandidateCallBo
     participants.find((participant) => participant.userId === `candidate-${meetingId}`) ?? participants[0] ?? null;
 
   if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
-    return <div className="flex h-full items-center justify-center text-sm text-slate-500">Stream is not connected</div>;
+    return <div className="flex h-full items-center justify-center text-sm text-slate-600">Поток не подключён</div>;
   }
 
   return (
@@ -80,6 +84,10 @@ type CandidateStreamCardProps = {
   }) => Promise<InterviewStartResult>;
   interviewContext?: InterviewStartContext;
   showControls?: boolean;
+  /** Сессия в статусе completed на gateway/JobAI — блок подключения и кнопки. */
+  sessionEnded?: boolean;
+  /** Единый режим UI с interview-shell (дублирует sessionEnded при `completed`). */
+  uiState?: SessionUIState;
 };
 
 export function CandidateStreamCard({
@@ -92,7 +100,9 @@ export function CandidateStreamCard({
   meetingAt,
   onEnsureInterviewStart,
   interviewContext,
-  showControls = true
+  showControls = true,
+  sessionEnded = false,
+  uiState
 }: CandidateStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
@@ -103,6 +113,25 @@ export function CandidateStreamCard({
   const autoEntryAttemptRef = useRef<boolean>(false);
   const participantIdRef = useRef<string | null>(null);
   const callRoomId = meetingId ?? "unknown-meeting";
+
+  const ended = Boolean(sessionEnded) || uiState === "completed";
+  const interactiveDisabled = ended;
+
+  const statusBadgeLabel = useMemo(() => {
+    if (ended) {
+      return "Завершено";
+    }
+    if (call) {
+      return "В эфире";
+    }
+    if (!enabled) {
+      return "Ожидаем запуск";
+    }
+    if (busy) {
+      return "Подключаемся…";
+    }
+    return "Не в эфире";
+  }, [busy, call, enabled, ended]);
 
   const getParticipantId = useCallback(() => {
     if (participantIdRef.current) {
@@ -162,6 +191,9 @@ export function CandidateStreamCard({
   }, [call, client, meetingId]);
 
   const startStream = useCallback(async () => {
+    if (ended) {
+      return;
+    }
     if (isMeetingNotYetOpen(meetingAt)) {
       setError(formatCandidateMeetingLobbyMessage(meetingAt!.trim()));
       return;
@@ -212,6 +244,7 @@ export function CandidateStreamCard({
       const streamCall = streamClient.call(payload.callType, payload.callId);
       await streamCall.camera.disable().catch(() => undefined);
       await streamCall.join({ create: true, video: false });
+      await streamCall.camera.disable().catch(() => undefined);
 
       setClient(streamClient);
       setCall(streamCall);
@@ -229,12 +262,18 @@ export function CandidateStreamCard({
     } finally {
       setBusy(false);
     }
-  }, [getParticipantId, interviewContext, interviewId, meetingAt, meetingId, onEnsureInterviewStart, participantName, sessionId]);
+  }, [ended, getParticipantId, interviewContext, interviewId, meetingAt, meetingId, onEnsureInterviewStart, participantName, sessionId]);
+
+  useEffect(() => {
+    if (ended) {
+      void disconnectStream();
+    }
+  }, [disconnectStream, ended]);
 
   useEffect(() => {
     // Match HR avatar card: join Stream as soon as meeting exists + session is connected.
     // Do not require `sessionId` here — it can lag behind hook state and would block auto-join forever.
-    if (!enabled || !meetingId || call || busy) {
+    if (!enabled || ended || !meetingId || call || busy) {
       return;
     }
     if (isMeetingNotYetOpen(meetingAt)) {
@@ -246,10 +285,10 @@ export function CandidateStreamCard({
     }
     autoJoinAttemptForRef.current = autoJoinKey;
     void startStream();
-  }, [busy, call, enabled, meetingAt, meetingId, startStream]);
+  }, [busy, call, enabled, ended, meetingAt, meetingId, startStream]);
 
   useEffect(() => {
-    if (!autoConnectOnEntry || autoEntryAttemptRef.current || call || busy) {
+    if (!autoConnectOnEntry || ended || autoEntryAttemptRef.current || call || busy) {
       return;
     }
     if (isMeetingNotYetOpen(meetingAt)) {
@@ -257,7 +296,7 @@ export function CandidateStreamCard({
     }
     autoEntryAttemptRef.current = true;
     void startStream();
-  }, [autoConnectOnEntry, busy, call, meetingAt, startStream]);
+  }, [autoConnectOnEntry, busy, call, ended, meetingAt, startStream]);
 
   useEffect(() => {
     if (enabled && meetingId) {
@@ -287,19 +326,31 @@ export function CandidateStreamCard({
     <StreamParticipantShell
       title="Кандидат"
       videoRef={streamViewportRef}
+      videoClassName={cn(!client || !call ? "bg-slate-300/70" : undefined, interactiveDisabled && "pointer-events-none")}
       footer={
         <>
-          <div className="flex flex-wrap items-center justify-between gap-2 text-slate-600">
-            <p className="min-h-5 min-w-0 flex-1 truncate text-sm leading-snug">{participantName}</p>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+            <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{participantName}</p>
+            <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+              <span className="mr-1 text-emerald-600" aria-hidden>
+                ●
+              </span>
+              {statusBadgeLabel}
+            </Badge>
           </div>
 
-          {!call && showControls ? (
-            <div className="flex flex-wrap gap-2">
+          <div className="flex min-h-10 flex-wrap gap-2">
+            {ended ? (
+              <p className="w-full text-xs leading-relaxed text-slate-600">
+                Сессия завершена.
+                <span className="mt-0.5 block">Повторное подключение недоступно.</span>
+              </p>
+            ) : !call && showControls && !autoConnectOnEntry ? (
               <Button
-                size="sm"
-                className="rounded-full px-3"
+                type="button"
+                className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
                 onClick={() => void startStream()}
-                disabled={busy || isMeetingNotYetOpen(meetingAt)}
+                disabled={busy || interactiveDisabled || isMeetingNotYetOpen(meetingAt)}
                 title={
                   isMeetingNotYetOpen(meetingAt) && meetingAt?.trim()
                     ? formatCandidateMeetingLobbyMessage(meetingAt.trim())
@@ -308,19 +359,19 @@ export function CandidateStreamCard({
               >
                 Подключиться
               </Button>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </>
       }
       error={error ? <p className="w-full rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
     >
       {client && call ? (
-        <div className="h-full w-full">
+        <div className={cn("h-full w-full", interactiveDisabled && "pointer-events-none opacity-70")}>
           <StreamVideo client={client}>
             <StreamTheme>
               <StreamCall call={call}>
                 <CandidateCallBody
-                  showControls={showControls}
+                  showControls={showControls && !interactiveDisabled}
                   meetingId={callRoomId}
                   onLeave={handleLeaveFromControls}
                 />
@@ -329,8 +380,25 @@ export function CandidateStreamCard({
           </StreamVideo>
         </div>
       ) : (
-        <div className="flex h-full items-center justify-center text-sm text-slate-400">
-          {showControls ? "Нажмите «Подключиться» для входа" : "Ожидание старта собеседования"}
+        <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+          <VideoOff className="h-8 w-8 shrink-0 text-slate-600" strokeWidth={1.75} aria-hidden />
+          {ended ? (
+            <>
+              <p className="text-sm font-medium text-slate-700">Сессия завершена</p>
+              <p className="max-w-[240px] text-xs text-slate-600">Повторное подключение недоступно</p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-medium text-slate-700">Видео не подключено</p>
+              <p className="max-w-[260px] text-sm text-slate-600">
+                {autoConnectOnEntry
+                  ? "Подключение к потоку выполнится автоматически после старта сессии HR."
+                  : showControls
+                    ? "Нажмите «Подключиться», чтобы начать"
+                    : "Ожидание старта собеседования"}
+              </p>
+            </>
+          )}
         </div>
       )}
     </StreamParticipantShell>
