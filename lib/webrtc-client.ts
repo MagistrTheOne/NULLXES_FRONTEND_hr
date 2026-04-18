@@ -48,8 +48,20 @@ export class WebRtcInterviewClient {
   }
 
   async connect(): Promise<{ sessionId: string }> {
+    // If a previous connect() is still in flight (or left a stale PC), close it
+    // before starting a new one. Otherwise the old PeerConnection sits in pending
+    // setRemoteDescription state and a refresh / re-entry crashes with
+    // `signalingState === 'closed'` when the late answer finally arrives.
+    if (this.peerConnection) {
+      this.close();
+    }
+
     this.setState("connecting");
     await getRealtimeToken();
+    if (this.peerConnection) {
+      // close() was called while we were awaiting the token — bail out cleanly.
+      throw new Error("connect aborted: client closed during token fetch");
+    }
 
     const pc = new RTCPeerConnection();
     this.peerConnection = pc;
@@ -58,12 +70,17 @@ export class WebRtcInterviewClient {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      if (this.peerConnection !== pc || pc.signalingState === "closed") {
+        for (const track of stream.getTracks()) track.stop();
+        throw new Error("connect aborted: peer connection replaced during getUserMedia");
+      }
       this.mediaStream = stream;
       for (const track of stream.getTracks()) {
         pc.addTrack(track, stream);
       }
       this.setAudioInputEnabled(this.audioInputEnabled);
-    } catch {
+    } catch (mediaErr) {
+      if (this.peerConnection !== pc) throw mediaErr;
       // Audio capture is optional for initial prototype.
     }
 
@@ -87,9 +104,18 @@ export class WebRtcInterviewClient {
       this.flushPendingEvents();
     };
 
+    const isAborted = (state: RTCSignalingState | string): boolean =>
+      this.peerConnection !== pc || String(state) === "closed";
+
     const offer = await pc.createOffer();
+    if (isAborted(pc.signalingState)) {
+      throw new Error("connect aborted: closed before setLocalDescription");
+    }
     await pc.setLocalDescription(offer);
     await waitForIceGatheringComplete(pc);
+    if (isAborted(pc.signalingState)) {
+      throw new Error("connect aborted: closed during ICE gathering");
+    }
 
     const localSdp = pc.localDescription?.sdp;
     if (!localSdp) {
@@ -99,6 +125,11 @@ export class WebRtcInterviewClient {
 
     const normalizedLocalSdp = normalizeSdp(localSdp);
     const { answerSdp, sessionId } = await createRealtimeSession(normalizedLocalSdp);
+    if (isAborted(pc.signalingState)) {
+      // Gateway answered but our PC was torn down meanwhile (page refresh, double-connect, etc).
+      // Drop the orphaned session id silently — server-side idle sweeper will close it.
+      throw new Error("connect aborted: peer connection closed before applying SDP answer");
+    }
     if (!sessionId) {
       this.setState("failed");
       throw new Error("Gateway response missing session id");
