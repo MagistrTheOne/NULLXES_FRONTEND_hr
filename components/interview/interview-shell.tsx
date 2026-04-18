@@ -13,6 +13,7 @@ import {
   type InterviewDetail,
   type InterviewListRow
 } from "@/lib/api";
+import { extractCoreFieldsFromInterviewRaw, mergeStartContextWithInterviewDetail } from "@/lib/interview-detail-fields";
 import type { InterviewSummaryPayload } from "@/lib/interview-summary";
 import {
   getObserverControlState,
@@ -242,28 +243,28 @@ export function InterviewShell() {
     if (!selectedRow && !selectedInterviewDetailMatched) {
       return undefined;
     }
+    const rawInterview = selectedInterviewDetailMatched?.interview as Record<string, unknown> | undefined;
+    const ext = rawInterview ? extractCoreFieldsFromInterviewRaw(rawInterview) : {};
+    const inv = selectedInterviewDetailMatched?.interview;
     const first =
       candidateFio.trim() ||
       selectedRow?.candidateFirstName ||
-      selectedInterviewDetailMatched?.interview.candidateFirstName ||
+      inv?.candidateFirstName ||
       "";
-    const last = selectedRow?.candidateLastName || selectedInterviewDetailMatched?.interview.candidateLastName || "";
+    const last = selectedRow?.candidateLastName || inv?.candidateLastName || "";
     const full = candidateFio.trim() || [first, last].filter(Boolean).join(" ").trim();
     return {
       candidateFirstName: first || undefined,
       candidateLastName: last || undefined,
       candidateFullName: full || undefined,
-      jobTitle: selectedInterviewDetailMatched?.interview.jobTitle,
-      vacancyText: selectedInterviewDetailMatched?.interview.vacancyText,
-      companyName: selectedRow?.companyName || selectedInterviewDetailMatched?.interview.companyName,
+      jobTitle: ext.jobTitle ?? inv?.jobTitle,
+      vacancyText: ext.vacancyText ?? inv?.vacancyText,
+      companyName: selectedRow?.companyName || ext.companyName || inv?.companyName,
       greetingSpeech:
-        (selectedInterviewDetailMatched?.interview.greetingSpeechResolved as string | undefined) ??
-        selectedInterviewDetailMatched?.interview.greetingSpeech,
-      finalSpeech:
-        (selectedInterviewDetailMatched?.interview.finalSpeechResolved as string | undefined) ??
-        selectedInterviewDetailMatched?.interview.finalSpeech,
-      questions: selectedInterviewDetailMatched?.interview.specialty?.questions,
-      specialtyName: selectedInterviewDetailMatched?.interview.specialty?.name
+        (inv?.greetingSpeechResolved as string | undefined) ?? inv?.greetingSpeech,
+      finalSpeech: (inv?.finalSpeechResolved as string | undefined) ?? inv?.finalSpeech,
+      questions: inv?.specialty?.questions,
+      specialtyName: ext.specialtyName ?? inv?.specialty?.name
     };
   }, [candidateFio, selectedInterviewDetailMatched, selectedRow]);
 
@@ -680,27 +681,7 @@ export function InterviewShell() {
         if (needSync) {
           const syncedDetail = await getInterviewById(selectedInterviewId, true);
           setSelectedInterviewDetail(syncedDetail);
-          contextForStart = {
-            candidateFirstName: candidateFio.trim() || syncedDetail.interview.candidateFirstName,
-            candidateLastName: syncedDetail.interview.candidateLastName,
-            candidateFullName:
-              candidateFio.trim() ||
-              [syncedDetail.interview.candidateFirstName, syncedDetail.interview.candidateLastName]
-                .filter(Boolean)
-                .join(" ")
-                .trim(),
-            jobTitle: syncedDetail.interview.jobTitle,
-            vacancyText: syncedDetail.interview.vacancyText,
-            companyName: syncedDetail.interview.companyName,
-            greetingSpeech:
-              (syncedDetail.interview.greetingSpeechResolved as string | undefined) ??
-              syncedDetail.interview.greetingSpeech,
-            finalSpeech:
-              (syncedDetail.interview.finalSpeechResolved as string | undefined) ??
-              syncedDetail.interview.finalSpeech,
-            questions: syncedDetail.interview.specialty?.questions,
-            specialtyName: syncedDetail.interview.specialty?.name
-          };
+          contextForStart = mergeStartContextWithInterviewDetail(interviewStartContext, syncedDetail);
         }
 
         if (HARD_CONTEXT_GUARD_ENABLED) {
@@ -767,53 +748,12 @@ export function InterviewShell() {
           onEntryUrlCommit={handleEntryUrlCommit}
           candidateFio={candidateFio}
           onStart={() => {
-            void (async () => {
-              let contextForStart = interviewStartContext;
-              const activeInterviewId = selectedInterviewId ?? selectedRow?.jobAiId ?? undefined;
-              if (
-                activeInterviewId &&
-                (!selectedInterviewDetailMatched ||
-                  !contextForStart?.jobTitle ||
-                  !contextForStart?.vacancyText ||
-                  !contextForStart?.companyName ||
-                  (contextForStart.questions?.length ?? 0) === 0)
-              ) {
-                try {
-                  const syncedDetail = await getInterviewById(activeInterviewId, true);
-                  setSelectedInterviewDetail(syncedDetail);
-                  contextForStart = {
-                    candidateFirstName: candidateFio.trim() || syncedDetail.interview.candidateFirstName,
-                    candidateLastName: syncedDetail.interview.candidateLastName,
-                    candidateFullName:
-                      candidateFio.trim() ||
-                      [syncedDetail.interview.candidateFirstName, syncedDetail.interview.candidateLastName]
-                        .filter(Boolean)
-                        .join(" ")
-                        .trim(),
-                    jobTitle: syncedDetail.interview.jobTitle,
-                    vacancyText: syncedDetail.interview.vacancyText,
-                    companyName: syncedDetail.interview.companyName,
-                    greetingSpeech:
-                      (syncedDetail.interview.greetingSpeechResolved as string | undefined) ??
-                      syncedDetail.interview.greetingSpeech,
-                    finalSpeech:
-                      (syncedDetail.interview.finalSpeechResolved as string | undefined) ??
-                      syncedDetail.interview.finalSpeech,
-                    questions: syncedDetail.interview.specialty?.questions,
-                    specialtyName: syncedDetail.interview.specialty?.name
-                  };
-                } catch {
-                  // Keep best-effort context if force-sync fails.
-                }
-              }
-
-              await start({
-                triggerSource: "manual_start_button",
-                interviewId: activeInterviewId,
-                meetingAt: selectedInterviewDetailMatched?.interview.meetingAt ?? selectedRow?.meetingAt,
-                interviewContext: contextForStart
-              });
-            })();
+            void start({
+              triggerSource: "manual_start_button",
+              interviewId: selectedInterviewId ?? selectedRow?.jobAiId ?? undefined,
+              meetingAt: selectedInterviewDetailMatched?.interview.meetingAt ?? selectedRow?.meetingAt,
+              interviewContext: interviewStartContext
+            });
           }}
           onStopSession={() => {
             const jid = selectedInterviewId ?? selectedRow?.jobAiId;

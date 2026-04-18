@@ -16,6 +16,7 @@ import {
   type JobAiInterviewStatus
 } from "@/lib/api";
 import { buildInterviewInstructions, buildOpeningUtterance } from "@/lib/interview-agent-prompt";
+import { extractCoreFieldsFromInterviewRaw, mergeStartContextWithInterviewDetail } from "@/lib/interview-detail-fields";
 import type { InterviewStartContext } from "@/lib/interview-start-context";
 import { buildInterviewSummaryPayload, type InterviewSummaryPayload } from "@/lib/interview-summary";
 import { WebRtcInterviewClient, type WebRtcConnectionState } from "@/lib/webrtc-client";
@@ -109,11 +110,13 @@ function mergeInterviewContextForSummary(
   existing: InterviewStartContext | null,
   detail: InterviewDetail
 ): InterviewStartContext {
-  const inv = detail.interview;
+  const inv = detail.interview as Record<string, unknown>;
+  const ext = extractCoreFieldsFromInterviewRaw(inv);
+  const typed = detail.interview;
   const proto = detail.prototypeCandidate;
   const fullFromApi =
     proto?.sourceFullName?.trim() ||
-    [inv.candidateFirstName, inv.candidateLastName].filter(Boolean).join(" ").trim();
+    [typed.candidateFirstName, typed.candidateLastName].filter(Boolean).join(" ").trim();
 
   const pick = (a: string | undefined, b: string | undefined): string | undefined => {
     const ta = (a ?? "").trim();
@@ -125,23 +128,23 @@ function mergeInterviewContextForSummary(
   };
 
   const mergedQuestions =
-    existing?.questions && existing.questions.length > 0 ? existing.questions : inv.specialty?.questions;
+    existing?.questions && existing.questions.length > 0 ? existing.questions : typed.specialty?.questions;
 
   return {
-    candidateFirstName: pick(existing?.candidateFirstName, inv.candidateFirstName),
-    candidateLastName: pick(existing?.candidateLastName, inv.candidateLastName),
+    candidateFirstName: pick(existing?.candidateFirstName, typed.candidateFirstName),
+    candidateLastName: pick(existing?.candidateLastName, typed.candidateLastName),
     candidateFullName: pick(existing?.candidateFullName, fullFromApi || undefined),
-    jobTitle: pick(existing?.jobTitle, inv.jobTitle),
-    vacancyText: pick(existing?.vacancyText, inv.vacancyText),
-    companyName: pick(existing?.companyName, inv.companyName),
-    specialtyName: pick(existing?.specialtyName, inv.specialty?.name),
+    jobTitle: pick(existing?.jobTitle, ext.jobTitle),
+    vacancyText: pick(existing?.vacancyText, ext.vacancyText),
+    companyName: pick(existing?.companyName, ext.companyName),
+    specialtyName: pick(existing?.specialtyName, ext.specialtyName ?? typed.specialty?.name),
     greetingSpeech: pick(
       existing?.greetingSpeech,
-      (inv.greetingSpeechResolved as string | undefined) ?? inv.greetingSpeech
+      (typed.greetingSpeechResolved as string | undefined) ?? typed.greetingSpeech
     ),
     finalSpeech: pick(
       existing?.finalSpeech,
-      (inv.finalSpeechResolved as string | undefined) ?? inv.finalSpeech
+      (typed.finalSpeechResolved as string | undefined) ?? typed.finalSpeech
     ),
     questions: mergedQuestions
   };
@@ -418,7 +421,17 @@ export function useInterviewSession() {
       }
     }
 
-    const requiredContext = evaluateRequiredContext(options?.interviewContext);
+    let effectiveContext: InterviewStartContext | undefined = options?.interviewContext;
+    if (options?.interviewId) {
+      try {
+        const freshDetail = await getInterviewById(options.interviewId, true);
+        effectiveContext = mergeStartContextWithInterviewDetail(effectiveContext, freshDetail);
+      } catch {
+        /* оставляем контекст с UI; без сети старт всё равно может быть нужен для отладки */
+      }
+    }
+
+    const requiredContext = evaluateRequiredContext(effectiveContext);
     if (
       HARD_CONTEXT_GUARD_ENABLED &&
       (!requiredContext.candidateReady ||
@@ -444,14 +457,14 @@ export function useInterviewSession() {
         metadata: {
           source: "jobaidemo",
           jobAiInterviewId: options?.interviewId,
-          interviewContext: options?.interviewContext,
+          interviewContext: effectiveContext,
           interviewContextMeta: {
-            contextVersion: "INTERVIEW_UI_CONTRACT_v1",
+            contextVersion: "INTERVIEW_UI_CONTRACT_v2",
             hardContextGuardEnabled: HARD_CONTEXT_GUARD_ENABLED,
             hasCandidateName: requiredContext.candidateReady,
-            hasJobTitle: Boolean(options?.interviewContext?.jobTitle),
-            hasVacancyText: Boolean(options?.interviewContext?.vacancyText),
-            hasCompanyName: Boolean(options?.interviewContext?.companyName),
+            hasJobTitle: Boolean(effectiveContext?.jobTitle),
+            hasVacancyText: Boolean(effectiveContext?.vacancyText),
+            hasCompanyName: Boolean(effectiveContext?.companyName),
             questionCount: requiredContext.questionsCount
           }
         }
@@ -481,22 +494,22 @@ export function useInterviewSession() {
         }
       }
 
-      lastInterviewContextRef.current = options?.interviewContext ?? null;
-      const runtimeInstructions = buildInterviewInstructions(options?.interviewContext);
+      lastInterviewContextRef.current = effectiveContext ?? null;
+      const runtimeInstructions = buildInterviewInstructions(effectiveContext);
       setLastAgentContextTrace({
         sentAt: new Date().toISOString(),
         interviewId: options?.interviewId,
         meetingId: internalMeetingId,
         sessionId: connected.sessionId,
         candidateFullName:
-          options?.interviewContext?.candidateFullName ||
-          [options?.interviewContext?.candidateFirstName, options?.interviewContext?.candidateLastName]
+          effectiveContext?.candidateFullName ||
+          [effectiveContext?.candidateFirstName, effectiveContext?.candidateLastName]
             .filter(Boolean)
             .join(" ")
             .trim(),
-        companyName: options?.interviewContext?.companyName,
-        jobTitle: options?.interviewContext?.jobTitle,
-        questionsCount: options?.interviewContext?.questions?.length ?? 0
+        companyName: effectiveContext?.companyName,
+        jobTitle: effectiveContext?.jobTitle,
+        questionsCount: effectiveContext?.questions?.length ?? 0
       });
       await rtc.postEvent({
         type: "session.update",
@@ -504,7 +517,7 @@ export function useInterviewSession() {
           instructions: runtimeInstructions
         }
       });
-      const openingUtterance = buildOpeningUtterance(options?.interviewContext);
+      const openingUtterance = buildOpeningUtterance(effectiveContext);
       await rtc.postEvent({
         type: "response.create",
         response: {
