@@ -10,12 +10,13 @@ export const AGENT_SELF_INTRO = "Я виртуальный HR-ассистент
  */
 export function buildAgentSelfIntroLine(context?: InterviewStartContext): string {
   const company = context?.companyName?.trim();
-  const jobTitle = context?.jobTitle?.trim();
-  if (company && jobTitle) {
-    return `Я виртуальный HR-ассистент компании ${company}, провожу с вами собеседование на позицию «${jobTitle}».`;
-  }
+  // Intentionally do NOT include jobTitle here — it is already stated inside the
+  // JobAI greeting text ("Это видеособеседование на вакансию <job_title>"), and
+  // mentioning it again in the self-intro creates an audible duplicate that
+  // reads as robotic ("...на позицию X. Добрый день, ... видеособеседование на
+  // вакансию X..."). Self-intro stays role-only; vacancy belongs to greeting.
   if (company) {
-    return `Я виртуальный HR-ассистент компании ${company}, провожу с вами это собеседование.`;
+    return `Я виртуальный HR-ассистент компании ${company}.`;
   }
   return AGENT_SELF_INTRO;
 }
@@ -213,7 +214,8 @@ export function buildInterviewInstructions(context?: InterviewStartContext): str
     "   [✓] далее — полный текст блока «Приветствие (JobAI)» дословно, все предложения, в исходном порядке;",
     "   [✓] упоминание записи и согласия (если оно есть в блоке) сохранено;",
     "   [✓] нет добавлений «Здравствуйте», «давайте начнём», «как ИИ», «я готов»;",
-    "   [✓] нет своих мыслей про вакансию или компанию вне блока приветствия.",
+    "   [✓] нет своих мыслей про вакансию или компанию вне блока приветствия;",
+    "   [✓] название должности и имя кандидата звучат строго столько раз, сколько они уже встречаются в самопрезентации и блоке приветствия — не дублируй их от себя ни до, ни после блока, ни внутри своих переходных фраз.",
     "   Если хотя бы один пункт не выполнен в твоей готовой реплике — перестрой реплику и проверь снова. Только потом озвучивай."
   ].join("\n");
 

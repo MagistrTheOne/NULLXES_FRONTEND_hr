@@ -7,6 +7,35 @@ function normalizeSdp(input: string): string {
   return `${normalized}\r\n`;
 }
 
+/**
+ * Whitelist of OpenAI Realtime API client event types.
+ * Anything outside this list is treated as gateway-only telemetry and is NOT
+ * forwarded over the WebRTC DataChannel — otherwise OpenAI replies with an
+ * `error` event ("Unknown parameter" / "unknown_event_type") which pollutes
+ * the session.
+ *
+ * Source: https://platform.openai.com/docs/api-reference/realtime_client_events
+ */
+const OPENAI_CLIENT_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "session.update",
+  "input_audio_buffer.append",
+  "input_audio_buffer.commit",
+  "input_audio_buffer.clear",
+  "conversation.item.create",
+  "conversation.item.added",
+  "conversation.item.delete",
+  "conversation.item.truncate",
+  "conversation.item.retrieve",
+  "response.create",
+  "response.cancel",
+  "transcription_session.update",
+  "output_audio_buffer.clear"
+]);
+
+function isOpenAiClientEventType(value: unknown): boolean {
+  return typeof value === "string" && OPENAI_CLIENT_EVENT_TYPES.has(value);
+}
+
 function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
   if (pc.iceGatheringState === "complete") {
     return Promise.resolve();
@@ -200,7 +229,13 @@ export class WebRtcInterviewClient {
   }
 
   async postEvent(payload: Record<string, unknown>): Promise<void> {
-    this.sendToOpenAiDataChannel(payload);
+    // Only forward events with types that OpenAI Realtime API actually understands.
+    // Our internal telemetry (observer.*, candidate.stream.*, interview.summary.*, etc.)
+    // is gateway-only — sending it to OpenAI causes "unknown_event_type" errors that
+    // pollute the session and may interfere with response generation.
+    if (isOpenAiClientEventType(payload.type)) {
+      this.sendToOpenAiDataChannel(payload);
+    }
     if (this.sessionId) {
       await sendRealtimeEvent(this.sessionId, payload);
     }
