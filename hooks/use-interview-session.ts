@@ -12,13 +12,12 @@ import {
   startMeeting,
   stopMeeting,
   updateInterviewStatus,
+  type InterviewDetail,
   type JobAiInterviewStatus
 } from "@/lib/api";
-import {
-  buildInterviewSummaryPayload,
-  truncateVacancyForContext,
-  type InterviewSummaryPayload
-} from "@/lib/interview-summary";
+import { buildInterviewInstructions, buildOpeningUtterance } from "@/lib/interview-agent-prompt";
+import type { InterviewStartContext } from "@/lib/interview-start-context";
+import { buildInterviewSummaryPayload, type InterviewSummaryPayload } from "@/lib/interview-summary";
 import { WebRtcInterviewClient, type WebRtcConnectionState } from "@/lib/webrtc-client";
 
 export type InterviewPhase = "idle" | "starting" | "connected" | "stopping" | "failed";
@@ -28,19 +27,7 @@ export type InterviewStartResult = {
 };
 export type RuntimeRecoveryState = "idle" | "recovering" | "failed";
 
-export type InterviewStartContext = {
-  candidateFirstName?: string;
-  candidateLastName?: string;
-  candidateFullName?: string;
-  jobTitle?: string;
-  vacancyText?: string;
-  companyName?: string;
-  /** Название специальности из JobAI (specialty.name) */
-  specialtyName?: string;
-  greetingSpeech?: string;
-  finalSpeech?: string;
-  questions?: Array<{ text: string; order: number }>;
-};
+export type { InterviewStartContext } from "@/lib/interview-start-context";
 
 export type AgentContextTrace = {
   sentAt: string;
@@ -69,6 +56,11 @@ const AVATAR_READY_EVENT_TYPES = [
 ];
 const HARD_CONTEXT_GUARD_ENABLED = process.env.NEXT_PUBLIC_INTERVIEW_HARD_GUARD === "1";
 const AGENT_SELF_INTRO = "Я HR-ассистент и готов провести с вами собеседование.";
+/** Повторные попытки восстановления WebRTC после reload (экспоненциальная задержка между попытками). */
+const RECONNECT_ATTEMPTS = 3;
+const RECONNECT_BACKOFF_MS = [0, 450, 1400] as const;
+/** Интервал опроса готовности аватара до первого ready (после ready таймер останавливается). */
+const AVATAR_POLL_MS_ACTIVE = 2000;
 
 function isIgnorableStatusTransitionError(error: unknown): boolean {
   if (error instanceof ApiRequestError) {
@@ -114,6 +106,48 @@ type RequiredContextCheck = {
   questionsCount: number;
 };
 
+function mergeInterviewContextForSummary(
+  existing: InterviewStartContext | null,
+  detail: InterviewDetail
+): InterviewStartContext {
+  const inv = detail.interview;
+  const proto = detail.prototypeCandidate;
+  const fullFromApi =
+    proto?.sourceFullName?.trim() ||
+    [inv.candidateFirstName, inv.candidateLastName].filter(Boolean).join(" ").trim();
+
+  const pick = (a: string | undefined, b: string | undefined): string | undefined => {
+    const ta = (a ?? "").trim();
+    if (ta) {
+      return a;
+    }
+    const tb = (b ?? "").trim();
+    return tb ? b : a;
+  };
+
+  const mergedQuestions =
+    existing?.questions && existing.questions.length > 0 ? existing.questions : inv.specialty?.questions;
+
+  return {
+    candidateFirstName: pick(existing?.candidateFirstName, inv.candidateFirstName),
+    candidateLastName: pick(existing?.candidateLastName, inv.candidateLastName),
+    candidateFullName: pick(existing?.candidateFullName, fullFromApi || undefined),
+    jobTitle: pick(existing?.jobTitle, inv.jobTitle),
+    vacancyText: pick(existing?.vacancyText, inv.vacancyText),
+    companyName: pick(existing?.companyName, inv.companyName),
+    specialtyName: pick(existing?.specialtyName, inv.specialty?.name),
+    greetingSpeech: pick(
+      existing?.greetingSpeech,
+      (inv.greetingSpeechResolved as string | undefined) ?? inv.greetingSpeech
+    ),
+    finalSpeech: pick(
+      existing?.finalSpeech,
+      (inv.finalSpeechResolved as string | undefined) ?? inv.finalSpeech
+    ),
+    questions: mergedQuestions
+  };
+}
+
 function evaluateRequiredContext(context?: InterviewStartContext): RequiredContextCheck {
   const candidateReady = Boolean(
     context?.candidateFullName?.trim() ||
@@ -134,69 +168,6 @@ function evaluateRequiredContext(context?: InterviewStartContext): RequiredConte
     questionsReady,
     questionsCount
   };
-}
-
-function buildInterviewInstructions(context?: InterviewStartContext): string {
-  const candidateFullName =
-    context?.candidateFullName?.trim() ||
-    [context?.candidateFirstName?.trim(), context?.candidateLastName?.trim()].filter(Boolean).join(" ").trim() ||
-    "кандидат";
-  const company = context?.companyName?.trim() || "компания не указана";
-  const jobTitle = context?.jobTitle?.trim() || "должность не указана";
-  const specialtyName = context?.specialtyName?.trim();
-  const { text: vacancyForModel, truncated: vacancyWasTruncated } = truncateVacancyForContext(context?.vacancyText);
-  const greeting =
-    context?.greetingSpeech?.trim() ||
-    `Здравствуйте, ${candidateFullName}. Это интервью на позицию ${jobTitle} в компанию ${company}. Вы готовы пройти интервью?`;
-  const finalSpeech = context?.finalSpeech?.trim() || "Спасибо за интервью.";
-  const questions = (context?.questions ?? [])
-    .slice()
-    .sort((a, b) => a.order - b.order)
-    .map((q, idx) => `${idx + 1}. [order=${q.order}] ${q.text}`)
-    .join("\n");
-
-  const phaseProtocol = [
-    "СТРОГИЙ СЦЕНАРИЙ ИЗ 4 ФАЗ (не пропускай и не меняй порядок):",
-    "1) intro — один раз представься как HR-ассистент одной фразой (используй дословно эту фразу для самопрезентации: «" +
-      AGENT_SELF_INTRO +
-      "»). Сразу после неё произнеси приветствие из блока «Приветствие» ниже дословно и задай вопрос «Вы готовы пройти интервью?». Дождись явного ответа кандидата.",
-    "2) questions — задавай вопросы строго по списку ниже, по возрастанию order. После каждого вопроса дождись ответа; не переходи к следующему, пока кандидат не ответил или явно откажется.",
-    "3) closing — когда все вопросы пройдены или кандидат завершил, произнеси финальную фразу из блока «Финальная фраза» дословно.",
-    "4) summary — кратко (устно, 30–60 секунд) резюмируй впечатление по вакансии и ответам; не выдумывай факты вне контекста. Затем попрощайся.",
-    "Правило: не повторяй самопрезентацию и полное приветствие повторно во время сессии."
-  ].join("\n");
-
-  return [
-    "Ты HR-аватар для технического интервью.",
-    "Никогда не представляйся именем кандидата и не говори о себе как о кандидате.",
-    "Ты представитель интервьюера (HR-аватар), кандидат — отдельный человек из контекста.",
-    "Используй только контекст ниже; не придумывай новые факты и не меняй компанию/должность/имя кандидата.",
-    "Если кандидат спрашивает «по какому собеседованию мы проводимся?», отвечай строго: должность + компания + имя кандидата.",
-    phaseProtocol,
-    `Кандидат: ${candidateFullName}`,
-    `Компания: ${company}`,
-    `Должность: ${jobTitle}`,
-    specialtyName ? `Специальность: ${specialtyName}` : "",
-    vacancyForModel ? `Описание вакансии:\n${vacancyForModel}` : "Описание вакансии: не предоставлено",
-    vacancyWasTruncated ? "Примечание: описание вакансии могло быть сокращено для лимита контекста — не дополняй выдуманными деталями." : "",
-    questions ? `Вопросы для интервью (порядок = order):\n${questions}` : "Вопросы для интервью: не предоставлены",
-    `Приветствие (фаза intro, дословно после самопрезентации): ${greeting}`,
-    `Финальная фраза (фаза closing, дословно): ${finalSpeech}`
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-function buildOpeningUtterance(context?: InterviewStartContext): string {
-  const candidateFullName =
-    context?.candidateFullName?.trim() ||
-    [context?.candidateFirstName?.trim(), context?.candidateLastName?.trim()].filter(Boolean).join(" ").trim() ||
-    "кандидат";
-  const company = context?.companyName?.trim() || "компания не указана";
-  const jobTitle = context?.jobTitle?.trim() || "должность не указана";
-  const greeting = context?.greetingSpeech?.trim() || `Это собеседование по вакансии ${jobTitle} в компанию ${company}.`;
-  /** Одна связка: самопрезентация + приветствие + вопрос готовности (без дублирования в других событиях). */
-  return `${AGENT_SELF_INTRO} Здравствуйте, ${candidateFullName}. ${greeting} Вы готовы пройти интервью?`;
 }
 
 async function transitionJobAiToInMeeting(interviewId: number): Promise<void> {
@@ -259,6 +230,7 @@ export function useInterviewSession() {
 
   const rtcRef = useRef<WebRtcInterviewClient | null>(null);
   const reconnectAttemptForSessionRef = useRef<string | null>(null);
+  const avatarPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastInterviewContextRef = useRef<InterviewStartContext | null>(null);
 
   const ensureClient = useCallback(() => {
@@ -307,6 +279,10 @@ export function useInterviewSession() {
       queueMicrotask(() => {
         setAvatarReady(false);
       });
+      if (avatarPollTimerRef.current) {
+        clearInterval(avatarPollTimerRef.current);
+        avatarPollTimerRef.current = null;
+      }
       return;
     }
 
@@ -319,6 +295,10 @@ export function useInterviewSession() {
         const isReady = AVATAR_READY_EVENT_TYPES.some((type) => (counts[type] ?? 0) > 0);
         if (!cancelled) {
           setAvatarReady(isReady);
+          if (isReady && avatarPollTimerRef.current) {
+            clearInterval(avatarPollTimerRef.current);
+            avatarPollTimerRef.current = null;
+          }
         }
       } catch {
         if (!cancelled) {
@@ -328,13 +308,19 @@ export function useInterviewSession() {
     };
 
     void checkAvatarReady();
-    const timer = setInterval(() => {
+    if (avatarPollTimerRef.current) {
+      clearInterval(avatarPollTimerRef.current);
+    }
+    avatarPollTimerRef.current = setInterval(() => {
       void checkAvatarReady();
-    }, 2000);
+    }, AVATAR_POLL_MS_ACTIVE);
 
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      if (avatarPollTimerRef.current) {
+        clearInterval(avatarPollTimerRef.current);
+        avatarPollTimerRef.current = null;
+      }
     };
   }, [phase, sessionId]);
 
@@ -367,33 +353,46 @@ export function useInterviewSession() {
     let cancelled = false;
     const restoreRuntime = async () => {
       setRuntimeRecoveryState("recovering");
-      try {
-        const connected = await rtc.connect();
-        if (cancelled) {
-          rtc.close();
-          return;
-        }
-        setSessionId(connected.sessionId);
-        if (activeInterviewId) {
-          await linkInterviewSession({
-            interviewId: activeInterviewId,
-            meetingId,
-            sessionId: connected.sessionId,
-            nullxesStatus: "in_meeting"
-          }).catch(() => undefined);
-        }
-        setRuntimeRecoveryState("idle");
-      } catch (restoreError) {
+      let lastError: unknown;
+      for (let attempt = 0; attempt < RECONNECT_ATTEMPTS; attempt++) {
         if (cancelled) {
           return;
         }
-        setRuntimeRecoveryState("failed");
-        setError(
-          restoreError instanceof Error
-            ? `Не удалось восстановить runtime после обновления страницы: ${restoreError.message}`
-            : "Не удалось восстановить runtime после обновления страницы."
-        );
+        if (attempt > 0) {
+          const delay = RECONNECT_BACKOFF_MS[attempt] ?? 500;
+          await new Promise((r) => setTimeout(r, delay));
+        }
+        try {
+          const connected = await rtc.connect();
+          if (cancelled) {
+            rtc.close();
+            return;
+          }
+          setSessionId(connected.sessionId);
+          if (activeInterviewId) {
+            await linkInterviewSession({
+              interviewId: activeInterviewId,
+              meetingId,
+              sessionId: connected.sessionId,
+              nullxesStatus: "in_meeting"
+            }).catch(() => undefined);
+          }
+          reconnectAttemptForSessionRef.current = null;
+          setRuntimeRecoveryState("idle");
+          return;
+        } catch (restoreError) {
+          lastError = restoreError;
+        }
       }
+      if (cancelled) {
+        return;
+      }
+      setRuntimeRecoveryState("failed");
+      setError(
+        lastError instanceof Error
+          ? `Не удалось восстановить runtime после обновления страницы (${RECONNECT_ATTEMPTS} попыток): ${lastError.message}`
+          : `Не удалось восстановить runtime после обновления страницы (${RECONNECT_ATTEMPTS} попыток).`
+      );
     };
 
     void restoreRuntime();
@@ -511,7 +510,16 @@ export function useInterviewSession() {
         type: "response.create",
         response: {
           modalities: ["audio", "text"],
-          instructions: `Начни фазу intro ровно один раз: произнеси вслух следующую фразу целиком, без повторов и без перефразирования: "${openingUtterance}". После этого остановись и дождись ответа кандидата на вопрос о готовности. Не называй себя именем кандидата.`
+          instructions: [
+            "Начни фазу intro ровно один раз.",
+            "Произнеси ДОСЛОВНО следующий блок (сохраняй переносы строк), без перефразирования и без повторов.",
+            "После этого остановись и дождись ответа кандидата согласно сценарию приветствия (готовность, согласие с записью и т.д.).",
+            "Не называй себя именем кандидата.",
+            "",
+            "---",
+            openingUtterance,
+            "---"
+          ].join("\n")
         }
       });
 
@@ -550,7 +558,19 @@ export function useInterviewSession() {
       const activeMeetingId = meetingId;
       const activeSessionId = sessionId;
       const rtc = rtcRef.current;
-      const summaryPayload = buildInterviewSummaryPayload(lastInterviewContextRef.current);
+
+      let summaryInput: InterviewStartContext | null = lastInterviewContextRef.current;
+      const interviewIdForSummary = options?.interviewId ?? activeInterviewId ?? undefined;
+      if (interviewIdForSummary) {
+        try {
+          const detail = await getInterviewById(interviewIdForSummary, true);
+          summaryInput = mergeInterviewContextForSummary(summaryInput, detail);
+        } catch {
+          // Оставляем контекст из памяти сессии (например, офлайн gateway).
+        }
+      }
+
+      const summaryPayload = buildInterviewSummaryPayload(summaryInput);
       setLastInterviewSummary(summaryPayload);
 
       if (activeSessionId) {

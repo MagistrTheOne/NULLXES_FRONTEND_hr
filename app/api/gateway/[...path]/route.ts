@@ -1,4 +1,4 @@
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 const backendBaseUrl = process.env.BACKEND_GATEWAY_URL ?? "http://localhost:8080";
 
@@ -35,12 +35,32 @@ async function proxyRequest(
   const hasBody = !["GET", "HEAD"].includes(method);
   const body = hasBody ? await request.arrayBuffer() : undefined;
 
-  const upstream = await fetch(targetUrl, {
-    method,
-    headers,
-    body,
-    redirect: "manual"
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(targetUrl, {
+      method,
+      headers,
+      body,
+      redirect: "manual",
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (err) {
+    const dev = process.env.NODE_ENV === "development";
+    const message =
+      err instanceof Error && (err as NodeJS.ErrnoException).cause
+        ? String((err as Error & { cause?: { code?: string } }).cause?.code ?? err.message)
+        : err instanceof Error
+          ? err.message
+          : "Unknown error";
+    return NextResponse.json(
+      {
+        message: "Upstream service unreachable",
+        code: "GATEWAY_UPSTREAM_UNREACHABLE",
+        ...(dev ? { targetUrl, detail: message } : {}),
+      },
+      { status: 503 },
+    );
+  }
 
   const responseHeaders = new Headers();
   for (const [key, value] of upstream.headers.entries()) {

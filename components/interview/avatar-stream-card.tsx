@@ -59,6 +59,10 @@ type AvatarStreamCardProps = {
   showStreamToolbar?: boolean;
   /** Status badge under the card title */
   showStatusBadge?: boolean;
+  /** Остановить AI-сессию (звонок + бот) — см. useInterviewSession.stop */
+  showStopAI?: boolean;
+  onStopAI?: () => void;
+  stopAIDisabled?: boolean;
 };
 
 export function AvatarStreamCard({
@@ -67,7 +71,10 @@ export function AvatarStreamCard({
   avatarReady,
   meetingId,
   showStreamToolbar = false,
-  showStatusBadge = true
+  showStatusBadge = true,
+  showStopAI = false,
+  onStopAI,
+  stopAIDisabled = false,
 }: AvatarStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
@@ -193,7 +200,16 @@ export function AvatarStreamCard({
               </div>
             ) : null}
           </div>
-
+          {showStopAI && onStopAI ? (
+            <button
+              type="button"
+              disabled={stopAIDisabled}
+              onClick={onStopAI}
+              className="w-full rounded-xl border border-rose-300/80 bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.15)] transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Стоп
+            </button>
+          ) : null}
         </>
       }
     >

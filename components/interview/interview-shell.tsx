@@ -815,9 +815,13 @@ export function InterviewShell() {
               });
             })();
           }}
-          onStop={() => {
-            void stop({ interviewId: selectedRow?.jobAiId });
+          onStopSession={() => {
+            const jid = selectedInterviewId ?? selectedRow?.jobAiId;
+            void stop(typeof jid === "number" ? { interviewId: jid } : undefined);
           }}
+          stopSessionDisabled={
+            busy || completedInterviewLocked || phase !== "connected" || !meetingId
+          }
           onFail={markFailed}
           startDisabled={
             phase === "connected" ||
@@ -826,7 +830,6 @@ export function InterviewShell() {
             completedInterviewLocked ||
             (HARD_CONTEXT_GUARD_ENABLED && !contextHardReady)
           }
-          stopDisabled={phase === "idle" || busy}
           failDisabled={phase === "idle" || busy}
           showDebugActions={SHOW_INTERNAL_DEBUG_UI}
         />
@@ -976,6 +979,12 @@ export function InterviewShell() {
             meetingId={recoveredMeetingId}
             showStreamToolbar={false}
             showStatusBadge
+            showStopAI={phase === "connected" && Boolean(recoveredMeetingId) && !completedInterviewLocked}
+            stopAIDisabled={busy}
+            onStopAI={() => {
+              const jid = selectedInterviewId ?? selectedRow?.jobAiId;
+              void stop(typeof jid === "number" ? { interviewId: jid } : undefined);
+            }}
           />
           <ObserverStreamCard
             title="Наблюдатель"

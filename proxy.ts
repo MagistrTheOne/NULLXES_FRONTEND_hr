@@ -28,7 +28,28 @@ function isPublicPath(pathname: string): boolean {
   if (pathname === "/login") {
     return true;
   }
+  if (
+    pathname === "/sign-in" ||
+    pathname === "/sign-up" ||
+    pathname === "/forgot-password" ||
+    pathname === "/dashboard" ||
+    pathname === "/demo"
+  ) {
+    return true;
+  }
+  if (pathname.startsWith("/api/demo")) {
+    return true;
+  }
+  if (pathname === "/neon-demo" || pathname === "/action") {
+    return true;
+  }
+  if (pathname.startsWith("/api/auth")) {
+    return true;
+  }
   if (pathname.startsWith("/api/prototype-auth/")) {
+    return true;
+  }
+  if (pathname.startsWith("/api/version")) {
     return true;
   }
   if (pathname.startsWith("/_next") || pathname.startsWith("/favicon")) {

@@ -441,11 +441,25 @@ export async function linkInterviewSession(input: {
   });
 }
 
-export async function updateInterviewStatus(id: number, status: JobAiInterviewStatus): Promise<InterviewDetail> {
-  return requestJsonWithRetry<InterviewDetail>(`interviews/${id}/status`, {
+function postJobAiIngestNotification(id: number, status: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  void fetch("/api/jobai/ingest", {
     method: "POST",
-    body: JSON.stringify({ status })
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, status }),
+    credentials: "same-origin",
+  }).catch(() => {});
+}
+
+export async function updateInterviewStatus(id: number, status: JobAiInterviewStatus): Promise<InterviewDetail> {
+  const detail = await requestJsonWithRetry<InterviewDetail>(`interviews/${id}/status`, {
+    method: "POST",
+    body: JSON.stringify({ status }),
   });
+  postJobAiIngestNotification(id, status);
+  return detail;
 }
 
 export async function getJobAiSourceStatus(): Promise<JobAiSourceStatus> {

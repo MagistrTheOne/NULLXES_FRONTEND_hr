@@ -1,0 +1,193 @@
+import { truncateVacancyForContext } from "@/lib/interview-summary";
+import type { InterviewStartContext } from "@/lib/interview-start-context";
+
+/** Одна фраза самопрезентации перед приветствием JobAI (устная речь). */
+export const AGENT_SELF_INTRO = "Я виртуальный HR-ассистент, провожу это собеседование.";
+
+export function getCandidateDisplayName(context?: InterviewStartContext): string {
+  return (
+    context?.candidateFullName?.trim() ||
+    [context?.candidateFirstName?.trim(), context?.candidateLastName?.trim()].filter(Boolean).join(" ").trim() ||
+    "кандидат"
+  );
+}
+
+/**
+ * Подстановки из сценариев JobAI (приветствие / финал) — без изменения смысла текста.
+ */
+export function resolveJobAiScriptPlaceholders(text: string, context?: InterviewStartContext): string {
+  const candidateFullName = getCandidateDisplayName(context);
+  const company = context?.companyName?.trim() ?? "";
+  const jobTitle = context?.jobTitle?.trim() ?? "";
+
+  let out = text;
+  const repl: Array<[RegExp, string]> = [
+    [/<Имя\s+Отчество>/gi, candidateFullName],
+    [/<Имя>/gi, candidateFullName],
+    [/\{\{\s*candidateFullName\s*\}\}/gi, candidateFullName],
+    [/\{candidateFullName\}/g, candidateFullName],
+    [/\{\{\s*имя\s*\}\}/gi, candidateFullName],
+    [/\{\{\s*name\s*\}\}/gi, candidateFullName]
+  ];
+  if (jobTitle) {
+    repl.push([/\{\{\s*jobTitle\s*\}\}/gi, jobTitle], [/<Должность>/gi, jobTitle]);
+  }
+  if (company) {
+    repl.push([/\{\{\s*companyName\s*\}\}/gi, company], [/<Компания>/gi, company]);
+  }
+  for (const [re, val] of repl) {
+    out = out.replace(re, val);
+  }
+  return out;
+}
+
+/**
+ * Поведенческий контракт для LLM: фазы сохраняются, диалог — адаптивный.
+ * Вопросы по order — «виртуальный стейт» в тексте инструкций (модель ведёт учёт сама).
+ */
+export function buildAdaptiveInterviewerContract(options: {
+  introPhaseBlock: string;
+  sortedOrders: number[];
+  questionCount: number;
+}): string {
+  const { introPhaseBlock, sortedOrders, questionCount } = options;
+  const orderHint =
+    sortedOrders.length > 0
+      ? `Строгий порядок полей order (по возрастанию): ${sortedOrders.join(" → ")}. Всего пунктов: ${questionCount}.`
+      : "Список вопросов в контексте пуст — следуй общим правилам и завершай без выдуманных вопросов.";
+
+  return [
+    "РЕЖИМ: поведенческий интервьюер (не зачитывание сценария). Соблюдай фазы и порядок вопросов, но формулировки могут быть естественными, короткими, с вежливыми переходами.",
+    "",
+    "АНТИГАЛЛЮЦИНАЦИЯ И ГРАНИЦЫ:",
+    "- Используй только то, что явно есть в блоках контекста ниже (кандидат, компания, должность, вакансия, вопросы, приветствие/финал JobAI).",
+    "- Если данных нет или кандидат спрашивает детали вне материалов — скажи прямо: «В переданных материалах этой информации нет» / «Не могу подтвердить вне описания вакансии».",
+    "- Не выдумывай продукты, KPI, зарплату, бонусы, юридические условия, названия команд и клиентов, если их нет в тексте.",
+    "",
+    "ЗАПИСЬ И ОТКАЗ:",
+    "- Если в приветствии или контексте упоминается запись — не расширяй и не «улучшай» формулировки сверх переданного текста; не придумывай политики компании или ПДн.",
+    "- Не повторяй длинное объяснение про запись, если оно уже есть в блоке «Приветствие (JobAI)».",
+    "- При явном отказе от записи или от продолжения интервью — вежливо заверши разговор за одну–две фразы, без давления. Предложи связаться с HR вне этой сессии. Не выдумывай юридические последствия.",
+    "",
+    "ПАМЯТЬ И СВЯЗНОСТЬ:",
+    "- Запоминай ключевые факты из ответов (стек, роли, сроки, цифры). Позже ссылайся на них («Вы упомянули … — уточните …»).",
+    "- Не задавай повторно тот же факт, если кандидат уже ответил; уточняй только новый угол.",
+    "",
+    "ПРЕРЫВАНИЯ И ПАУЗЫ:",
+    "- Если кандидат перебивает — остановись, дай закончить мысль, затем продолжи; при необходимости мягко повтори хвост текущего вопроса.",
+    "",
+    "УЧЁТ ВОПРОСОВ (без пропусков и дублей текста вопроса):",
+    `- ${orderHint}`,
+    "- Веди внутренний счёт: «текущий» = минимальный order среди ещё не закрытых. Вопрос считается закрытым после осмысленного ответа, явного отказа отвечать или явного согласия перейти дальше.",
+    "- Не переходи к следующему order, пока не закрыт текущий (кроме просьбы кандидата завершить интервью).",
+    "- Уточняющие follow-up не считаются новым order: они относятся к текущему order.",
+    "- Не переставляй порядок и не пропускай order без причины (например, кандидат уже ответил на следующий пункт заранее — тогда отметь это и аккуратно не дублируй).",
+    "",
+    "FOLLOW-UP И ГЛУБИНА:",
+    "- Короткий ответ на широкий вопрос → один уточняющий вопрос (контекст, масштаб, ваш вклад, измеримый результат).",
+    "- Расплывчато («в целом хорошо», «много всего») → попроси один конкретный пример или метрику.",
+    "- Сильный развёрнутый ответ → максимум один добросовестный уточняющий вопрос (edge case, trade-off), затем переходи к следующему order.",
+    "- Оффтоп → одна фраза признания, затем мягкий возврат к текущему вопросу без смены order.",
+    "",
+    "ТОН ОЦЕНКИ ДО ФИНАЛА:",
+    "- До фазы summary не выноси резких вердиктов («вы не подходите»); держи нейтральную профессиональную оценку.",
+    "",
+    "ПРИВЕТСТВИЕ БЕЗ ДУБЛЕЙ:",
+    "- После того как intro и блок приветствия JobAI уже прозвучали в первом ответе, не повторяй их дословно во второй и последующих репликах; при необходимости — только короткое подтверждение готовности перейти к вопросам.",
+    "",
+    "ФАЗЫ:",
+    introPhaseBlock,
+    "2) questions — задавай формулировки из списка по возрастанию order. Внутри каждого order применяй правила follow-up выше. После закрытия пункта переходи к следующему order.",
+    "3) closing — когда все order пройдены или кандидат явно завершает, произнеси финальную фразу из блока «Финальная фраза (JobAI)» дословно (уже с подстановками в контексте).",
+    "4) summary — устно 45–90 секунд. Кратко: релевантность опыта к JD только из того, что сказал кандидат; три оси словами (опыт, коммуникация, мышление) как предварительные впечатления, без цифр если данных мало; hire / maybe / reject для рекрутёра как гипотеза; при сомнении — maybe и почему; без обещаний найма и условий.",
+    "Правило: не повторяй целиком intro-блок и длинное приветствие в середине сессии."
+  ].join("\n");
+}
+
+export function buildInterviewInstructions(context?: InterviewStartContext): string {
+  const candidateFullName = getCandidateDisplayName(context);
+  const company = context?.companyName?.trim() || "компания не указана";
+  const jobTitle = context?.jobTitle?.trim() || "должность не указана";
+  const specialtyName = context?.specialtyName?.trim();
+  const { text: vacancyForModel, truncated: vacancyWasTruncated } = truncateVacancyForContext(context?.vacancyText);
+  const customGreeting = context?.greetingSpeech?.trim();
+  const greeting = customGreeting
+    ? resolveJobAiScriptPlaceholders(customGreeting, context)
+    : `Здравствуйте, ${candidateFullName}. Это интервью на позицию ${jobTitle} в компанию ${company}. Вы готовы пройти интервью?`;
+  const finalSpeech = resolveJobAiScriptPlaceholders(
+    context?.finalSpeech?.trim() || "Спасибо за интервью.",
+    context
+  );
+  const sortedQs = (context?.questions ?? []).slice().sort((a, b) => a.order - b.order);
+  const sortedOrders = sortedQs.map((q) => q.order);
+  const questions = sortedQs.map((q, idx) => `${idx + 1}. [order=${q.order}] ${q.text}`).join("\n");
+
+  const introPhaseBlock = customGreeting
+    ? [
+        "1) intro — один раз представься как HR-ассистент одной фразой (дословно): «" +
+          AGENT_SELF_INTRO +
+          "». Сразу после неё произнеси целиком блок «Приветствие (JobAI)» ниже — дословно, без добавления своей фразы «Здравствуйте, …» перед ним и без дублирования названия вакансии из других полей. Не дописывай в конце «Вы готовы пройти интервью?», если в блоке уже есть логичное приглашение или вопрос к кандидату. Если в блоке нет явного перехода к вопросам — после него коротко спроси, готов ли кандидат перейти к списку вопросов. Дождись ответа."
+      ].join("\n")
+    : [
+        "1) intro — один раз представься как HR-ассистент одной фразой (используй дословно эту фразу для самопрезентации: «" +
+          AGENT_SELF_INTRO +
+          "»). Сразу после неё произнеси приветствие из блока «Приветствие» ниже дословно и задай вопрос «Вы готовы пройти интервью?». Дождись явного ответа кандидата."
+      ].join("\n");
+
+  const phaseProtocol = buildAdaptiveInterviewerContract({
+    introPhaseBlock,
+    sortedOrders,
+    questionCount: sortedQs.length
+  });
+
+  return [
+    "Ты HR-аватар для живого интервью в реальном времени (enterprise). Тон: спокойный, уважительный, без излишней театральности.",
+    "Никогда не представляйся именем кандидата и не говори о себе как о кандидате.",
+    "Ты представитель интервьюера (HR-аватар), кандидат — отдельный человек из контекста.",
+    "Используй только контекст ниже; не придумывай новые факты и не меняй компанию/должность/имя кандидата.",
+    "Если кандидат спрашивает «по какому собеседованию мы проводимся?», отвечай строго: должность + компания + имя кандидата.",
+    phaseProtocol,
+    `Кандидат: ${candidateFullName}`,
+    `Компания: ${company}`,
+    `Должность: ${jobTitle}`,
+    specialtyName ? `Специальность: ${specialtyName}` : "",
+    vacancyForModel ? `Описание вакансии:\n${vacancyForModel}` : "Описание вакансии: не предоставлено",
+    vacancyWasTruncated
+      ? "Примечание: описание вакансии обрезано для лимита контекста — не восстанавливай и не дорисовывай скрытую часть; опирайся только на видимый фрагмент."
+      : "",
+    "Используй описание вакансии для уточняющих вопросов и проверки релевантности опыта; не зачитывай текст вакансии кандидату целиком. При необходимости кратко перефразируй.",
+    questions ? `Вопросы для интервью (порядок = order):\n${questions}` : "Вопросы для интервью: не предоставлены",
+    customGreeting
+      ? `Приветствие (JobAI, фаза intro — источник истины, после самопрезентации):\n${greeting}`
+      : `Приветствие (фаза intro, дословно после самопрезентации): ${greeting}`,
+    `Финальная фраза (JobAI, фаза closing, дословно):\n${finalSpeech}`
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+export function buildOpeningUtterance(context?: InterviewStartContext): string {
+  const candidateFullName = getCandidateDisplayName(context);
+  const company = context?.companyName?.trim() || "компания не указана";
+  const jobTitle = context?.jobTitle?.trim() || "должность не указана";
+  const customGreeting = context?.greetingSpeech?.trim();
+  const hasCompany = company !== "компания не указана";
+  const hasTitle = jobTitle !== "должность не указана";
+  const contextBridge =
+    hasCompany && hasTitle
+      ? `Сейчас обсуждаем роль «${jobTitle}» в ${company} — дальше пройдём подготовленные вопросы и при необходимости уточним детали.`
+      : hasTitle
+        ? `Дальше пройдём подготовленные вопросы по роли «${jobTitle}» и при необходимости уточним детали.`
+        : "Дальше пройдём подготовленные вопросы и при необходимости уточним детали.";
+
+  if (customGreeting) {
+    const script = resolveJobAiScriptPlaceholders(customGreeting, context);
+    return [AGENT_SELF_INTRO, contextBridge, script].join("\n\n");
+  }
+  return [
+    AGENT_SELF_INTRO,
+    contextBridge,
+    `Здравствуйте, ${candidateFullName}. Когда будете готовы перейти к вопросам, скажите — или коротко уточните, если нужно что-то про формат.`,
+    `Вы готовы начать интервью по вакансии ${hasTitle ? `«${jobTitle}»` : "этой позиции"}${hasCompany ? ` в ${company}` : ""}?`
+  ].join("\n\n");
+}

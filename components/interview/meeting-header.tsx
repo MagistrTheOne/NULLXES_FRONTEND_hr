@@ -18,10 +18,11 @@ type MeetingHeaderProps = {
   onEntryUrlCommit?: (value: string) => void;
   candidateFio: string;
   onStart: () => void;
-  onStop?: () => void;
+  /** Полное завершение сессии (закрытие meeting, статус completed). */
+  onStopSession?: () => void;
+  stopSessionDisabled?: boolean;
   onFail?: () => void;
   startDisabled?: boolean;
-  stopDisabled?: boolean;
   failDisabled?: boolean;
   showDebugActions?: boolean;
 };
@@ -37,10 +38,10 @@ export function MeetingHeader({
   onEntryUrlCommit,
   candidateFio,
   onStart,
-  onStop,
+  onStopSession,
+  stopSessionDisabled = true,
   onFail,
   startDisabled = false,
-  stopDisabled = true,
   failDisabled = true,
   showDebugActions = false
 }: MeetingHeaderProps) {
@@ -134,15 +135,15 @@ export function MeetingHeader({
                 Начать собеседование
               </Button>
             </div>
-            {onStop ? (
+            {onStopSession ? (
               <Button
                 type="button"
-                onClick={onStop}
-                disabled={stopDisabled}
                 variant="destructive"
-                className="h-14 w-full shrink-0 rounded-xl px-6 text-base font-semibold shadow-md sm:h-16 sm:text-lg"
+                onClick={onStopSession}
+                disabled={stopSessionDisabled}
+                className="h-11 w-full shrink-0 rounded-xl px-4 text-sm font-semibold shadow-sm sm:h-12"
               >
-                Остановить бота
+                Стоп сессия
               </Button>
             ) : null}
             {showDebugActions && onFail ? (

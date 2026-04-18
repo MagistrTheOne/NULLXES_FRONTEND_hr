@@ -8,6 +8,15 @@ export const VACANCY_CONTEXT_MAX_CHARS = 12_000 as const;
 
 export type InterviewSummaryVerdict = "strong_fit" | "maybe" | "no_fit";
 export type InterviewSummaryConfidence = "low" | "medium" | "high";
+/** Явная рекомендация по воронке (согласуется с verdict) */
+export type HiringRecommendation = "hire" | "maybe" | "reject";
+
+export type InterviewScoreDimensions = {
+  /** 1–10; без транскрипта автооценка не выставляется */
+  experience1to10?: number | null;
+  communication1to10?: number | null;
+  thinking1to10?: number | null;
+};
 
 export type InterviewSummaryQuestionCoverage = {
   order: number;
@@ -30,9 +39,19 @@ export type InterviewSummaryPayload = {
   relocationTravel?: string;
   redFlags: string[];
   recommendedNextStep: string;
+  /** Оценка по осям 1–10; при отсутствии транскрипта — null/пропуск */
+  scores?: InterviewScoreDimensions | null;
+  /** Дублирует смысл verdict для интеграций, ожидающих hire/maybe/reject */
+  hiringRecommendation?: HiringRecommendation;
+  /** Слабые стороны (синоним gaps для HR-отчётов; без транскрипта — пояснение-заглушка) */
+  weaknesses?: string[];
+  /** Короткая выдержка JD для карточки итога (без «угадываний» по ответам кандидата) */
+  vacancyDigest?: string;
   /** When vacancy text was truncated for model context */
   vacancyTruncated?: boolean;
   notes?: string;
+  /** true, пока оценки по шкале выставляются только вручную / после транскрипта */
+  evaluationPending?: boolean;
 };
 
 export type InterviewSummaryContextInput = {
@@ -46,6 +65,34 @@ export type InterviewSummaryContextInput = {
   questions?: Array<{ text: string; order: number }>;
 };
 
+/** Выдержка для UI саммари: ограничение длины, без лишних пробелов между строками */
+export function buildVacancyDigestForSummary(
+  vacancyText: string | undefined,
+  maxChars: number = 2_400
+): { digest: string | undefined; truncated: boolean } {
+  const raw = (vacancyText ?? "").trim();
+  if (!raw) {
+    return { digest: undefined, truncated: false };
+  }
+  if (raw.length <= maxChars) {
+    return { digest: raw, truncated: false };
+  }
+  return {
+    digest: `${raw.slice(0, maxChars).trimEnd()}\n\n[…полный текст вакансии в карточке интервью / JobAI…]`,
+    truncated: true
+  };
+}
+
+function verdictToHiringRecommendation(verdict: InterviewSummaryVerdict): HiringRecommendation {
+  if (verdict === "strong_fit") {
+    return "hire";
+  }
+  if (verdict === "no_fit") {
+    return "reject";
+  }
+  return "maybe";
+}
+
 export function truncateVacancyForContext(
   vacancyText: string | undefined,
   maxChars: number = VACANCY_CONTEXT_MAX_CHARS
@@ -58,7 +105,7 @@ export function truncateVacancyForContext(
     return { text: raw, truncated: false };
   }
   return {
-    text: `${raw.slice(0, maxChars)}\n\n[…текст вакансии обрезан для лимита контекста модели, полный текст в JobAI…]`,
+    text: `${raw.slice(0, maxChars)}\n\n[…текст вакансии обрезан для лимита контекста модели; полный текст в JobAI. Не восстанавливай и не дорисовывай скрытую часть — опирайся только на видимый фрагмент.]`,
     truncated: true
   };
 }
@@ -75,6 +122,10 @@ export function buildInterviewSummaryPayload(input: InterviewSummaryContextInput
   const company = input?.companyName?.trim() || "компания не указана";
   const specialty = input?.specialtyName?.trim();
   const { truncated } = truncateVacancyForContext(input?.vacancyText);
+  const { digest: vacancyDigest, truncated: digestWasTruncated } = buildVacancyDigestForSummary(input?.vacancyText);
+  const hasVacancy = Boolean(vacancyDigest);
+  const qCount = (input?.questions ?? []).length;
+  const hasStructuredPlan = hasVacancy && qCount > 0;
 
   const ordered = (input?.questions ?? [])
     .slice()
@@ -85,20 +136,47 @@ export function buildInterviewSummaryPayload(input: InterviewSummaryContextInput
       assessment: "not_discussed" as const
     }));
 
+  const gaps: string[] = [
+    "Нет автоматической оценки ответов без транскрипта сессии.",
+    hasStructuredPlan
+      ? "Статусы вопросов ниже — «not_discussed»: без записи диалога система не фиксирует факт обсуждения."
+      : "Контекст вакансии или список вопросов неполные — проверьте данные интервью на gateway."
+  ];
+  const strengths: string[] = [];
+  if (hasStructuredPlan) {
+    strengths.push(
+      "В сессию заложены текст вакансии и сценарий вопросов — при разборе записи сверяйте ответы с требованиями JD."
+    );
+  }
+
+  const verdict: InterviewSummaryVerdict = "maybe";
+  const weaknessNote =
+    "Количественные оценки (опыт / коммуникация / мышление) и слабые стороны по шкале 1–10 требуют прослушивания записи или транскрипта.";
+
   return {
     summarySchemaVersion: INTERVIEW_SUMMARY_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
-    verdict: "maybe",
-    confidence: "low",
+    verdict,
+    confidence: hasStructuredPlan ? "medium" : "low",
     roleFit: `Позиция: ${jobTitle}${specialty ? ` · специализация: ${specialty}` : ""}. Компания: ${company}. Кандидат: ${name}.`,
-    strengths: [],
-    gaps: ["Нет автоматической оценки ответов без транскрипта сессии."],
+    strengths,
+    gaps,
+    weaknesses: [weaknessNote],
     risks: [],
     questionCoverage: ordered,
     redFlags: [],
     recommendedNextStep: "Прослушать запись / провести debrief с кандидатом и принять решение по воронке.",
-    vacancyTruncated: truncated || undefined,
-    notes:
-      "Автоматическое резюме по контексту вакансии и списку вопросов. Для детального scorecard нужна интеграция транскрипта."
+    scores: {
+      experience1to10: null,
+      communication1to10: null,
+      thinking1to10: null
+    },
+    hiringRecommendation: verdictToHiringRecommendation(verdict),
+    evaluationPending: true,
+    vacancyDigest,
+    vacancyTruncated: truncated || digestWasTruncated || undefined,
+    notes: hasStructuredPlan
+      ? "Ниже — выдержка вакансии, попавшая в контекст интервью. Рубрика 1–10 и итоговая рекомендация hire/maybe/reject заполняются после анализа записи; устный summary в конце звонка задаётся инструкциями агента."
+      : "Заполните вакансию и вопросы в интервью, чтобы итог опирался на полный контекст. Рубрика 1–10 — после транскрипта или ручного разбора."
   };
 }
