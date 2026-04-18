@@ -184,9 +184,12 @@ async function transitionJobAiToInMeeting(interviewId: number): Promise<void> {
   }
 }
 
+type IntroMode = "first" | "reconnect";
+
 async function postIntroResponseToRtc(
   rtc: WebRtcInterviewClient,
-  effectiveContext: InterviewStartContext | undefined
+  effectiveContext: InterviewStartContext | undefined,
+  mode: IntroMode = "first"
 ): Promise<void> {
   const runtimeInstructions = buildInterviewInstructions(effectiveContext);
   await rtc.postEvent({
@@ -195,22 +198,35 @@ async function postIntroResponseToRtc(
       instructions: runtimeInstructions
     }
   });
-  const openingUtterance = buildOpeningUtterance(effectiveContext);
+  const openingUtterance = buildOpeningUtterance(effectiveContext, mode);
   const hasGreetingSpeech = Boolean(effectiveContext?.greetingSpeech?.trim());
+
+  const baseInstructions =
+    mode === "reconnect"
+      ? [
+          "КОНТЕКСТ: WebRTC-сессия была восстановлена. Кандидат уже слышал полное приветствие ранее.",
+          "ЗАДАЧА: произнеси короткий мост между маркерами «---» ДОСЛОВНО (одна-две фразы).",
+          "Запрещено: повторять полное приветствие JobAI заново, говорить «Добрый день» во второй раз, рассказывать про запись повторно, начинать интервью с нуля.",
+          "После последней строки блока — продолжай интервью с того order, на котором остановились (если уже шла фаза questions). Если кандидат ещё не подтвердил готовность — короткой фразой переспроси готовность."
+        ]
+      : [
+          "ЗАДАЧА: озвучить фазу intro ровно один раз — это твоя ПЕРВАЯ реплика.",
+          "Озвучь блок между маркерами «---» ДОСЛОВНО, без перестановки предложений, без сокращений, без перефразирования и без добавления своих фраз.",
+          "Сохрани все факты из блока: представление как HR-ассистента указанной компании, имя кандидата, название вакансии и любое упоминание записи и согласия, если они есть.",
+          "Запрещено: говорить «давайте начнём собеседование» вместо текста блока, опускать упоминание записи, заменять «Добрый день» на «Здравствуйте», добавлять «Я бот» / «Я ИИ» от себя.",
+          hasGreetingSpeech
+            ? "Источник истины приветствия — JobAI; внутри блока приветствие из JobAI идёт ПОСЛЕ строки самопрезентации, произнеси его целиком."
+            : "В этом интервью кастомный текст приветствия не задан — используй блок ниже как есть.",
+          "После последней строки блока остановись и дождись ответа кандидата (готовность / согласие). Не задавай больше одного финального вопроса.",
+          "Не называй себя именем кандидата."
+        ];
+
   await rtc.postEvent({
     type: "response.create",
     response: {
       modalities: ["audio", "text"],
       instructions: [
-        "ЗАДАЧА: озвучить фазу intro ровно один раз — это твоя ПЕРВАЯ реплика.",
-        "Озвучь блок между маркерами «---» ДОСЛОВНО, без перестановки предложений, без сокращений, без перефразирования и без добавления своих фраз.",
-        "Сохрани все факты из блока: представление как HR-ассистента указанной компании, имя кандидата, название вакансии и любое упоминание записи и согласия, если они есть.",
-        "Запрещено: говорить «давайте начнём собеседование» вместо текста блока, опускать упоминание записи, заменять «Добрый день» на «Здравствуйте», добавлять «Я бот» / «Я ИИ» от себя.",
-        hasGreetingSpeech
-          ? "Источник истины приветствия — JobAI; внутри блока приветствие из JobAI идёт ПОСЛЕ строки самопрезентации, произнеси его целиком."
-          : "В этом интервью кастомный текст приветствия не задан — используй блок ниже как есть.",
-        "После последней строки блока остановись и дождись ответа кандидата (готовность / согласие). Не задавай больше одного финального вопроса.",
-        "Не называй себя именем кандидата.",
+        ...baseInstructions,
         "",
         "---",
         openingUtterance,
@@ -451,7 +467,7 @@ export function useInterviewSession() {
                       triggerSource: "webrtc_restore"
                     })
                   );
-                  await postIntroResponseToRtc(rtc, effectiveContext);
+                  await postIntroResponseToRtc(rtc, effectiveContext, "reconnect");
                 }
               }
             } catch (introErr) {
