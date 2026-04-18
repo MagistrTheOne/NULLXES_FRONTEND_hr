@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
+import { extractJobAiIdFromEntryUrl } from "@/lib/candidate-entry-url";
 
 type MeetingHeaderProps = {
   statusLabel: string;
@@ -91,14 +92,21 @@ export function MeetingHeader({
             className="h-12 w-12 shrink-0 rounded-lg border border-slate-300/50 bg-white/80 text-slate-600 shadow-sm disabled:opacity-40"
             title={hasCopySource ? "Копировать ссылку" : "Ссылка появится после выбора собеседования"}
             onClick={() => {
-              const text = canonicalUrl || entryUrlInput.trim();
+              const text = (canonicalUrl || entryUrlInput.trim()).trim();
               if (!text) {
                 return;
               }
               setEntryUrlInput(text);
               void navigator.clipboard.writeText(text);
-              toast.success("Скопировано", {
-                description: "Ссылка кандидата вставлена в поле и сохранена в буфер обмена."
+              if (!extractJobAiIdFromEntryUrl(text)) {
+                toast.error("В ссылке нет jobAiId", {
+                  description: "Скопируйте ссылку из таблицы после выбора интервью или вставьте корректный URL."
+                });
+                return;
+              }
+              onEntryUrlCommit?.(text);
+              toast.success("Скопировано и проверено", {
+                description: "Поле обновлено, адресная строка синхронизирована с jobAiId из ссылки."
               });
             }}
           >

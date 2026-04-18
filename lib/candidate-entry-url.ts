@@ -1,3 +1,29 @@
+/** Достаёт `jobAiId` из полного URL, относительного пути или произвольной строки с `?jobAiId=` / `&jobAiId=`. */
+export function extractJobAiIdFromEntryUrl(input: string): number | null {
+  const value = input.trim();
+  if (!value) {
+    return null;
+  }
+
+  const fromPlain = value.match(/[?&]jobAiId=(\d+)/i);
+  if (fromPlain) {
+    const parsed = Number(fromPlain[1]);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  try {
+    const url = new URL(value, "http://localhost");
+    const raw = url.searchParams.get("jobAiId");
+    if (!raw) {
+      return null;
+    }
+    const parsed = Number(raw);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /** True if pasted URL or path includes `entry=candidate` (for HR paste → same candidate mode). */
 export function extractEntryCandidateFromPastedUrl(input: string): boolean {
   const value = input.trim();

@@ -24,7 +24,11 @@ import {
   subscribeObserverControlState,
   type ObserverControlState
 } from "@/lib/observer-control";
-import { extractEntryCandidateFromPastedUrl, withCandidateEntryQuery } from "@/lib/candidate-entry-url";
+import {
+  extractEntryCandidateFromPastedUrl,
+  extractJobAiIdFromEntryUrl,
+  withCandidateEntryQuery
+} from "@/lib/candidate-entry-url";
 import { formatCandidateMeetingLobbyMessage } from "@/lib/meeting-at-guard";
 import {
   buildGatewayVsExtractorHint,
@@ -34,6 +38,7 @@ import {
 } from "@/lib/interview-context-diagnostics";
 import { deriveSessionUiState, type SessionUIState } from "@/lib/session-ui-state";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import { AvatarStreamCard } from "./avatar-stream-card";
 import { CandidateStreamCard } from "./candidate-stream-card";
 import { InterviewsTablePreview } from "./interviews-table-preview";
@@ -94,31 +99,6 @@ function toAbsoluteUrl(pathOrUrl: string, origin: string): string {
     return pathOrUrl;
   }
   return `${origin}${pathOrUrl}`;
-}
-
-function extractJobAiIdFromEntryUrl(input: string): number | null {
-  const value = input.trim();
-  if (!value) {
-    return null;
-  }
-
-  const fromPlain = value.match(/[?&]jobAiId=(\d+)/i);
-  if (fromPlain) {
-    const parsed = Number(fromPlain[1]);
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-  }
-
-  try {
-    const url = new URL(value, "http://localhost");
-    const raw = url.searchParams.get("jobAiId");
-    if (!raw) {
-      return null;
-    }
-    const parsed = Number(raw);
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-  } catch {
-    return null;
-  }
 }
 
 export function InterviewShell() {
@@ -574,6 +554,9 @@ export function InterviewShell() {
     (value: string) => {
       const parsedId = extractJobAiIdFromEntryUrl(value);
       if (!parsedId) {
+        toast.error("Ссылка не распознана", {
+          description: "В URL должен быть параметр jobAiId (число), как в ссылке для кандидата."
+        });
         return;
       }
       const entryCandidate = extractEntryCandidateFromPastedUrl(value);
@@ -1077,6 +1060,7 @@ export function InterviewShell() {
           onPageChange={(nextPage) => {
             setRowsPage(nextPage);
           }}
+          onCandidateEntryUrlCopied={handleEntryUrlCommit}
         />
         <audio ref={audioRef} autoPlay />
       </div>

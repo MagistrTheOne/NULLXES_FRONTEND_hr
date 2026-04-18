@@ -30,6 +30,8 @@ type InterviewsTablePreviewProps = {
   onRefresh?: () => void;
   onSelect?: (row: InterviewListRow) => void;
   onPageChange?: (nextPage: number) => void;
+  /** После копирования ссылки кандидата — синхронизация поля в шапке и `?jobAiId=` (как при вводе + Enter). */
+  onCandidateEntryUrlCopied?: (absoluteUrl: string) => void;
 };
 
 function resolveNullxesBadge(row: InterviewListRow): { key: string; label: string } {
@@ -151,7 +153,8 @@ export function InterviewsTablePreview({
   error = null,
   onRefresh,
   onSelect,
-  onPageChange
+  onPageChange,
+  onCandidateEntryUrlCopied
 }: InterviewsTablePreviewProps) {
   const router = useRouter();
   const showSpectatorActions = process.env.NEXT_PUBLIC_ENABLE_SPECTATOR !== "0";
@@ -282,7 +285,13 @@ export function InterviewsTablePreview({
                           if (typeof window === "undefined") {
                             return;
                           }
-                          copyText(toAbsoluteUrl(candidateEntryPath));
+                          const absolute = toAbsoluteUrl(candidateEntryPath);
+                          void navigator.clipboard.writeText(absolute);
+                          onCandidateEntryUrlCopied?.(absolute);
+                          toast.success("Скопировано", {
+                            description:
+                              "Ссылка в буфере обмена; поле «Ссылка кандидата» в шапке и выбор интервью синхронизированы с этим URL."
+                          });
                         }}
                       >
                         Ссылка кандидата
