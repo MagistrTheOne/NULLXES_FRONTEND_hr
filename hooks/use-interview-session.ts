@@ -184,6 +184,36 @@ async function transitionJobAiToInMeeting(interviewId: number): Promise<void> {
   }
 }
 
+async function postIntroResponseToRtc(
+  rtc: WebRtcInterviewClient,
+  effectiveContext: InterviewStartContext | undefined
+): Promise<void> {
+  const runtimeInstructions = buildInterviewInstructions(effectiveContext);
+  await rtc.postEvent({
+    type: "session.update",
+    session: {
+      instructions: runtimeInstructions
+    }
+  });
+  const openingUtterance = buildOpeningUtterance(effectiveContext);
+  await rtc.postEvent({
+    type: "response.create",
+    response: {
+      modalities: ["audio", "text"],
+      instructions: [
+        "Начни фазу intro ровно один раз.",
+        "Произнеси ДОСЛОВНО следующий блок (сохраняй переносы строк), без перефразирования и без повторов.",
+        "После этого остановись и дождись ответа кандидата согласно сценарию приветствия (готовность, согласие с записью и т.д.).",
+        "Не называй себя именем кандидата.",
+        "",
+        "---",
+        openingUtterance,
+        "---"
+      ].join("\n")
+    }
+  });
+}
+
 async function transitionJobAiToCompleted(interviewId: number): Promise<void> {
   const detail = await getInterviewById(interviewId).catch(() => null);
   const currentStatus = (detail?.projection.jobAiStatus ?? detail?.interview.status) as JobAiInterviewStatus | undefined;
@@ -383,6 +413,44 @@ export function useInterviewSession() {
               sessionId: connected.sessionId,
               nullxesStatus: "in_meeting"
             }).catch(() => undefined);
+
+            /**
+             * Кандидат по ссылке: `hydrateActiveSession` подставляет sessionId из projection, затем
+             * этот эффект вызывает `connect()` и получает **новую** Realtime-сессию. Без повторного
+             * `response.create` агент молчит (приветствие ушло только в старую сессию HR).
+             */
+            try {
+              if (!cancelled) {
+                const freshDetail = await getInterviewById(activeInterviewId, true);
+                const effectiveContext = mergeStartContextWithInterviewDetail(
+                  lastInterviewContextRef.current ?? undefined,
+                  freshDetail
+                );
+                lastInterviewContextRef.current = effectiveContext;
+                const requiredContext = evaluateRequiredContext(effectiveContext);
+                const contextOk =
+                  !HARD_CONTEXT_GUARD_ENABLED ||
+                  (requiredContext.candidateReady &&
+                    requiredContext.companyReady &&
+                    requiredContext.jobTitleReady &&
+                    requiredContext.vacancyTextReady &&
+                    requiredContext.questionsReady);
+                if (contextOk && rtc.getSessionId() === connected.sessionId && !cancelled) {
+                  setLastAgentContextTrace(
+                    createAgentContextTrace(effectiveContext, freshDetail, {
+                      meetingId,
+                      sessionId: connected.sessionId,
+                      interviewId: activeInterviewId,
+                      stage: "reconnect:after_merge",
+                      triggerSource: "webrtc_restore"
+                    })
+                  );
+                  await postIntroResponseToRtc(rtc, effectiveContext);
+                }
+              }
+            } catch (introErr) {
+              console.warn("[interview] WebRTC restore: intro replay failed", introErr);
+            }
           }
           reconnectAttemptForSessionRef.current = null;
           setRuntimeRecoveryState("idle");
@@ -551,7 +619,6 @@ export function useInterviewSession() {
       }
 
       lastInterviewContextRef.current = effectiveContext ?? null;
-      const runtimeInstructions = buildInterviewInstructions(effectiveContext);
       setLastAgentContextTrace(
         createAgentContextTrace(effectiveContext, detailAfterFetch, {
           meetingId: internalMeetingId,
@@ -561,29 +628,7 @@ export function useInterviewSession() {
           triggerSource
         })
       );
-      await rtc.postEvent({
-        type: "session.update",
-        session: {
-          instructions: runtimeInstructions
-        }
-      });
-      const openingUtterance = buildOpeningUtterance(effectiveContext);
-      await rtc.postEvent({
-        type: "response.create",
-        response: {
-          modalities: ["audio", "text"],
-          instructions: [
-            "Начни фазу intro ровно один раз.",
-            "Произнеси ДОСЛОВНО следующий блок (сохраняй переносы строк), без перефразирования и без повторов.",
-            "После этого остановись и дождись ответа кандидата согласно сценарию приветствия (готовность, согласие с записью и т.д.).",
-            "Не называй себя именем кандидата.",
-            "",
-            "---",
-            openingUtterance,
-            "---"
-          ].join("\n")
-        }
-      });
+      await postIntroResponseToRtc(rtc, effectiveContext);
 
       setPhase("connected");
       setRuntimeRecoveryState("idle");
