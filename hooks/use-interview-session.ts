@@ -55,7 +55,6 @@ const AVATAR_READY_EVENT_TYPES = [
   "avatar.stream.joined"
 ];
 const HARD_CONTEXT_GUARD_ENABLED = process.env.NEXT_PUBLIC_INTERVIEW_HARD_GUARD === "1";
-const AGENT_SELF_INTRO = "Я HR-ассистент и готов провести с вами собеседование.";
 /** Повторные попытки восстановления WebRTC после reload (экспоненциальная задержка между попытками). */
 const RECONNECT_ATTEMPTS = 3;
 const RECONNECT_BACKOFF_MS = [0, 450, 1400] as const;
