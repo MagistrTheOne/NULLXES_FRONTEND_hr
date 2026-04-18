@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getInterviewById, type InterviewDetail, type InterviewListRow } from "@/lib/api";
-import { withCandidateEntryQuery } from "@/lib/candidate-entry-url";
+import { resolveHrCandidateEntryBasePath, withCandidateEntryQuery } from "@/lib/candidate-entry-url";
 
 type InterviewsTablePreviewProps = {
   rows: InterviewListRow[];
@@ -130,9 +130,7 @@ function toAbsoluteUrl(pathOrUrl: string): string {
 }
 
 function buildCandidateEntryPath(row: InterviewListRow): string {
-  const direct = normalizeEntryPath(sanitizeEntryPath(row.candidateEntryPath));
-  const fallbackJobAiId = Number.isInteger(row.jobAiId) && row.jobAiId > 0 ? row.jobAiId : null;
-  const base = direct || (fallbackJobAiId ? `/?jobAiId=${encodeURIComponent(fallbackJobAiId)}` : "/");
+  const base = resolveHrCandidateEntryBasePath(row.candidateEntryPath, row.jobAiId);
   return base === "/" ? base : withCandidateEntryQuery(base);
 }
 

@@ -41,6 +41,42 @@ export function extractEntryCandidateFromPastedUrl(input: string): boolean {
   }
 }
 
+function isBlankEntryPath(value: string): boolean {
+  const v = value.trim();
+  return !v || v === "undefined" || v === "null";
+}
+
+/**
+ * Базовый путь/URL для ссылки кандидата в Nullxes JobAI (HR UI).
+ * Gateway иногда кладёт в `candidateLink` внешние заглушки (Zoom и т.п.) без `jobAiId` —
+ * такие URL здесь отбрасываем и строим `/?jobAiId=…`, иначе `extractJobAiIdFromEntryUrl` падает.
+ */
+export function resolveHrCandidateEntryBasePath(
+  candidateEntryPath: string | null | undefined,
+  jobAiId: number
+): string {
+  const idOk = Number.isInteger(jobAiId) && jobAiId > 0;
+  const raw = typeof candidateEntryPath === "string" ? candidateEntryPath.trim() : "";
+  if (isBlankEntryPath(raw)) {
+    return idOk ? `/?jobAiId=${encodeURIComponent(String(jobAiId))}` : "/";
+  }
+
+  if (/^https?:\/\//i.test(raw)) {
+    if (/[?&]jobAiId=\d+/i.test(raw)) {
+      return raw;
+    }
+    return idOk ? `/?jobAiId=${encodeURIComponent(String(jobAiId))}` : "/";
+  }
+
+  if (raw.startsWith("/")) {
+    return raw;
+  }
+  if (raw.startsWith("?")) {
+    return `/${raw}`;
+  }
+  return `/${raw}`;
+}
+
 /** Appends `entry=candidate` so the home page can run candidate-only auto-flow without affecting HR. */
 export function withCandidateEntryQuery(pathOrUrl: string): string {
   const trimmed = pathOrUrl.trim();

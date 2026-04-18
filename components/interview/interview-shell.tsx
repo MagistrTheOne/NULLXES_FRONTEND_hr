@@ -28,6 +28,7 @@ import {
 import {
   extractEntryCandidateFromPastedUrl,
   extractJobAiIdFromEntryUrl,
+  resolveHrCandidateEntryBasePath,
   withCandidateEntryQuery
 } from "@/lib/candidate-entry-url";
 import { formatCandidateMeetingLobbyMessage } from "@/lib/meeting-at-guard";
@@ -63,33 +64,6 @@ function isJobAiNotConfiguredError(error: unknown): boolean {
 
 function safeText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function sanitizeEntryPath(value: unknown): string {
-  if (typeof value !== "string") {
-    return "";
-  }
-  const candidate = value.trim();
-  if (!candidate || candidate === "undefined" || candidate === "null") {
-    return "";
-  }
-  return candidate;
-}
-
-function normalizeEntryPath(pathOrUrl: string): string {
-  if (!pathOrUrl) {
-    return "";
-  }
-  if (/^https?:\/\//i.test(pathOrUrl)) {
-    return pathOrUrl;
-  }
-  if (pathOrUrl.startsWith("/")) {
-    return pathOrUrl;
-  }
-  if (pathOrUrl.startsWith("?")) {
-    return `/${pathOrUrl}`;
-  }
-  return `/${pathOrUrl}`;
 }
 
 function toAbsoluteUrl(pathOrUrl: string, origin: string): string {
@@ -185,8 +159,7 @@ export function InterviewShell() {
     if (!selectedRow) {
       return "";
     }
-    const direct = normalizeEntryPath(sanitizeEntryPath(selectedRow.candidateEntryPath));
-    const base = direct || `/?jobAiId=${encodeURIComponent(selectedRow.jobAiId)}`;
+    const base = resolveHrCandidateEntryBasePath(selectedRow.candidateEntryPath, selectedRow.jobAiId);
     return withCandidateEntryQuery(base);
   }, [selectedRow]);
 
