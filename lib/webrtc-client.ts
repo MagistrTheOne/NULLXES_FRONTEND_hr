@@ -91,7 +91,11 @@ export class WebRtcInterviewClient {
       }
     };
 
-    const dataChannel = pc.createDataChannel("events");
+    // OpenAI Realtime API GA requires the DataChannel name to be exactly "oai-events".
+    // Any other name causes OpenAI to silently ignore both client events AND server events
+    // sent over the channel — symptom: agent never speaks, session.update / response.create
+    // appear successful in our logs but never trigger any response from the model.
+    const dataChannel = pc.createDataChannel("oai-events");
     this.dataChannel = dataChannel;
     dataChannel.onopen = () => {
       if (this.sessionId) {

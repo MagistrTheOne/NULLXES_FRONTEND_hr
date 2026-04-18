@@ -192,9 +192,13 @@ async function postIntroResponseToRtc(
   mode: IntroMode = "first"
 ): Promise<void> {
   const runtimeInstructions = buildInterviewInstructions(effectiveContext);
+  // OpenAI Realtime GA requires session.type to be set on every session.update.
+  // Without it the API silently rejects the update and our instructions never
+  // reach the model, leaving the agent stuck on default behaviour.
   await rtc.postEvent({
     type: "session.update",
     session: {
+      type: "realtime",
       instructions: runtimeInstructions
     }
   });
@@ -540,6 +544,7 @@ export function useInterviewSession() {
               await rtc.postEvent({
                 type: "session.update",
                 session: {
+                  type: "realtime",
                   instructions: runtimeInstructions
                 }
               });
