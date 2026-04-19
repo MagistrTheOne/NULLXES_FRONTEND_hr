@@ -906,11 +906,24 @@ export function useInterviewSession() {
       }
 
       if (rtc?.getSessionId()) {
-        await rtc.postEvent({
-          type: "session.update",
-          source: "frontend",
-          message: "session_stopping"
-        });
+        // Tell OpenAI to abort whatever the agent is currently saying. Without
+        // this the agent keeps talking until the WebRTC peer connection is
+        // closed below — user perceives "Завершить" as not stopping the agent.
+        // response.cancel is a real OpenAI client event (see whitelist in
+        // webrtc-client.ts). It's a no-op if no response is in flight.
+        await rtc
+          .postEvent({
+            type: "response.cancel"
+          })
+          .catch(() => undefined);
+        // Telemetry breadcrumb for gateway logs (gateway-only, OpenAI ignores).
+        await rtc
+          .postEvent({
+            type: "session.update",
+            source: "frontend",
+            message: "session_stopping"
+          })
+          .catch(() => undefined);
       }
 
       await stopMeeting(activeMeetingId, {

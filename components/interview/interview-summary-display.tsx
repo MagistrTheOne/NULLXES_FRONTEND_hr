@@ -1,137 +1,175 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ShieldCheck, ShieldAlert, ShieldX } from "lucide-react";
 import { useState } from "react";
-import type { InterviewSummaryPayload } from "@/lib/interview-summary";
-import { Badge } from "@/components/ui/badge";
+import {
+  decisionLabel,
+  type InterviewDecision,
+  type InterviewSummaryPayload
+} from "@/lib/interview-summary";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { cn } from "@/lib/utils";
 
 type InterviewSummaryDisplayProps = {
   summary: InterviewSummaryPayload | null;
   title?: string;
-  /** По умолчанию блок свёрнут — разворачивается по клику. */
   defaultOpen?: boolean;
 };
+
+interface DecisionTone {
+  label: string;
+  ring: string;
+  text: string;
+  bg: string;
+  bar: string;
+  Icon: typeof ShieldCheck;
+}
+
+function decisionTone(decision: InterviewDecision): DecisionTone {
+  if (decision === "recommended") {
+    return {
+      label: decisionLabel(decision),
+      ring: "ring-emerald-200",
+      text: "text-emerald-900",
+      bg: "bg-emerald-50",
+      bar: "bg-emerald-500",
+      Icon: ShieldCheck
+    };
+  }
+  if (decision === "rejected") {
+    return {
+      label: decisionLabel(decision),
+      ring: "ring-rose-200",
+      text: "text-rose-900",
+      bg: "bg-rose-50",
+      bar: "bg-rose-500",
+      Icon: ShieldX
+    };
+  }
+  return {
+    label: decisionLabel(decision),
+    ring: "ring-amber-200",
+    text: "text-amber-900",
+    bg: "bg-amber-50",
+    bar: "bg-amber-500",
+    Icon: ShieldAlert
+  };
+}
+
+function ScoreBar({ label, value }: { label: string; value: number }) {
+  const safe = Number.isFinite(value) ? Math.max(0, Math.min(10, value)) : 0;
+  const tone = safe >= 7.5 ? "bg-emerald-500" : safe >= 5.5 ? "bg-amber-500" : "bg-rose-500";
+  return (
+    <div className="space-y-1">
+      <div className="flex items-baseline justify-between text-xs">
+        <span className="text-slate-600">{label}</span>
+        <span className="font-mono text-sm font-semibold text-slate-800">{safe.toFixed(1)} / 10</span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+        <div
+          className={cn("h-full rounded-full transition-all", tone)}
+          style={{ width: `${(safe / 10) * 100}%` }}
+        />
+      </div>
+    </div>
+  );
+}
 
 export function InterviewSummaryDisplay({
   summary,
   title = "Итог интервью",
-  defaultOpen = false
+  defaultOpen = true
 }: InterviewSummaryDisplayProps) {
   const [open, setOpen] = useState(defaultOpen);
 
-  if (!summary) {
-    return null;
-  }
+  if (!summary) return null;
+
+  const tone = decisionTone(summary.decision);
+  const Icon = tone.Icon;
+  const confidence = Math.max(0, Math.min(100, Math.round(summary.confidencePercent ?? 0)));
+  const scoreTotal = Number.isFinite(summary.scoreTotal) ? summary.scoreTotal : 0;
 
   return (
-    <Card className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm">
+    <Card className={cn("rounded-2xl border-0 ring-1 shadow-sm bg-white/95", tone.ring)}>
       <Collapsible open={open} onOpenChange={setOpen}>
-        <CardHeader className="pb-2 pt-4">
-          <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 rounded-lg text-left outline-none ring-offset-2 focus-visible:ring-2 focus-visible:ring-slate-400">
-            <CardTitle className="text-base text-slate-800">{title}</CardTitle>
-            <span className="flex shrink-0 items-center gap-2 text-xs text-slate-500">
-              {open ? "Свернуть" : "Показать полностью"}
-              <ChevronDown className={`size-5 shrink-0 text-slate-600 transition-transform ${open ? "rotate-180" : ""}`} />
-            </span>
+        <CardHeader className="pb-3 pt-4">
+          <CollapsibleTrigger className="group flex w-full items-center justify-between gap-3 rounded-lg text-left outline-none">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className={cn("flex size-10 shrink-0 items-center justify-center rounded-xl", tone.bg, tone.text)}>
+                <Icon className="size-5" />
+              </span>
+              <div className="min-w-0">
+                <CardTitle className="text-base text-slate-800">{title}</CardTitle>
+                <p className={cn("mt-0.5 text-sm font-semibold", tone.text)}>
+                  Решение · {tone.label} · {scoreTotal.toFixed(1)} / 10
+                </p>
+              </div>
+            </div>
+            <ChevronDown
+              className={cn("size-5 shrink-0 text-slate-500 transition-transform", open && "rotate-180")}
+            />
           </CollapsibleTrigger>
         </CardHeader>
         <CollapsibleContent>
-          <CardContent className="space-y-3 border-t border-slate-100 pt-4 text-sm text-slate-700">
-            <div className="flex flex-wrap gap-1.5 pb-1">
-              <Badge variant="outline">v{summary.summarySchemaVersion}</Badge>
-              <Badge variant="secondary">{summary.verdict}</Badge>
-              {summary.hiringRecommendation ? (
-                <Badge variant="outline">hire: {summary.hiringRecommendation}</Badge>
-              ) : null}
-              <Badge variant="outline">confidence: {summary.confidence}</Badge>
-              {summary.evaluationPending ? (
-                <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">
-                  scores pending
-                </Badge>
-              ) : null}
+          <CardContent className="space-y-5 border-t border-slate-100 pt-4 text-sm text-slate-700">
+            {/* Confidence */}
+            <div className="space-y-1">
+              <div className="flex items-baseline justify-between text-xs">
+                <span className="font-semibold uppercase tracking-wide text-slate-500">Уверенность модели</span>
+                <span className="font-mono text-sm font-semibold text-slate-800">{confidence}%</span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className={cn("h-full rounded-full transition-all", tone.bar)}
+                  style={{ width: `${confidence}%` }}
+                />
+              </div>
             </div>
-            <p className="font-medium text-slate-800">{summary.roleFit}</p>
-            {summary.vacancyDigest ? (
+
+            {/* 4 Scores */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <ScoreBar label="Опыт" value={summary.scores4.experience} />
+              <ScoreBar label="Коммуникация" value={summary.scores4.communication} />
+              <ScoreBar label="Мышление" value={summary.scores4.thinking} />
+              <ScoreBar label="Работа с возражениями" value={summary.scores4.objections} />
+            </div>
+
+            {/* Key findings */}
+            {summary.keyFindings.length > 0 ? (
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Текст вакансии (в контексте)</p>
-                <p className="mt-1 whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-xs text-slate-700">
-                  {summary.vacancyDigest}
-                </p>
-              </div>
-            ) : null}
-            {summary.vacancyTruncated ? (
-              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                Текст вакансии был сокращён при передаче в модель (лимит контекста).
-              </p>
-            ) : null}
-            {summary.strengths.length > 0 ? (
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Сильные стороны</p>
-                <ul className="mt-1 list-inside list-disc text-slate-700">
-                  {summary.strengths.map((s, i) => (
-                    <li key={i}>{s}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {summary.scores &&
-            (summary.scores.experience1to10 != null ||
-              summary.scores.communication1to10 != null ||
-              summary.scores.thinking1to10 != null) ? (
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Оценка (1–10)</p>
-                <ul className="mt-1 list-inside text-xs text-slate-700">
-                  {summary.scores.experience1to10 != null ? (
-                    <li>Опыт: {summary.scores.experience1to10}</li>
-                  ) : null}
-                  {summary.scores.communication1to10 != null ? (
-                    <li>Коммуникация: {summary.scores.communication1to10}</li>
-                  ) : null}
-                  {summary.scores.thinking1to10 != null ? (
-                    <li>Мышление / структура ответов: {summary.scores.thinking1to10}</li>
-                  ) : null}
-                </ul>
-              </div>
-            ) : null}
-            {summary.weaknesses && summary.weaknesses.length > 0 ? (
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Слабые стороны</p>
-                <ul className="mt-1 list-inside list-disc text-slate-700">
-                  {summary.weaknesses.map((s, i) => (
-                    <li key={i}>{s}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {summary.gaps.length > 0 ? (
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Пробелы</p>
-                <ul className="mt-1 list-inside list-disc text-slate-700">
-                  {summary.gaps.map((s, i) => (
-                    <li key={i}>{s}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {summary.questionCoverage.length > 0 ? (
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Вопросы</p>
-                <ul className="mt-1 space-y-1">
-                  {summary.questionCoverage.map((q) => (
-                    <li key={q.order} className="rounded-md bg-slate-50 px-2 py-1 text-xs">
-                      <span className="font-medium">#{q.order}</span> {q.topic}{" "}
-                      <span className="text-slate-500">({q.assessment})</span>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ключевые выводы</p>
+                <ul className="mt-1.5 space-y-1.5">
+                  {summary.keyFindings.map((finding, i) => (
+                    <li key={i} className="leading-snug text-slate-700">
+                      {finding}
                     </li>
                   ))}
                 </ul>
               </div>
             ) : null}
-            <p>
-              <span className="font-semibold text-slate-800">Рекомендация:</span> {summary.recommendedNextStep}
-            </p>
-            {summary.notes ? <p className="text-xs text-slate-500">{summary.notes}</p> : null}
+
+            {/* Risks */}
+            {summary.risks.length > 0 ? (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Риски</p>
+                <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-slate-700">
+                  {summary.risks.map((risk, i) => (
+                    <li key={i} className="leading-snug">
+                      {risk}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {/* Recommended next step */}
+            <div className={cn("rounded-xl px-4 py-3", tone.bg, tone.text)}>
+              <p className="text-xs font-semibold uppercase tracking-wide opacity-80">Рекомендация</p>
+              <p className="mt-0.5 text-sm font-medium">{summary.recommendedNextStep}</p>
+            </div>
+
+            {summary.notes ? <p className="text-[11px] text-slate-400">{summary.notes}</p> : null}
           </CardContent>
         </CollapsibleContent>
       </Collapsible>
