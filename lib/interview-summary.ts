@@ -381,3 +381,118 @@ export function hiringRecommendationFromVerdict(verdict: InterviewSummaryVerdict
   if (verdict === "no_fit") return "reject";
   return "maybe";
 }
+
+// --- normalizer for cached / external payloads ---
+
+/**
+ * Принимает любой payload (v1 из Redis, v2 свежий, неполный JSON и т.д.) и
+ * возвращает валидный v2 объект. Если входные данные не похожи на summary —
+ * возвращает null (callee должен сам решить что показать вместо).
+ *
+ * Используется когда summary читается из meeting.metadata.interviewSummary —
+ * там могут лежать старые v1-снимки от завершённых интервью, и без
+ * нормализации новый InterviewSummaryDisplay падает на undefined.scores4.
+ */
+export function normalizeInterviewSummary(value: unknown): InterviewSummaryPayload | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Partial<InterviewSummaryPayload> & Record<string, unknown>;
+
+  // Already v2 with mandatory fields — pass through (defensive copy).
+  if (
+    v.summarySchemaVersion === INTERVIEW_SUMMARY_SCHEMA_VERSION &&
+    v.scores4 &&
+    typeof v.scores4 === "object" &&
+    typeof (v.scores4 as InterviewScores4).experience === "number" &&
+    typeof v.decision === "string"
+  ) {
+    return value as InterviewSummaryPayload;
+  }
+
+  // Adapt v1 → v2: reuse legacy `scores` (1-10 ints) if present, otherwise
+  // fall back to neutral 5/10 across the board so the UI always renders.
+  const legacyScores = (v.scores ?? null) as InterviewScoreDimensions | null;
+  const scores4: InterviewScores4 = {
+    experience: clampScore(legacyScores?.experience1to10 ?? 5),
+    communication: clampScore(legacyScores?.communication1to10 ?? 5),
+    thinking: clampScore(legacyScores?.thinking1to10 ?? 5),
+    objections: 5
+  };
+  const scoreTotal = computeScoreTotal(scores4);
+
+  let decision: InterviewDecision = decisionFromScore(scoreTotal);
+  if (typeof v.decision === "string") {
+    const picked = ((): InterviewDecision | null => {
+      const lower = v.decision.toLowerCase();
+      if (lower === "recommended" || lower === "consider" || lower === "rejected") return lower;
+      return null;
+    })();
+    if (picked) decision = picked;
+  } else if (v.hiringRecommendation === "hire") {
+    decision = "recommended";
+  } else if (v.hiringRecommendation === "reject") {
+    decision = "rejected";
+  } else if (v.hiringRecommendation === "maybe" || v.verdict === "maybe") {
+    decision = "consider";
+  }
+
+  const confidencePercent =
+    typeof v.confidencePercent === "number" && Number.isFinite(v.confidencePercent)
+      ? Math.max(0, Math.min(100, Math.round(v.confidencePercent)))
+      : v.confidence === "high"
+        ? 75
+        : v.confidence === "medium"
+          ? 50
+          : 25;
+
+  const keyFindings: string[] =
+    Array.isArray(v.keyFindings) && v.keyFindings.every((s) => typeof s === "string")
+      ? (v.keyFindings as string[]).slice(0, 5)
+      : typeof v.roleFit === "string" && v.roleFit.trim()
+        ? [v.roleFit.trim()]
+        : ["Итог сформирован по ограниченным данным предыдущей сессии."];
+
+  const risks: string[] =
+    Array.isArray(v.risks) && v.risks.every((s) => typeof s === "string") ? (v.risks as string[]).slice(0, 8) : [];
+
+  const recommendedNextStep =
+    typeof v.recommendedNextStep === "string" && v.recommendedNextStep.trim()
+      ? v.recommendedNextStep.trim()
+      : decision === "recommended"
+        ? "Назначить финальное интервью с нанимающим менеджером."
+        : decision === "rejected"
+          ? "Сообщить отказ и закрыть карточку кандидата."
+          : "Провести краткое уточняющее интервью или тестовое задание.";
+
+  return {
+    summarySchemaVersion: INTERVIEW_SUMMARY_SCHEMA_VERSION,
+    generatedAt: typeof v.generatedAt === "string" ? v.generatedAt : new Date().toISOString(),
+    decision,
+    confidencePercent,
+    scores4,
+    scoreTotal,
+    keyFindings,
+    risks,
+    recommendedNextStep,
+    verdict: typeof v.verdict === "string" ? (v.verdict as InterviewSummaryVerdict) : "maybe",
+    confidence: typeof v.confidence === "string" ? (v.confidence as InterviewSummaryConfidence) : "medium",
+    roleFit: typeof v.roleFit === "string" ? v.roleFit : "",
+    strengths: Array.isArray(v.strengths) ? (v.strengths.filter((s) => typeof s === "string") as string[]) : [],
+    gaps: Array.isArray(v.gaps) ? (v.gaps.filter((s) => typeof s === "string") as string[]) : [],
+    weaknesses: Array.isArray(v.weaknesses) ? (v.weaknesses.filter((s) => typeof s === "string") as string[]) : [],
+    redFlags: Array.isArray(v.redFlags) ? (v.redFlags.filter((s) => typeof s === "string") as string[]) : [],
+    questionCoverage: Array.isArray(v.questionCoverage) ? (v.questionCoverage as InterviewSummaryQuestionCoverage[]) : [],
+    salaryExpectations: typeof v.salaryExpectations === "string" ? v.salaryExpectations : undefined,
+    relocationTravel: typeof v.relocationTravel === "string" ? v.relocationTravel : undefined,
+    scores: legacyScores ?? {
+      experience1to10: scores4.experience,
+      communication1to10: scores4.communication,
+      thinking1to10: scores4.thinking
+    },
+    hiringRecommendation:
+      decision === "recommended" ? "hire" : decision === "rejected" ? "reject" : "maybe",
+    vacancyDigest: typeof v.vacancyDigest === "string" ? v.vacancyDigest : undefined,
+    vacancyTruncated: typeof v.vacancyTruncated === "boolean" ? v.vacancyTruncated : undefined,
+    notes: typeof v.notes === "string" ? v.notes : undefined,
+    evaluationPending: false
+  };
+}

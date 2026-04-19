@@ -4,6 +4,7 @@ import { ChevronDown, ShieldCheck, ShieldAlert, ShieldX } from "lucide-react";
 import { useState } from "react";
 import {
   decisionLabel,
+  normalizeInterviewSummary,
   type InterviewDecision,
   type InterviewSummaryPayload
 } from "@/lib/interview-summary";
@@ -83,12 +84,16 @@ export function InterviewSummaryDisplay({
 }: InterviewSummaryDisplayProps) {
   const [open, setOpen] = useState(defaultOpen);
 
-  if (!summary) return null;
+  // Защита от старых v1 payload'ов в Redis: если payload не v2 — нормализуем
+  // его до v2 на лету. Без этого `summary.scores4.experience` крашит UI на
+  // завершённых интервью, сделанных до bump'а схемы.
+  const normalized = summary ? normalizeInterviewSummary(summary) : null;
+  if (!normalized) return null;
 
-  const tone = decisionTone(summary.decision);
+  const tone = decisionTone(normalized.decision);
   const Icon = tone.Icon;
-  const confidence = Math.max(0, Math.min(100, Math.round(summary.confidencePercent ?? 0)));
-  const scoreTotal = Number.isFinite(summary.scoreTotal) ? summary.scoreTotal : 0;
+  const confidence = Math.max(0, Math.min(100, Math.round(normalized.confidencePercent ?? 0)));
+  const scoreTotal = Number.isFinite(normalized.scoreTotal) ? normalized.scoreTotal : 0;
 
   return (
     <Card className={cn("rounded-2xl border-0 ring-1 shadow-sm bg-white/95", tone.ring)}>
@@ -129,18 +134,18 @@ export function InterviewSummaryDisplay({
 
             {/* 4 Scores */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <ScoreBar label="Опыт" value={summary.scores4.experience} />
-              <ScoreBar label="Коммуникация" value={summary.scores4.communication} />
-              <ScoreBar label="Мышление" value={summary.scores4.thinking} />
-              <ScoreBar label="Работа с возражениями" value={summary.scores4.objections} />
+              <ScoreBar label="Опыт" value={normalized.scores4.experience} />
+              <ScoreBar label="Коммуникация" value={normalized.scores4.communication} />
+              <ScoreBar label="Мышление" value={normalized.scores4.thinking} />
+              <ScoreBar label="Работа с возражениями" value={normalized.scores4.objections} />
             </div>
 
             {/* Key findings */}
-            {summary.keyFindings.length > 0 ? (
+            {normalized.keyFindings.length > 0 ? (
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ключевые выводы</p>
                 <ul className="mt-1.5 space-y-1.5">
-                  {summary.keyFindings.map((finding, i) => (
+                  {normalized.keyFindings.map((finding, i) => (
                     <li key={i} className="leading-snug text-slate-700">
                       {finding}
                     </li>
@@ -150,11 +155,11 @@ export function InterviewSummaryDisplay({
             ) : null}
 
             {/* Risks */}
-            {summary.risks.length > 0 ? (
+            {normalized.risks.length > 0 ? (
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Риски</p>
                 <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-slate-700">
-                  {summary.risks.map((risk, i) => (
+                  {normalized.risks.map((risk, i) => (
                     <li key={i} className="leading-snug">
                       {risk}
                     </li>
@@ -166,10 +171,10 @@ export function InterviewSummaryDisplay({
             {/* Recommended next step */}
             <div className={cn("rounded-xl px-4 py-3", tone.bg, tone.text)}>
               <p className="text-xs font-semibold uppercase tracking-wide opacity-80">Рекомендация</p>
-              <p className="mt-0.5 text-sm font-medium">{summary.recommendedNextStep}</p>
+              <p className="mt-0.5 text-sm font-medium">{normalized.recommendedNextStep}</p>
             </div>
 
-            {summary.notes ? <p className="text-[11px] text-slate-400">{summary.notes}</p> : null}
+            {normalized.notes ? <p className="text-[11px] text-slate-400">{normalized.notes}</p> : null}
           </CardContent>
         </CollapsibleContent>
       </Collapsible>
