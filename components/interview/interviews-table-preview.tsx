@@ -15,7 +15,15 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getInterviewById, type InterviewDetail, type InterviewListRow } from "@/lib/api";
+import {
+  getInterviewById,
+  isApiRequestError,
+  issueCandidateJoinLink,
+  issueSpectatorJoinLink,
+  type InterviewDetail,
+  type InterviewListRow,
+  type JoinLinkRole
+} from "@/lib/api";
 import { resolveHrCandidateEntryBasePath, withCandidateEntryQuery } from "@/lib/candidate-entry-url";
 
 type InterviewsTablePreviewProps = {
@@ -161,6 +169,46 @@ export function InterviewsTablePreview({
   const [refBusy, setRefBusy] = useState(false);
   const [refDetail, setRefDetail] = useState<InterviewDetail | null>(null);
   const [refError, setRefError] = useState<string | null>(null);
+  /**
+   * Per-row "loading" markers for signed-link issuance buttons. Keyed by `${role}:${jobAiId}`
+   * so two HRs cannot accidentally double-issue, and clicking spectator while candidate
+   * is still being issued does not break the UI.
+   */
+  const [linkBusy, setLinkBusy] = useState<Record<string, boolean>>({});
+
+  const issueAndCopyLink = useCallback(
+    async (role: JoinLinkRole, row: InterviewListRow): Promise<void> => {
+      if (typeof window === "undefined") return;
+      const busyKey = `${role}:${row.jobAiId}`;
+      if (linkBusy[busyKey]) return;
+      setLinkBusy((prev) => ({ ...prev, [busyKey]: true }));
+      try {
+        const issuer = role === "candidate" ? issueCandidateJoinLink : issueSpectatorJoinLink;
+        const result = await issuer(row.jobAiId);
+        await navigator.clipboard.writeText(result.url).catch(() => undefined);
+        if (role === "candidate") {
+          onCandidateEntryUrlCopied?.(result.url);
+        }
+        const expires = new Date(result.expiresAt).toLocaleString("ru-RU");
+        toast.success(
+          role === "candidate" ? "Ссылка кандидата скопирована" : "Ссылка наблюдателя скопирована",
+          {
+            description: `Подписанная ссылка действительна до ${expires}. Только тот, кому вы её отправите, сможет войти.`
+          }
+        );
+      } catch (err) {
+        const message = isApiRequestError(err) ? `${err.status ?? "—"} ${err.message}` : (err as Error).message;
+        toast.error("Не удалось выпустить ссылку", { description: message });
+      } finally {
+        setLinkBusy((prev) => {
+          const next = { ...prev };
+          delete next[busyKey];
+          return next;
+        });
+      }
+    },
+    [linkBusy, onCandidateEntryUrlCopied]
+  );
 
   const openReference = useCallback(async (jobAiId: number) => {
     setRefBusy(true);
@@ -279,34 +327,20 @@ export function InterviewsTablePreview({
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() => {
-                          if (typeof window === "undefined") {
-                            return;
-                          }
-                          const absolute = toAbsoluteUrl(candidateEntryPath);
-                          void navigator.clipboard.writeText(absolute);
-                          onCandidateEntryUrlCopied?.(absolute);
-                          toast.success("Скопировано", {
-                            description:
-                              "Ссылка в буфере обмена; поле «Ссылка кандидата» в шапке и выбор интервью синхронизированы с этим URL."
-                          });
-                        }}
+                        onClick={() => void issueAndCopyLink("candidate", row)}
+                        disabled={Boolean(linkBusy[`candidate:${row.jobAiId}`])}
                       >
-                        Ссылка кандидата
+                        {linkBusy[`candidate:${row.jobAiId}`] ? "Выпуск ссылки…" : "Ссылка кандидата"}
                       </Button>
                       {showSpectatorActions ? (
                         <>
                           <Button
                             size="sm"
                             variant="secondary"
-                            onClick={() => {
-                              if (typeof window === "undefined") {
-                                return;
-                              }
-                              copyText(toAbsoluteUrl(spectatorEntryPath));
-                            }}
+                            onClick={() => void issueAndCopyLink("spectator", row)}
+                            disabled={Boolean(linkBusy[`spectator:${row.jobAiId}`])}
                           >
-                            Ссылка наблюдателя
+                            {linkBusy[`spectator:${row.jobAiId}`] ? "Выпуск ссылки…" : "Ссылка наблюдателя"}
                           </Button>
                           <Button
                             size="sm"

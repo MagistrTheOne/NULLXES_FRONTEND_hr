@@ -503,3 +503,62 @@ export async function releaseCandidateAdmission(
     body: JSON.stringify(input)
   });
 }
+
+// ---------- M3: signed candidate / spectator join links ----------
+
+export type JoinLinkRole = "candidate" | "spectator";
+
+export interface JoinLinkIssued {
+  /** Raw signed token (also embedded in `url`). */
+  token: string;
+  /** Absolute URL the candidate / spectator should open (frontend `/join/...`). */
+  url: string;
+  /** Token id; needed to revoke this specific link later. */
+  jti: string;
+  /** Expiry timestamp (ms epoch). */
+  expiresAt: number;
+}
+
+export interface JoinLinkAuditEntry {
+  jti: string;
+  jobAiId: number;
+  role: JoinLinkRole;
+  issuedAt: number;
+  exp: number;
+  ip?: string;
+  displayName?: string;
+  revokedAt?: number;
+}
+
+export async function issueCandidateJoinLink(
+  jobAiId: number,
+  opts?: { ttlMs?: number; displayName?: string }
+): Promise<JoinLinkIssued> {
+  return requestJsonWithRetry<JoinLinkIssued>(`interviews/${jobAiId}/links/candidate`, {
+    method: "POST",
+    body: JSON.stringify(opts ?? {})
+  });
+}
+
+export async function issueSpectatorJoinLink(
+  jobAiId: number,
+  opts?: { ttlMs?: number; displayName?: string }
+): Promise<JoinLinkIssued> {
+  return requestJsonWithRetry<JoinLinkIssued>(`interviews/${jobAiId}/links/spectator`, {
+    method: "POST",
+    body: JSON.stringify(opts ?? {})
+  });
+}
+
+export async function revokeJoinLink(jobAiId: number, jti: string): Promise<{ revoked: boolean; jti: string }> {
+  return requestJsonWithRetry<{ revoked: boolean; jti: string }>(`interviews/${jobAiId}/links/revoke`, {
+    method: "POST",
+    body: JSON.stringify({ jti })
+  });
+}
+
+export async function listJoinLinkAudit(jobAiId: number, limit = 20): Promise<{ entries: JoinLinkAuditEntry[] }> {
+  return requestJson<{ entries: JoinLinkAuditEntry[] }>(`interviews/${jobAiId}/links/audit?limit=${limit}`, {
+    method: "GET"
+  });
+}
