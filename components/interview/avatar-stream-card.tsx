@@ -70,6 +70,13 @@ type AvatarStreamCardProps = {
   uiState?: SessionUIState;
   /** Визуально выделить колонку HR как основную (AI-интервьюер). */
   emphasizePrimary?: boolean;
+  /**
+   * При true рендерим компактную "PiP" версию для mobile-portrait candidate-flow:
+   * без заголовка, без бейджа статуса, без кнопок "Остановить бота". На lg+ та же
+   * карточка автоматически возвращается в полный режим через wrapping CSS,
+   * но контент мы сжимаем намеренно.
+   */
+  mobilePip?: boolean;
 };
 
 export function AvatarStreamCard({
@@ -85,6 +92,7 @@ export function AvatarStreamCard({
   sessionEnded = false,
   uiState,
   emphasizePrimary = true,
+  mobilePip = false,
 }: AvatarStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
@@ -228,6 +236,7 @@ export function AvatarStreamCard({
     <StreamParticipantShell
       title="HR аватар"
       videoRef={streamViewportRef}
+      compact={mobilePip}
       videoClassName={cn(
         !canRenderAvatarWindow && "bg-slate-300/70",
         emphasizePrimary && uiState === "active" && "ring-2 ring-indigo-400/35 ring-offset-2 ring-offset-[#d9dee7]",

@@ -56,7 +56,23 @@ import {
   ExitConfirmationDialog,
   type ExitConfirmationMode
 } from "./exit-confirmation-dialog";
-import { releaseCandidateAdmission } from "@/lib/api";
+import { SessionCountdownDialog } from "./session-countdown-dialog";
+import { releaseCandidateAdmission, sendRealtimeEvent } from "@/lib/api";
+import { useSessionCountdown } from "@/hooks/use-session-countdown";
+import type { ConnectionQualityReading } from "@/hooks/use-connection-quality";
+
+const INTERVIEW_MAX_MINUTES = (() => {
+  const raw = Number(process.env.NEXT_PUBLIC_INTERVIEW_MAX_MINUTES);
+  return Number.isFinite(raw) && raw > 0 ? raw : 30;
+})();
+const INTERVIEW_WARN_AT_SECONDS = (() => {
+  const raw = Number(process.env.NEXT_PUBLIC_INTERVIEW_WARN_AT_SECONDS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 60;
+})();
+const INTERVIEW_EXTEND_BY_MINUTES = (() => {
+  const raw = Number(process.env.NEXT_PUBLIC_INTERVIEW_EXTEND_BY_MINUTES);
+  return Number.isFinite(raw) && raw > 0 ? raw : 5;
+})();
 
 const HARD_CONTEXT_GUARD_ENABLED = process.env.NEXT_PUBLIC_INTERVIEW_HARD_GUARD === "1";
 const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
@@ -145,6 +161,17 @@ export function InterviewShell() {
     mode: "leave",
     busy: false
   });
+  /**
+   * Local "joined at" anchor for the session countdown. Set on the first
+   * transition into `phase === "connected"` and reset on disconnect so the
+   * timer starts fresh on every meeting.
+   */
+  const [joinedAtMs, setJoinedAtMs] = useState<number | null>(null);
+  const [countdownDismissed, setCountdownDismissed] = useState(false);
+  const autoEndFiredRef = useRef(false);
+  const [connectionQuality, setConnectionQuality] = useState<ConnectionQualityReading | null>(null);
+  const poorSinceMsRef = useRef<number | null>(null);
+  const lastPoorToastAtMsRef = useRef<number>(0);
 
   useEffect(() => {
     candidateRuntimeBootstrapRef.current = false;
@@ -158,6 +185,27 @@ export function InterviewShell() {
   }, [remoteAudioStream]);
 
   const busy = phase === "starting" || phase === "stopping";
+
+  // Track first time we entered the "connected" phase — this is the anchor
+  // for the session-countdown timer. We deliberately do NOT use start time
+  // of the API call: only the moment when WebRTC actually connected counts.
+  useEffect(() => {
+    if (phase === "connected") {
+      setJoinedAtMs((current) => current ?? Date.now());
+      autoEndFiredRef.current = false;
+    } else if (phase === "idle" || phase === "failed") {
+      setJoinedAtMs(null);
+      setCountdownDismissed(false);
+      autoEndFiredRef.current = false;
+    }
+  }, [phase]);
+
+  const sessionCountdown = useSessionCountdown({
+    active: phase === "connected" && !!meetingId,
+    startedAtMs: joinedAtMs,
+    maxMinutes: INTERVIEW_MAX_MINUTES,
+    warnAtSeconds: INTERVIEW_WARN_AT_SECONDS
+  });
 
   useEffect(() => {
     setOrigin(typeof window !== "undefined" ? window.location.origin : "");
@@ -206,6 +254,67 @@ export function InterviewShell() {
   const streamSurfaceEnabled =
     phase === "connected" && !completedInterviewLocked && Boolean(recoveredMeetingId && recoveredSessionId);
   const hasInterviewSelection = Boolean(selectedRow || selectedInterviewDetailMatched);
+
+  // Auto-stop the meeting once the countdown hits zero. Fires exactly once per
+  // session via autoEndFiredRef even if React re-renders us between the
+  // expired tick and the stop()/state-reset call below.
+  useEffect(() => {
+    if (!sessionCountdown.state.expired) return;
+    if (autoEndFiredRef.current) return;
+    if (!meetingId) return;
+    autoEndFiredRef.current = true;
+    const jid = selectedInterviewId ?? selectedRow?.jobAiId;
+    const activeSessionId = sessionId;
+    const durationMs = joinedAtMs ? Date.now() - joinedAtMs : null;
+    if (activeSessionId) {
+      void sendRealtimeEvent(activeSessionId, {
+        type: "session.update",
+        source: "frontend",
+        message: "auto_end_triggered",
+        ...(durationMs ? { durationMs } : {})
+      }).catch(() => undefined);
+    }
+    void stop(typeof jid === "number" ? { interviewId: jid } : undefined);
+  }, [
+    joinedAtMs,
+    meetingId,
+    selectedInterviewId,
+    selectedRow?.jobAiId,
+    sessionCountdown.state.expired,
+    sessionId,
+    stop
+  ]);
+
+  // Track sustained poor connection and surface a toast at most once per minute.
+  // The candidate-stream-card pushes quality readings up via onQualityChange.
+  useEffect(() => {
+    if (!connectionQuality) {
+      poorSinceMsRef.current = null;
+      return;
+    }
+    const isPoorish = connectionQuality.quality === "poor" || connectionQuality.quality === "offline";
+    if (!isPoorish) {
+      poorSinceMsRef.current = null;
+      return;
+    }
+    const now = Date.now();
+    if (poorSinceMsRef.current === null) {
+      poorSinceMsRef.current = now;
+      return;
+    }
+    if (now - poorSinceMsRef.current < 30_000) return;
+    if (now - lastPoorToastAtMsRef.current < 60_000) return;
+    lastPoorToastAtMsRef.current = now;
+    if (connectionQuality.quality === "offline") {
+      toast.error("Соединение пропало", {
+        description: "Проверьте Wi-Fi или мобильную сеть. Сессия восстановится автоматически когда интернет вернётся."
+      });
+    } else {
+      toast.warning("Качество соединения слабое", {
+        description: "Ответы могут не дойти до агента. Рекомендуем подключиться к Wi-Fi."
+      });
+    }
+  }, [connectionQuality]);
 
   const candidateFio = useMemo(() => {
     const sourceFullName = selectedInterviewDetailMatched?.prototypeCandidate?.sourceFullName?.trim();
@@ -1018,9 +1127,24 @@ export function InterviewShell() {
                 <AgentStateIndicator state={agentState} />
               </div>
             ) : null}
+            {connectionQuality?.quality === "reconnecting" ? (
+              <div className="flex w-full justify-center">
+                <span className="rounded-full bg-amber-100 px-4 py-1 text-xs font-medium text-amber-900 shadow-sm animate-pulse">
+                  Восстанавливаем соединение…
+                </span>
+              </div>
+            ) : null}
+            {connectionQuality?.quality === "offline" ? (
+              <div className="flex w-full justify-center">
+                <span className="rounded-full bg-rose-100 px-4 py-1 text-xs font-medium text-rose-900 shadow-sm">
+                  Нет интернета — соединение восстановится автоматически когда сеть вернётся
+                </span>
+              </div>
+            ) : null}
             <main
               className={cn(
-                "mt-4 grid grid-cols-1 gap-8 lg:grid-cols-3 lg:items-stretch lg:gap-6",
+                "relative mt-4 grid grid-cols-1 gap-8 lg:items-stretch lg:gap-6",
+                isCandidateFlow ? "lg:grid-cols-2" : "lg:grid-cols-3",
                 sessionUiState === "completed" && "pointer-events-none opacity-60"
               )}
               aria-busy={sessionUiState === "completed" ? "true" : undefined}
@@ -1039,9 +1163,20 @@ export function InterviewShell() {
             showControls
             sessionEnded={completedInterviewLocked}
             uiState={sessionUiState}
+            onQualityChange={setConnectionQuality}
           />
           </div>
-          <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
+          <div
+            className={cn(
+              "flex min-h-0 min-w-0 flex-col lg:h-full lg:static",
+              // Mobile-only PiP overlay for the agent tile when the user is
+              // in candidate flow. On desktop (lg+) it falls back into the
+              // regular grid column. Width / position chosen to match Zoom-like
+              // mobile layouts and not overlap the candidate's own face.
+              isCandidateFlow &&
+                "absolute right-3 top-3 z-20 h-36 w-28 sm:h-44 sm:w-32 lg:relative lg:right-auto lg:top-auto lg:z-auto lg:h-auto lg:w-auto"
+            )}
+          >
           <AvatarStreamCard
             participantName="HR ассистент"
             enabled={streamSurfaceEnabled}
@@ -1058,8 +1193,10 @@ export function InterviewShell() {
             sessionEnded={completedInterviewLocked}
             uiState={sessionUiState}
             emphasizePrimary
+            mobilePip={isCandidateFlow}
           />
           </div>
+          {isCandidateFlow ? null : (
           <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
           <ObserverStreamCard
             title="Наблюдатель"
@@ -1097,14 +1234,15 @@ export function InterviewShell() {
             }}
           />
           </div>
+          )}
         </main>
         {isCandidateFlow ? (
-          <div className="mt-2 flex w-full justify-center gap-3">
+          <div className="mt-3 flex w-full justify-center gap-4 sm:gap-3">
             <button
               type="button"
               onClick={() => openExitDialog("leave")}
               disabled={busy || !recoveredMeetingId}
-              className="rounded-xl bg-[#d9dee7] px-6 py-2 text-sm text-slate-600 shadow-[-6px_-6px_12px_rgba(255,255,255,.85),6px_6px_12px_rgba(163,177,198,.5)] hover:bg-[#d5dbe4] disabled:opacity-40"
+              className="min-h-11 rounded-xl bg-[#d9dee7] px-7 py-3 text-base text-slate-600 shadow-[-6px_-6px_12px_rgba(255,255,255,.85),6px_6px_12px_rgba(163,177,198,.5)] hover:bg-[#d5dbe4] disabled:opacity-40 sm:min-h-10 sm:px-6 sm:py-2 sm:text-sm"
             >
               Выйти
             </button>
@@ -1112,7 +1250,7 @@ export function InterviewShell() {
               type="button"
               onClick={() => openExitDialog("end")}
               disabled={busy || !recoveredMeetingId || completedInterviewLocked}
-              className="rounded-xl bg-rose-100 px-6 py-2 text-sm text-rose-700 shadow-[-6px_-6px_12px_rgba(255,255,255,.85),6px_6px_12px_rgba(163,177,198,.5)] hover:bg-rose-200 disabled:opacity-40"
+              className="min-h-11 rounded-xl bg-rose-100 px-7 py-3 text-base text-rose-700 shadow-[-6px_-6px_12px_rgba(255,255,255,.85),6px_6px_12px_rgba(163,177,198,.5)] hover:bg-rose-200 disabled:opacity-40 sm:min-h-10 sm:px-6 sm:py-2 sm:text-sm"
             >
               Завершить
             </button>
@@ -1158,6 +1296,25 @@ export function InterviewShell() {
         busy={exitDialog.busy}
         onCancel={() => setExitDialog((prev) => ({ ...prev, open: false }))}
         onConfirm={handleExitConfirm}
+      />
+      <SessionCountdownDialog
+        open={
+          sessionCountdown.state.warning &&
+          !countdownDismissed &&
+          !sessionCountdown.state.expired &&
+          phase === "connected"
+        }
+        msLeft={sessionCountdown.state.msLeft ?? 0}
+        extendByMinutes={INTERVIEW_EXTEND_BY_MINUTES}
+        onDismiss={() => setCountdownDismissed(true)}
+        onExtend={() => {
+          sessionCountdown.extend(INTERVIEW_EXTEND_BY_MINUTES);
+          setCountdownDismissed(true);
+        }}
+        onEndNow={() => {
+          setCountdownDismissed(true);
+          openExitDialog("end");
+        }}
       />
     </div>
   );

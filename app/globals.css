@@ -196,3 +196,22 @@
     max-width: 100%;
   }
 }
+
+/*
+ * Hide built-in GetStream session-timeout / call-ended notifications and
+ * overlays. We render our own SessionCountdownDialog (countdown + extend +
+ * end-now) and our own ThankYouScreen (post-completion), so the SDK's
+ * default modal would visually conflict and lacks the buttons we need.
+ *
+ * Selectors are conservative — we mute notification banners that match
+ * common Stream timeout/end variants, but keep error toasts intact. Tighten
+ * if you observe a specific class name in DevTools.
+ */
+.str-video__notification[data-notification-type="session-timeout"],
+.str-video__notification[data-notification-type="call-ended"],
+.str-video__session-timeout-warning,
+.str-video__session-timeout-overlay,
+.str-video__call-ended-overlay,
+.str-video__notification--session-timeout {
+  display: none !important;
+}

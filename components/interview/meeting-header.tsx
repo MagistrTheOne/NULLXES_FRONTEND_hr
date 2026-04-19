@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { extractJobAiIdFromEntryUrl } from "@/lib/candidate-entry-url";
+import { cn } from "@/lib/utils";
 
 type MeetingHeaderProps = {
   statusLabel: string;
@@ -66,9 +67,16 @@ export function MeetingHeader({
   const hasCopySource = Boolean(canonicalUrl || entryUrlInput.trim());
 
   return (
-    <header className="flex w-full min-w-0 flex-col items-center gap-8 md:gap-10">
+    <header className="flex w-full min-w-0 flex-col items-center gap-6 sm:gap-8 md:gap-10">
       <div className="flex w-full justify-center pt-1">
-        <h1 className="text-center text-4xl font-black tracking-tight text-[#0f1114] sm:text-5xl md:text-6xl">
+        <h1
+          className={cn(
+            "text-center font-black tracking-tight text-[#0f1114] sm:text-5xl md:text-6xl",
+            // Чуть меньше на mobile + ещё меньше для candidateMode чтобы шапка
+            // не отъедала пол-экрана на портретной ориентации.
+            candidateMode ? "text-2xl sm:text-4xl" : "text-3xl sm:text-4xl"
+          )}
+        >
           JOB <span className="rounded-xl bg-sky-500 px-3 py-1 text-white">AI</span>
         </h1>
       </div>
@@ -123,11 +131,16 @@ export function MeetingHeader({
         </div>
       )}
 
-      <Card className="w-full max-w-xl min-w-0 rounded-2xl border-0 bg-[#d9dee7] shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]">
-        <CardHeader className="space-y-1 pb-3">
+      <Card
+        className={cn(
+          "w-full max-w-xl min-w-0 rounded-2xl border-0 bg-[#d9dee7] shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]",
+          candidateMode && "max-w-sm sm:max-w-xl"
+        )}
+      >
+        <CardHeader className={cn("space-y-1", candidateMode ? "pb-2 sm:pb-3" : "pb-3")}>
           <CardTitle className="text-base font-semibold text-slate-600">Видеособеседование</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4 text-sm text-slate-600">
+        <CardContent className={cn("text-sm text-slate-600", candidateMode ? "space-y-3 sm:space-y-4" : "space-y-4")}>
           <div className="grid grid-cols-1 gap-2 text-slate-500 sm:grid-cols-2">
             <p>
               Кандидат: <span className="font-medium text-slate-700">{candidateFio || "—"}</span>

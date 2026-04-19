@@ -18,6 +18,8 @@ import type { SessionUIState } from "@/lib/session-ui-state";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
+import { ConnectionQualityBadge } from "@/components/interview/connection-quality-badge";
+import { useConnectionQuality, type ConnectionQualityReading } from "@/hooks/use-connection-quality";
 import { cn } from "@/lib/utils";
 import { VideoOff } from "lucide-react";
 
@@ -36,27 +38,51 @@ type CandidateCallBodyProps = {
   showControls: boolean;
   meetingId: string;
   onLeave?: (err?: Error) => void | Promise<void>;
+  /** Bubble live connection quality up to the shell for banner / toast. */
+  onQualityChange?: (reading: ConnectionQualityReading) => void;
 };
 
-function CandidateCallBody({ showControls, meetingId, onLeave }: CandidateCallBodyProps) {
+function CandidateCallBody({ showControls, meetingId, onLeave, onQualityChange }: CandidateCallBodyProps) {
   const { useCallCallingState, useParticipants } = useCallStateHooks();
   const state = useCallCallingState();
   const participants = useParticipants();
   const candidateParticipant =
     participants.find((participant) => participant.userId === `candidate-${meetingId}`) ?? participants[0] ?? null;
+  const quality = useConnectionQuality();
+
+  // Push quality readings up to the shell so banner / toast can react. Wrap
+  // in useEffect so we never trigger a parent re-render mid-render of this
+  // component.
+  useEffect(() => {
+    onQualityChange?.(quality);
+  }, [
+    onQualityChange,
+    quality.quality,
+    quality.rttMs,
+    quality.packetLossPercent,
+    quality.reason
+  ]);
 
   if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
     return <div className="flex h-full items-center justify-center text-sm text-slate-600">Поток не подключён</div>;
   }
 
+  const showBadge = state === CallingState.JOINED;
+
   return (
     <div className="stream-call-ui h-full w-full">
-      <div className="stream-call-layout">
+      <div className="stream-call-layout relative">
         {candidateParticipant ? (
           <ParticipantView participant={candidateParticipant} trackType="videoTrack" />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-500">Ожидание кандидата</div>
         )}
+        {showBadge ? (
+          <ConnectionQualityBadge
+            reading={quality}
+            className="absolute right-2 top-2 z-10"
+          />
+        ) : null}
       </div>
       {showControls ? (
         <div className="stream-call-controls">
@@ -88,6 +114,8 @@ type CandidateStreamCardProps = {
   sessionEnded?: boolean;
   /** Единый режим UI с interview-shell (дублирует sessionEnded при `completed`). */
   uiState?: SessionUIState;
+  /** Bubble live connection quality up to the shell (banner + toast hooks). */
+  onQualityChange?: (reading: ConnectionQualityReading) => void;
 };
 
 export function CandidateStreamCard({
@@ -102,7 +130,8 @@ export function CandidateStreamCard({
   interviewContext,
   showControls = true,
   sessionEnded = false,
-  uiState
+  uiState,
+  onQualityChange
 }: CandidateStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
@@ -374,6 +403,7 @@ export function CandidateStreamCard({
                   showControls={showControls && !interactiveDisabled}
                   meetingId={callRoomId}
                   onLeave={handleLeaveFromControls}
+                  onQualityChange={onQualityChange}
                 />
               </StreamCall>
             </StreamTheme>
