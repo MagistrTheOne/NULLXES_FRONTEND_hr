@@ -171,22 +171,22 @@ export function MeetingHeader({
                 <Button
                   onClick={onStart}
                   disabled={startDisabled}
-                  className="h-9 w-full shrink-0 rounded-lg bg-[#3a8edb] px-4 text-xs text-white hover:bg-[#2f7bc0] sm:w-auto"
+                  className="h-9 shrink-0 rounded-lg bg-[#3a8edb] px-4 text-xs text-white hover:bg-[#2f7bc0]"
                 >
                   Начать собеседование
                 </Button>
+                {onStopSession ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={onStopSession}
+                    disabled={stopSessionDisabled}
+                    className="ml-auto h-9 shrink-0 rounded-lg px-4 text-xs font-semibold"
+                  >
+                    Стоп сессия
+                  </Button>
+                ) : null}
               </div>
-              {onStopSession ? (
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={onStopSession}
-                  disabled={stopSessionDisabled}
-                  className="h-11 w-full shrink-0 rounded-xl px-4 text-sm font-semibold shadow-sm sm:h-12"
-                >
-                  Стоп сессия
-                </Button>
-              ) : null}
               {showDebugActions && onFail ? (
                 <>
                   <Button
