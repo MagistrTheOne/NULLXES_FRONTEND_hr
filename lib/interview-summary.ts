@@ -63,6 +63,13 @@ export type InterviewSummaryContextInput = {
   vacancyText?: string;
   specialtyName?: string;
   questions?: Array<{ text: string; order: number }>;
+  /**
+   * Optional dialog transcript captured during the interview. When present,
+   * the summary route switches to the "with-transcript" system prompt and
+   * fills questionCoverage / scores / hiringRecommendation from real answers
+   * instead of producing a baseline-only response.
+   */
+  transcript?: Array<{ role: "agent" | "candidate"; text: string; ts: number }>;
 };
 
 /** Выдержка для UI саммари: ограничение длины, без лишних пробелов между строками */

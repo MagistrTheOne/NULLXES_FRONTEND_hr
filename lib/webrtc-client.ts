@@ -52,6 +52,18 @@ function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
   });
 }
 
+/**
+ * Структурированное событие, прилетающее ОТ OpenAI Realtime через DataChannel.
+ * Передаётся в опциональный `onOpenAiEvent` callback — нужен для UI-индикаторов
+ * фазы интервью / состояния агента и для сбора транскрипта.
+ *
+ * Полный набор серверных событий: https://platform.openai.com/docs/api-reference/realtime_server_events
+ */
+export interface OpenAiServerEvent {
+  type: string;
+  payload: Record<string, unknown>;
+}
+
 export class WebRtcInterviewClient {
   private peerConnection: RTCPeerConnection | null = null;
   private mediaStream: MediaStream | null = null;
@@ -62,13 +74,21 @@ export class WebRtcInterviewClient {
   private state: WebRtcConnectionState = "idle";
   private onState?: (state: WebRtcConnectionState) => void;
   private onRemoteStream?: (stream: MediaStream) => void;
+  private onOpenAiEvent?: (event: OpenAiServerEvent) => void;
 
   constructor(options?: {
     onStateChange?: (state: WebRtcConnectionState) => void;
     onRemoteStream?: (stream: MediaStream) => void;
+    onOpenAiEvent?: (event: OpenAiServerEvent) => void;
   }) {
     this.onState = options?.onStateChange;
     this.onRemoteStream = options?.onRemoteStream;
+    this.onOpenAiEvent = options?.onOpenAiEvent;
+  }
+
+  /** Замена listener'а после конструктора (например React effect, который пере-биндит). */
+  setOpenAiEventListener(listener: ((event: OpenAiServerEvent) => void) | undefined): void {
+    this.onOpenAiEvent = listener;
   }
 
   private setState(nextState: WebRtcConnectionState): void {
@@ -172,6 +192,18 @@ export class WebRtcInterviewClient {
         }).catch(() => {
           // best-effort telemetry; never let upstream errors block the agent
         });
+      }
+      // Always notify local listener — UI uses these for phase / agent-state /
+      // captions even when we don't ship them to the gateway. Wrap in try so
+      // a misbehaving listener can never break the realtime loop.
+      if (this.onOpenAiEvent) {
+        try {
+          this.onOpenAiEvent({ type, payload: parsed });
+        } catch (listenerErr) {
+          if (typeof console !== "undefined") {
+            console.error("[OpenAI Realtime] listener threw", listenerErr);
+          }
+        }
       }
     };
     dataChannel.onerror = (event: Event) => {

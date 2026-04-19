@@ -21,7 +21,7 @@ import { extractCoreFieldsFromInterviewRaw, mergeStartContextWithInterviewDetail
 import type { InterviewStartContext } from "@/lib/interview-start-context";
 import type { InterviewSummaryPayload } from "@/lib/interview-summary";
 import { resolveInterviewSummaryPayload } from "@/lib/resolve-interview-summary";
-import { WebRtcInterviewClient, type WebRtcConnectionState } from "@/lib/webrtc-client";
+import { WebRtcInterviewClient, type OpenAiServerEvent, type WebRtcConnectionState } from "@/lib/webrtc-client";
 
 export type InterviewPhase = "idle" | "starting" | "connected" | "stopping" | "failed";
 export type InterviewStartResult = {
@@ -29,6 +29,32 @@ export type InterviewStartResult = {
   sessionId: string;
 };
 export type RuntimeRecoveryState = "idle" | "recovering" | "failed";
+
+/**
+ * Внутренняя модель прогресса интервью — производная от потока событий
+ * OpenAI Realtime. Используется для phase indicator и thank-you screen.
+ *
+ *  - "lobby"      — соединение ещё не установлено / ожидание
+ *  - "intro"      — агент произносит greeting (первая response.created)
+ *  - "questions"  — greeting закончен, идёт цикл вопросов
+ *  - "closing"    — meeting status перешёл в completed (финальный экран)
+ *  - "completed"  — всё закрыто, можно показывать thank-you
+ */
+export type InterviewFlowPhase = "lobby" | "intro" | "questions" | "closing" | "completed";
+
+export type AgentState = "idle" | "listening" | "thinking" | "speaking";
+
+export type TranscriptTurn = {
+  role: "agent" | "candidate";
+  text: string;
+  ts: number;
+  itemId?: string;
+};
+
+export type LiveCaptions = {
+  agent?: string;
+  candidate?: string;
+};
 
 export type { InterviewStartContext } from "@/lib/interview-start-context";
 export type { AgentContextTrace };
@@ -53,6 +79,17 @@ const RECONNECT_ATTEMPTS = 3;
 const RECONNECT_BACKOFF_MS = [0, 450, 1400] as const;
 /** Интервал опроса готовности аватара до первого ready (после ready таймер останавливается). */
 const AVATAR_POLL_MS_ACTIVE = 2000;
+
+/**
+ * Best-effort field reader for arbitrary OpenAI server-event payloads. Realtime
+ * responses use slightly different shapes between snapshots — we just want a
+ * string if it exists, never throw on weird input.
+ */
+function readString(source: unknown, key: string): string | undefined {
+  if (!source || typeof source !== "object") return undefined;
+  const value = (source as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : undefined;
+}
 
 function isIgnorableStatusTransitionError(error: unknown): boolean {
   if (error instanceof ApiRequestError) {
@@ -278,20 +315,160 @@ export function useInterviewSession() {
   const [activeInterviewId, setActiveInterviewId] = useState<number | null>(null);
   const [lastInterviewSummary, setLastInterviewSummary] = useState<InterviewSummaryPayload | null>(null);
 
+  // Phase indicator (B), agent state (C), live captions (F.3)
+  const [flowPhase, setFlowPhase] = useState<InterviewFlowPhase>("lobby");
+  const [agentState, setAgentState] = useState<AgentState>("idle");
+  const [questionsAsked, setQuestionsAsked] = useState(0);
+  const [latestCaptions, setLatestCaptions] = useState<LiveCaptions>({});
+
   const rtcRef = useRef<WebRtcInterviewClient | null>(null);
   const reconnectAttemptForSessionRef = useRef<string | null>(null);
   const avatarPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastInterviewContextRef = useRef<InterviewStartContext | null>(null);
 
+  // Transcript collection (F.2). We use refs so accumulation does not trigger
+  // re-renders on every audio-transcript delta — only the captions state does.
+  const transcriptsRef = useRef<TranscriptTurn[]>([]);
+  const agentTranscriptBufferRef = useRef<Map<string, string>>(new Map());
+  const greetingDoneRef = useRef(false);
+  const lastResponseIdRef = useRef<string | null>(null);
+  const captionFadeTimerRef = useRef<{ agent: ReturnType<typeof setTimeout> | null; candidate: ReturnType<typeof setTimeout> | null }>({
+    agent: null,
+    candidate: null
+  });
+
+  /**
+   * Reducer over the OpenAI Realtime DataChannel event stream. Drives:
+   *  - flowPhase ("intro" → "questions" → "closing" → "completed")
+   *  - questionsAsked (# of agent responses AFTER greeting)
+   *  - agentState ("thinking" → "speaking" → "listening")
+   *  - transcriptsRef + latestCaptions (per-turn agent / candidate transcript)
+   *
+   * Stable identity (no deps) — installed on the rtc client via setOpenAiEventListener.
+   */
+  const handleOpenAiEvent = useCallback((event: OpenAiServerEvent) => {
+    const { type, payload } = event;
+
+    if (type === "response.created") {
+      const respId = readString(payload.response, "id") ?? readString(payload, "response_id") ?? null;
+      lastResponseIdRef.current = respId;
+      setAgentState("thinking");
+      setFlowPhase((prev) => (prev === "lobby" ? "intro" : prev));
+      return;
+    }
+
+    if (type === "response.output_audio.delta" || type === "response.audio.delta") {
+      setAgentState((prev) => (prev === "thinking" ? "speaking" : prev === "idle" ? "speaking" : prev));
+      return;
+    }
+
+    if (
+      type === "response.output_audio_transcript.delta" ||
+      type === "response.audio_transcript.delta"
+    ) {
+      const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
+      const delta = readString(payload, "delta") ?? "";
+      if (delta) {
+        const current = agentTranscriptBufferRef.current.get(itemId) ?? "";
+        agentTranscriptBufferRef.current.set(itemId, current + delta);
+        scheduleCaptionUpdate("agent", current + delta);
+      }
+      return;
+    }
+
+    if (
+      type === "response.output_audio_transcript.done" ||
+      type === "response.audio_transcript.done"
+    ) {
+      const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
+      const transcript =
+        readString(payload, "transcript") ?? agentTranscriptBufferRef.current.get(itemId) ?? "";
+      if (transcript.trim().length > 0) {
+        transcriptsRef.current.push({
+          role: "agent",
+          text: transcript,
+          ts: Date.now(),
+          itemId
+        });
+        scheduleCaptionUpdate("agent", transcript);
+      }
+      agentTranscriptBufferRef.current.delete(itemId);
+      return;
+    }
+
+    if (type === "conversation.item.input_audio_transcription.completed") {
+      const transcript = readString(payload, "transcript") ?? "";
+      const itemId = readString(payload, "item_id") ?? undefined;
+      if (transcript.trim().length > 0) {
+        transcriptsRef.current.push({
+          role: "candidate",
+          text: transcript,
+          ts: Date.now(),
+          ...(itemId ? { itemId } : {})
+        });
+        scheduleCaptionUpdate("candidate", transcript);
+      }
+      return;
+    }
+
+    if (type === "input_audio_buffer.speech_started") {
+      setAgentState("listening");
+      return;
+    }
+
+    if (type === "response.done") {
+      setAgentState("listening");
+      // First response.done = end of greeting → switch to questions phase.
+      // Subsequent ones are answers to interview questions; count them.
+      if (!greetingDoneRef.current) {
+        greetingDoneRef.current = true;
+        setFlowPhase("questions");
+      } else {
+        setQuestionsAsked((prev) => prev + 1);
+      }
+      lastResponseIdRef.current = null;
+      return;
+    }
+
+    if (type === "response.cancelled") {
+      setAgentState("listening");
+      return;
+    }
+
+    if (type === "session.created" || type === "session.updated") {
+      // Session is live but agent has not yet generated greeting.
+      // We promote lobby → intro on the FIRST response.created (above).
+      return;
+    }
+  }, []);
+
+  /** Throttled caption updater — drops "blink" effect on rapid deltas. */
+  const scheduleCaptionUpdate = (role: "agent" | "candidate", text: string) => {
+    setLatestCaptions((prev) => ({ ...prev, [role]: text }));
+    if (captionFadeTimerRef.current[role]) {
+      clearTimeout(captionFadeTimerRef.current[role] as ReturnType<typeof setTimeout>);
+    }
+    captionFadeTimerRef.current[role] = setTimeout(() => {
+      setLatestCaptions((prev) => {
+        if (prev[role] !== text) return prev;
+        return { ...prev, [role]: undefined };
+      });
+    }, 8000);
+  };
+
   const ensureClient = useCallback(() => {
     if (!rtcRef.current) {
       rtcRef.current = new WebRtcInterviewClient({
         onStateChange: setRtcState,
-        onRemoteStream: setRemoteAudioStream
+        onRemoteStream: setRemoteAudioStream,
+        onOpenAiEvent: handleOpenAiEvent
       });
+    } else {
+      // Re-bind in case React Fast Refresh / hot reload created a new closure.
+      rtcRef.current.setOpenAiEventListener(handleOpenAiEvent);
     }
     return rtcRef.current;
-  }, []);
+  }, [handleOpenAiEvent]);
 
   const hydrateActiveSession = useCallback((next: { meetingId: string; sessionId: string; interviewId?: number }) => {
     setMeetingId((current) => current ?? next.meetingId);
@@ -600,6 +777,15 @@ export function useInterviewSession() {
     setError(null);
     setRuntimeRecoveryState("idle");
     setLastInterviewSummary(null);
+    // Reset flow / agent / transcript state — fresh interview from scratch.
+    setFlowPhase("intro");
+    setAgentState("idle");
+    setQuestionsAsked(0);
+    setLatestCaptions({});
+    transcriptsRef.current = [];
+    agentTranscriptBufferRef.current.clear();
+    greetingDoneRef.current = false;
+    lastResponseIdRef.current = null;
 
     try {
       await startMeeting({
@@ -704,8 +890,10 @@ export function useInterviewSession() {
         }
       }
 
-      const summaryPayload = await resolveInterviewSummaryPayload(summaryInput);
+      const collectedTranscripts = transcriptsRef.current.slice();
+      const summaryPayload = await resolveInterviewSummaryPayload(summaryInput, collectedTranscripts);
       setLastInterviewSummary(summaryPayload);
+      setFlowPhase("closing");
 
       if (activeSessionId) {
         await sendRealtimeEvent(activeSessionId, {
@@ -770,6 +958,9 @@ export function useInterviewSession() {
       lastInterviewContextRef.current = null;
       setAvatarReady(false);
       setAgentInputEnabled(true);
+      setFlowPhase("completed");
+      setAgentState("idle");
+      setLatestCaptions({});
       setPhase("idle");
     } catch (err) {
       setPhase("failed");
@@ -798,6 +989,15 @@ export function useInterviewSession() {
     return "Failed";
   }, [phase, runtimeRecoveryState]);
 
+  // Cleanup caption fade timers on unmount.
+  useEffect(() => {
+    return () => {
+      const timers = captionFadeTimerRef.current;
+      if (timers.agent) clearTimeout(timers.agent);
+      if (timers.candidate) clearTimeout(timers.candidate);
+    };
+  }, []);
+
   return {
     phase,
     statusLabel,
@@ -811,6 +1011,14 @@ export function useInterviewSession() {
     remoteAudioStream,
     agentInputEnabled,
     runtimeRecoveryState,
+    /** UI flow indicator (independent from infra `phase`). */
+    flowPhase,
+    /** Visual indicator state for the agent avatar tile. */
+    agentState,
+    /** Number of agent responses that came AFTER the greeting reply. */
+    questionsAsked,
+    /** Latest single-turn caption per role; keys disappear after ~8s of silence. */
+    latestCaptions,
     start,
     stop,
     markFailed,

@@ -48,6 +48,15 @@ import { InterviewsTablePreview } from "./interviews-table-preview";
 import { MeetingHeader } from "./meeting-header";
 import { InterviewSummaryDisplay } from "./interview-summary-display";
 import { ObserverStreamCard } from "./observer-stream-card";
+import { InterviewPhaseIndicator } from "./interview-phase-indicator";
+import { AgentStateIndicator } from "./agent-state-indicator";
+import { LiveCaptionsOverlay } from "./live-captions";
+import { ThankYouScreen } from "./thank-you-screen";
+import {
+  ExitConfirmationDialog,
+  type ExitConfirmationMode
+} from "./exit-confirmation-dialog";
+import { releaseCandidateAdmission } from "@/lib/api";
 
 const HARD_CONTEXT_GUARD_ENABLED = process.env.NEXT_PUBLIC_INTERVIEW_HARD_GUARD === "1";
 const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
@@ -107,7 +116,11 @@ export function InterviewShell() {
     hydrateActiveSession,
     runtimeRecoveryState,
     lastInterviewSummary,
-    lastAgentContextTrace
+    lastAgentContextTrace,
+    flowPhase,
+    agentState,
+    questionsAsked,
+    latestCaptions
   } =
     useInterviewSession();
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -127,6 +140,11 @@ export function InterviewShell() {
   const [candidateAdmissionError, setCandidateAdmissionError] = useState<string | null>(null);
   const [candidateAdmissionBusy, setCandidateAdmissionBusy] = useState(false);
   const [meetingSummaryFromServer, setMeetingSummaryFromServer] = useState<InterviewSummaryPayload | null>(null);
+  const [exitDialog, setExitDialog] = useState<{ open: boolean; mode: ExitConfirmationMode; busy: boolean }>({
+    open: false,
+    mode: "leave",
+    busy: false
+  });
 
   useEffect(() => {
     candidateRuntimeBootstrapRef.current = false;
@@ -665,6 +683,41 @@ export function InterviewShell() {
     [completedInterviewLocked, start]
   );
 
+  /** Open exit confirmation dialog in the requested mode. */
+  const openExitDialog = useCallback((mode: ExitConfirmationMode) => {
+    setExitDialog({ open: true, mode, busy: false });
+  }, []);
+
+  /**
+   * Resolve confirmation: end = full stopMeeting + summary; leave = best-effort
+   * release admission slot and tear down WebRTC, but keep the meeting open so the
+   * candidate can rejoin within the rejoin window (backend default 60s).
+   */
+  const handleExitConfirm = useCallback(async () => {
+    setExitDialog((prev) => ({ ...prev, busy: true }));
+    try {
+      if (exitDialog.mode === "end") {
+        const jid = selectedInterviewId ?? selectedRow?.jobAiId;
+        await stop(typeof jid === "number" ? { interviewId: jid } : undefined);
+      } else if (recoveredMeetingId) {
+        try {
+          await releaseCandidateAdmission(recoveredMeetingId, {
+            participantId: candidateFio || "candidate",
+            reason: "candidate_temporary_leave"
+          });
+        } catch {
+          // best-effort — admission release is optional, the rejoin window still applies.
+        }
+        if (typeof window !== "undefined") {
+          window.location.reload();
+        }
+      }
+      setExitDialog({ open: false, mode: exitDialog.mode, busy: false });
+    } catch {
+      setExitDialog((prev) => ({ ...prev, busy: false }));
+    }
+  }, [candidateFio, exitDialog.mode, recoveredMeetingId, selectedInterviewId, selectedRow?.jobAiId, stop]);
+
   useEffect(() => {
     if (!isCandidateFlow || !selectedInterviewId) {
       return;
@@ -803,10 +856,7 @@ export function InterviewShell() {
               interviewContext: interviewStartContext
             });
           }}
-          onStopSession={() => {
-            const jid = selectedInterviewId ?? selectedRow?.jobAiId;
-            void stop(typeof jid === "number" ? { interviewId: jid } : undefined);
-          }}
+          onStopSession={() => openExitDialog("end")}
           stopSessionDisabled={
             busy || completedInterviewLocked || phase !== "connected" || !meetingId
           }
@@ -820,6 +870,7 @@ export function InterviewShell() {
           }
           failDisabled={phase === "idle" || busy}
           showDebugActions={SHOW_INTERNAL_DEBUG_UI}
+          candidateMode={isCandidateFlow}
         />
 
         <InterviewSummaryDisplay
@@ -946,13 +997,34 @@ export function InterviewShell() {
           </section>
         ) : null}
 
-        <main
-          className={cn(
-            "mt-4 grid grid-cols-1 gap-8 lg:grid-cols-3 lg:items-stretch lg:gap-6",
-            sessionUiState === "completed" && "pointer-events-none opacity-60"
-          )}
-          aria-busy={sessionUiState === "completed" ? "true" : undefined}
-        >
+        {isCandidateFlow && flowPhase === "completed" ? (
+          <ThankYouScreen
+            candidateFirstName={
+              interviewStartContext?.candidateFirstName ??
+              candidateFio.split(" ")[0]
+            }
+            jobTitle={interviewStartContext?.jobTitle}
+            companyName={interviewStartContext?.companyName}
+          />
+        ) : (
+          <>
+            <InterviewPhaseIndicator
+              flowPhase={flowPhase}
+              questionsAsked={questionsAsked}
+              totalQuestions={interviewStartContext?.questions?.length ?? 0}
+            />
+            {flowPhase === "intro" || flowPhase === "questions" || flowPhase === "closing" ? (
+              <div className="flex w-full justify-center">
+                <AgentStateIndicator state={agentState} />
+              </div>
+            ) : null}
+            <main
+              className={cn(
+                "mt-4 grid grid-cols-1 gap-8 lg:grid-cols-3 lg:items-stretch lg:gap-6",
+                sessionUiState === "completed" && "pointer-events-none opacity-60"
+              )}
+              aria-busy={sessionUiState === "completed" ? "true" : undefined}
+            >
           <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
           <CandidateStreamCard
             meetingId={recoveredMeetingId}
@@ -1026,32 +1098,67 @@ export function InterviewShell() {
           />
           </div>
         </main>
-        <InterviewsTablePreview
-          rows={rows}
-          page={rowsPage}
-          pageSize={INTERVIEWS_PAGE_SIZE}
-          totalCount={rowsTotalCount}
-          selectedInterviewId={selectedInterviewId}
-          duplicateJobAiIds={duplicateJobAiIds}
-          loading={loadingRows}
-          error={rowsError}
-          onRefresh={() => {
-            void loadInterviews();
-          }}
-          onSelect={(row) => {
-            setSelectedInterviewId(row.jobAiId);
-            const params = new URLSearchParams();
-            params.set("jobAiId", String(row.jobAiId));
-            const q = params.toString();
-            router.replace(q ? `${pathname}?${q}` : pathname);
-          }}
-          onPageChange={(nextPage) => {
-            setRowsPage(nextPage);
-          }}
-          onCandidateEntryUrlCopied={handleEntryUrlCommit}
-        />
+        {isCandidateFlow ? (
+          <div className="mt-2 flex w-full justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => openExitDialog("leave")}
+              disabled={busy || !recoveredMeetingId}
+              className="rounded-xl bg-[#d9dee7] px-6 py-2 text-sm text-slate-600 shadow-[-6px_-6px_12px_rgba(255,255,255,.85),6px_6px_12px_rgba(163,177,198,.5)] hover:bg-[#d5dbe4] disabled:opacity-40"
+            >
+              Выйти
+            </button>
+            <button
+              type="button"
+              onClick={() => openExitDialog("end")}
+              disabled={busy || !recoveredMeetingId || completedInterviewLocked}
+              className="rounded-xl bg-rose-100 px-6 py-2 text-sm text-rose-700 shadow-[-6px_-6px_12px_rgba(255,255,255,.85),6px_6px_12px_rgba(163,177,198,.5)] hover:bg-rose-200 disabled:opacity-40"
+            >
+              Завершить
+            </button>
+          </div>
+        ) : null}
+          </>
+        )}
+        {isCandidateFlow ? null : (
+          <InterviewsTablePreview
+            rows={rows}
+            page={rowsPage}
+            pageSize={INTERVIEWS_PAGE_SIZE}
+            totalCount={rowsTotalCount}
+            selectedInterviewId={selectedInterviewId}
+            duplicateJobAiIds={duplicateJobAiIds}
+            loading={loadingRows}
+            error={rowsError}
+            onRefresh={() => {
+              void loadInterviews();
+            }}
+            onSelect={(row) => {
+              setSelectedInterviewId(row.jobAiId);
+              const params = new URLSearchParams();
+              params.set("jobAiId", String(row.jobAiId));
+              const q = params.toString();
+              router.replace(q ? `${pathname}?${q}` : pathname);
+            }}
+            onPageChange={(nextPage) => {
+              setRowsPage(nextPage);
+            }}
+            onCandidateEntryUrlCopied={handleEntryUrlCommit}
+          />
+        )}
         <audio ref={audioRef} autoPlay />
       </div>
+      <LiveCaptionsOverlay
+        captions={latestCaptions}
+        visible={flowPhase === "intro" || flowPhase === "questions" || flowPhase === "closing"}
+      />
+      <ExitConfirmationDialog
+        mode={exitDialog.mode}
+        open={exitDialog.open}
+        busy={exitDialog.busy}
+        onCancel={() => setExitDialog((prev) => ({ ...prev, open: false }))}
+        onConfirm={handleExitConfirm}
+      />
     </div>
   );
 }
