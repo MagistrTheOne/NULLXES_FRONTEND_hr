@@ -60,6 +60,7 @@ import { SessionCountdownDialog } from "./session-countdown-dialog";
 import { releaseCandidateAdmission, sendRealtimeEvent } from "@/lib/api";
 import { useSessionCountdown } from "@/hooks/use-session-countdown";
 import type { ConnectionQualityReading } from "@/hooks/use-connection-quality";
+import { mapPhaseToStatus } from "@/lib/interview-status";
 
 const INTERVIEW_MAX_MINUTES = (() => {
   const raw = Number(process.env.NEXT_PUBLIC_INTERVIEW_MAX_MINUTES);
@@ -946,17 +947,28 @@ export function InterviewShell() {
         ) : null}
         <>
         <MeetingHeader
-          statusLabel={statusLabel}
+          status={mapPhaseToStatus({
+            phase,
+            runtimeRecoveryState,
+            completedLocked: completedInterviewLocked,
+            contextReady: contextHardReady,
+            countdownWarning: sessionCountdown.state.warning,
+            mode: isCandidateFlow ? "candidate" : "hr"
+          })}
+          rawStatusLabel={statusLabel}
           meetingId={recoveredMeetingId}
           sessionId={recoveredSessionId}
           jobAiId={selectedRow?.jobAiId}
-          companyName={selectedRow?.companyName}
+          companyName={selectedRow?.companyName ?? interviewStartContext?.companyName}
+          jobTitle={interviewStartContext?.jobTitle}
           meetingAt={selectedInterviewDetailMatched?.interview.meetingAt ?? selectedRow?.meetingAt}
           prototypeEntryUrl={
             selectedRow && origin ? toAbsoluteUrl(selectedCandidateEntryPath, origin) : undefined
           }
           onEntryUrlCommit={handleEntryUrlCommit}
           candidateFio={candidateFio}
+          candidateFirstName={interviewStartContext?.candidateFirstName ?? candidateFio.split(" ")[0]}
+          interviewActive={phase === "connected" && !completedInterviewLocked && Boolean(meetingId)}
           onStart={() => {
             void start({
               triggerSource: "manual_start_button",
