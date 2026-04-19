@@ -153,3 +153,96 @@ export function mapPhaseToStatus(input: MapPhaseToStatusInput): InterviewStatusV
 
   return FALLBACK;
 }
+
+// ---------- Local video-channel status (observer / spectator only) ----------
+
+/**
+ * Состояния локального видеопотока в карточке наблюдателя — независимо от
+ * статуса самого интервью. Спектатор может видеть «Идёт интервью» (общий
+ * статус), но при этом «Подключаемся к видео…» (локальный) если SFU ещё
+ * не подтвердил публикацию треков.
+ */
+export type VideoConnectionState =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "no_participants"
+  | "failed"
+  | "hidden";
+
+export function mapVideoStatus(state: VideoConnectionState): InterviewStatusView {
+  switch (state) {
+    case "connecting":
+      return {
+        label: "Подключаемся к видео…",
+        tone: "amber",
+        icon: "loader",
+        ariaLabel: "Подключаемся к видеопотоку"
+      };
+    case "connected":
+      return {
+        label: "Видео подключено",
+        tone: "emerald",
+        icon: "radio",
+        ariaLabel: "Видеопоток подключён"
+      };
+    case "no_participants":
+      return {
+        label: "Ожидание участников",
+        tone: "slate",
+        icon: "hourglass",
+        ariaLabel: "Видео подключено, ожидаем участников"
+      };
+    case "failed":
+      return {
+        label: "Ошибка видео",
+        tone: "rose",
+        icon: "alertTriangle",
+        ariaLabel: "Не удалось подключить видеопоток"
+      };
+    case "hidden":
+      return {
+        label: "Видео скрыто",
+        tone: "slate",
+        icon: "play",
+        ariaLabel: "Видеопоток скрыт"
+      };
+    case "idle":
+    default:
+      return {
+        label: "Ожидание запуска",
+        tone: "slate",
+        icon: "hourglass",
+        ariaLabel: "Ожидаем запуск интервью"
+      };
+  }
+}
+
+/**
+ * Helper для spectator/page.tsx: маппинг runtime-статуса интервью с gateway
+ * (`InterviewProjection.nullxesStatus`) в `InterviewPhase` для подачи в
+ * mapPhaseToStatus. Spectator не видит сырых InterviewPhase — только то что
+ * gateway знает о meeting'е.
+ */
+export type ProjectionLikeStatus = "idle" | "in_meeting" | "completed" | "stopped_during_meeting" | "failed";
+
+export function mapProjectionToInterviewStatus(
+  projectionStatus: ProjectionLikeStatus | string | undefined,
+  options?: { contextReady?: boolean }
+): InterviewStatusView {
+  const completedLocked = projectionStatus === "completed" || projectionStatus === "stopped_during_meeting";
+  const phase: InterviewPhase =
+    projectionStatus === "in_meeting"
+      ? "connected"
+      : projectionStatus === "failed"
+        ? "failed"
+        : "idle";
+  return mapPhaseToStatus({
+    phase,
+    runtimeRecoveryState: "idle",
+    completedLocked,
+    contextReady: options?.contextReady ?? true,
+    countdownWarning: false,
+    mode: "hr"
+  });
+}

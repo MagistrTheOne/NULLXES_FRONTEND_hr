@@ -11,9 +11,11 @@ import {
   useCallStateHooks
 } from "@stream-io/video-react-sdk";
 import { Loader2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
+import { InterviewStatusBadge } from "@/components/interview/interview-status-badge";
+import { MicIndicator } from "@/components/interview/mic-indicator";
+import { mapVideoStatus, type VideoConnectionState } from "@/lib/interview-status";
 import type { SessionUIState } from "@/lib/session-ui-state";
 import { cn } from "@/lib/utils";
 
@@ -160,27 +162,21 @@ export function ObserverStreamCard({
     return "waiting_meeting";
   }, [allowVisibilityToggle, busy, call, canConnect, enabled, error, hasParticipants, meetingId, visible]);
 
-  const statusBadgeLabel = useMemo(() => {
-    if (ended) {
-      return "Завершено";
-    }
-    switch (status) {
-      case "waiting_meeting":
-        return "Ожидаем запуск";
-      case "joining":
-        return "Подключаемся…";
-      case "joined":
-        return "В эфире";
-      case "no_participants":
-        return "В эфире (нет участников)";
-      case "error":
-        return "Ошибка";
-      case "idle_hidden":
-        return "Скрыт";
-      default:
-        return "—";
-    }
+  /**
+   * Маппинг внутреннего ObserverConnectionStatus в локальный VideoConnectionState
+   * (унифицированная семантика с остальной системой статусов).
+   */
+  const videoState: VideoConnectionState = useMemo(() => {
+    if (ended) return "idle";
+    if (status === "idle_hidden") return "hidden";
+    if (status === "error") return "failed";
+    if (status === "joining") return "connecting";
+    if (status === "joined") return "connected";
+    if (status === "no_participants") return "no_participants";
+    return "idle";
   }, [ended, status]);
+
+  const videoStatusView = useMemo(() => mapVideoStatus(videoState), [videoState]);
 
   useEffect(() => {
     onStatusChange?.(status);
@@ -335,17 +331,10 @@ export function ObserverStreamCard({
         <>
           <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
             <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{participantName}</p>
-            <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
-              <span className="mr-1 text-slate-500" aria-hidden>
-                ●
-              </span>
-              {statusBadgeLabel}
-            </Badge>
+            <InterviewStatusBadge status={videoStatusView} />
           </div>
           {allowTalkToggle && visible ? (
-            <p className="text-[11px] text-slate-500">
-              Микрофон для эфира: <span className="font-medium text-slate-700">{talkMode === "on" ? "вкл" : "выкл"}</span>
-            </p>
+            <MicIndicator active={talkMode === "on" && Boolean(call)} />
           ) : null}
           <div className="flex min-h-10 flex-wrap gap-2">
             {allowVisibilityToggle ? (
@@ -356,18 +345,18 @@ export function ObserverStreamCard({
                 disabled={ended}
                 onClick={() => onVisibleChange?.(!visible)}
               >
-                {visible ? "Скрыть" : "Показать observer"}
+                {visible ? "Скрыть видео" : "Показать видео"}
               </Button>
             ) : null}
             {allowTalkToggle ? (
               <Button
                 type="button"
-                variant={talkMode === "on" ? "default" : "outline"}
+                variant={talkMode === "on" ? "destructive" : "outline"}
                 className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2 disabled:opacity-50"
                 disabled={!call || ended}
                 onClick={() => onTalkModeChange?.(talkMode === "on" ? "off" : "on")}
               >
-                {talkMode === "on" ? "Выключить разговор" : "Разрешить говорить"}
+                {talkMode === "on" ? "Выключить микрофон" : "Включить микрофон"}
               </Button>
             ) : null}
             {!call && canConnect ? (
@@ -387,8 +376,8 @@ export function ObserverStreamCard({
     >
       {!visible && allowVisibilityToggle ? (
         <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-          <p className="text-sm font-medium text-slate-700">{statusBadgeLabel}</p>
-          <p className="text-xs text-slate-600">Включите отображение, чтобы видеть потоки участников</p>
+          <p className="text-sm font-medium text-slate-700">{videoStatusView.label}</p>
+          <p className="text-xs text-slate-600">Включите видео, чтобы видеть кандидата и агента</p>
         </div>
       ) : client && call && localUserId ? (
         <div className={cn("h-full w-full", ended && "opacity-80")}>
@@ -403,9 +392,9 @@ export function ObserverStreamCard({
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
           {showJoinLoader ? <Loader2 className="h-7 w-7 shrink-0 animate-spin text-slate-600" aria-hidden /> : null}
-          <p className="text-sm font-medium text-slate-700">{statusBadgeLabel}</p>
+          <p className="text-sm font-medium text-slate-700">{videoStatusView.label}</p>
           {!canConnect && !ended ? (
-            <p className="text-xs text-slate-600">Ожидание активной сессии интервью</p>
+            <p className="text-xs text-slate-600">Интервью ещё не запущено</p>
           ) : null}
         </div>
       )}

@@ -2,12 +2,20 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronDown } from "lucide-react";
 import { ObserverStreamCard, type ObserverConnectionStatus } from "@/components/interview/observer-stream-card";
+import { InterviewStatusBadge } from "@/components/interview/interview-status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { getInterviewById, getMeetingDetail, isApiRequestError, type InterviewDetail } from "@/lib/api";
 import type { InterviewSummaryPayload } from "@/lib/interview-summary";
 import { InterviewSummaryDisplay } from "@/components/interview/interview-summary-display";
+import {
+  mapProjectionToInterviewStatus,
+  mapVideoStatus,
+  type VideoConnectionState
+} from "@/lib/interview-status";
 import {
   getObserverControlState,
   resolveObserverTalkState,
@@ -22,13 +30,30 @@ const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
   updatedAt: ""
 };
 
-function observerStatusLabel(status: ObserverConnectionStatus): string {
-  if (status === "joining") return "observer: подключение";
-  if (status === "joined") return "observer: подключен";
-  if (status === "no_participants") return "observer: подключен, ожидаем участников";
-  if (status === "error") return "observer: ошибка подключения";
-  if (status === "idle_hidden") return "observer: скрыт";
-  return "observer: ожидание meeting";
+const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
+
+/**
+ * Маппинг ObserverConnectionStatus (внутренний enum карточки) в публичный
+ * VideoConnectionState. Дублирует логику внутри ObserverStreamCard, чтобы
+ * spectator-page показывал consistent статус, не привязываясь к internal API
+ * карточки. Если карточка изменит свой enum — поменяем тут.
+ */
+function mapObserverStatusToVideoState(status: ObserverConnectionStatus): VideoConnectionState {
+  switch (status) {
+    case "joining":
+      return "connecting";
+    case "joined":
+      return "connected";
+    case "no_participants":
+      return "no_participants";
+    case "error":
+      return "failed";
+    case "idle_hidden":
+      return "hidden";
+    case "waiting_meeting":
+    default:
+      return "idle";
+  }
 }
 
 function SpectatorBody() {
@@ -46,6 +71,7 @@ function SpectatorBody() {
   const [observerControl, setObserverControl] = useState<ObserverControlState>(DEFAULT_OBSERVER_CONTROL);
   const [observerStatus, setObserverStatus] = useState<ObserverConnectionStatus>("waiting_meeting");
   const [meetingSummary, setMeetingSummary] = useState<InterviewSummaryPayload | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   useEffect(() => {
     if (!jobAiId) {
@@ -107,8 +133,23 @@ function SpectatorBody() {
   }, [jobAiId]);
 
   const meetingId = detail?.projection.nullxesMeetingId ?? null;
-  const candidateName = [detail?.projection.candidateFirstName, detail?.projection.candidateLastName].filter(Boolean).join(" ").trim();
+  const candidateName = [detail?.projection.candidateFirstName, detail?.projection.candidateLastName]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const companyName = detail?.projection.companyName ?? "";
   const canConnect = Boolean(meetingId);
+
+  // Глобальный статус интервью (унифицирован с HR mapPhaseToStatus).
+  const interviewStatus = useMemo(
+    () => mapProjectionToInterviewStatus(detail?.projection.nullxesStatus),
+    [detail?.projection.nullxesStatus]
+  );
+  // Локальный статус видео-канала спектатора.
+  const videoStatus = useMemo(
+    () => mapVideoStatus(mapObserverStatusToVideoState(observerStatus)),
+    [observerStatus]
+  );
 
   useEffect(() => {
     if (!meetingId || detail?.projection.nullxesStatus !== "completed") {
@@ -133,7 +174,6 @@ function SpectatorBody() {
       } catch (err) {
         if (cancelled) return;
         if (isApiRequestError(err) && err.status === 404) {
-          // meeting record gone on backend — stop polling, no summary will ever arrive.
           setMeetingSummary(null);
           stopPolling();
           return;
@@ -154,29 +194,43 @@ function SpectatorBody() {
   return (
     <div className="min-h-screen bg-[#dfe4ec] px-4 py-6 sm:px-6 sm:py-8 md:px-10">
       <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-6">
+        {/* === Header card: глобальный статус интервью + контекст === */}
         <Card className="rounded-2xl border-0 bg-[#d9dee7] shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base text-slate-700">Режим наблюдателя</CardTitle>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base text-slate-700">Наблюдение за интервью</CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3 text-sm text-slate-700">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <p>JobAI ID: {jobAiId ?? "—"}</p>
-              <p>Кандидат: {candidateName || "—"}</p>
-              <p>NULLXES ID: {meetingId ?? "ожидание запуска"}</p>
-              <p>
-                Статус:{" "}
-                {loading
-                  ? "обновление..."
-                  : `${detail?.projection.nullxesBusinessLabel ?? "—"} · ${observerStatusLabel(observerStatus)}`}
-              </p>
+          <CardContent className="flex flex-col gap-4 text-sm text-slate-700">
+            {/* Status — first and most prominent */}
+            <div className="flex flex-wrap items-center gap-3">
+              <InterviewStatusBadge status={interviewStatus} />
+              <span className="text-xs text-slate-500">{loading ? "Обновление…" : "Статус интервью"}</span>
             </div>
-            {error ? <p className="rounded-lg bg-rose-100 px-3 py-2 text-rose-700">{error}</p> : null}
+
+            {/* Context: кандидат + компания */}
+            <div className="grid grid-cols-1 gap-2 text-slate-500 sm:grid-cols-2">
+              <p>
+                Кандидат · <span className="font-medium text-slate-700">{candidateName || "—"}</span>
+              </p>
+              <p>
+                Компания · <span className="font-medium text-slate-700">{companyName || "—"}</span>
+              </p>
+              {jobAiId ? (
+                <p>
+                  ID интервью · <span className="font-medium text-slate-700">{jobAiId}</span>
+                </p>
+              ) : null}
+            </div>
+
+            {error ? (
+              <p className="rounded-lg bg-rose-100 px-3 py-2 text-rose-700">{error}</p>
+            ) : null}
             {!canConnect ? (
               <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
-                Сессия еще не запущена. Observer подключится автоматически после старта интервью.
+                Интервью ещё не запущено. Видео подключится автоматически после старта.
               </p>
             ) : null}
-            <InterviewSummaryDisplay summary={meetingSummary} title="Итог для наблюдателя" />
+
+            {/* Actions */}
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
@@ -195,14 +249,41 @@ function SpectatorBody() {
                   router.push(jobAiId ? `/?jobAiId=${encodeURIComponent(jobAiId)}` : "/");
                 }}
               >
-                Вернуться к интервью кандидата
+                Открыть HR-панель
               </Button>
             </div>
+
+            {/* Tech details — collapsed by default, hidden внутренние ID */}
+            <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
+              <CollapsibleTrigger className="inline-flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-xs font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground sm:w-auto">
+                Технические детали
+                <ChevronDown className={`size-4 transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-3">
+                <div className="grid grid-cols-1 gap-x-10 gap-y-2 text-xs text-slate-500 sm:grid-cols-2">
+                  <p>
+                    Внутренний идентификатор ·{" "}
+                    <span className="font-mono text-[11px] text-slate-700">{meetingId ?? "Появится после запуска"}</span>
+                  </p>
+                  <p>
+                    Видеопоток ·{" "}
+                    <span className="font-mono text-[11px] text-slate-700">{videoStatus.label}</span>
+                  </p>
+                  {SHOW_INTERNAL_DEBUG_UI ? (
+                    <p className="sm:col-span-2">
+                      jobAiStatus · <span className="font-mono text-[11px] text-slate-700">{detail?.projection.jobAiStatus ?? "—"}</span>
+                    </p>
+                  ) : null}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
           </CardContent>
         </Card>
+
+        {/* === Video card === */}
         <ObserverStreamCard
-          title="Observer: кандидат + HR + вы"
-          participantName="Observer"
+          title="Видео интервью"
+          participantName="Наблюдатель"
           meetingId={meetingId}
           enabled={canConnect}
           visible
@@ -223,6 +304,9 @@ function SpectatorBody() {
           }}
           onStatusChange={setObserverStatus}
         />
+
+        {/* === Summary === */}
+        <InterviewSummaryDisplay summary={meetingSummary} title="Итог интервью" />
       </div>
     </div>
   );
