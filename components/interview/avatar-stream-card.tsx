@@ -27,11 +27,16 @@ type AvatarCallBodyProps = {
 };
 
 function AvatarCallBody({ showStreamToolbar, meetingId, onLeave }: AvatarCallBodyProps) {
-  const { useCallCallingState, useParticipants } = useCallStateHooks();
-  const state = useCallCallingState();
-  const participants = useParticipants();
-  const avatarParticipant =
-    participants.find((participant) => participant.userId === `agent-${meetingId}`) ?? participants[0] ?? null;
+    const { useCallCallingState, useParticipants } = useCallStateHooks();
+    const state = useCallCallingState();
+    const participants = useParticipants();
+    // Pod publishes as `agent_<sessionId>` (underscore form). We accept either
+    // shape so the legacy `agent-<meetingId>` simulation still renders.
+    const avatarParticipant =
+      participants.find(
+        (participant) =>
+          participant.userId.startsWith("agent_") || participant.userId === `agent-${meetingId}`
+      ) ?? participants.find((participant) => participant.userId !== `viewer-${meetingId}`) ?? null;
   if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
     return <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание потока аватара…</div>;
   }
@@ -142,14 +147,18 @@ export function AvatarStreamCard({
     }
     setBusy(true);
     try {
+      // We join the SFU as a passive viewer (`viewer-<meetingId>`). The avatar
+      // pod publishes its video as `agent_<sessionId>` from RunPod, so we MUST
+      // NOT reuse the same userId — Stream would treat us as a duplicate session
+      // of the agent and the candidate would see no video tile.
       const response = await fetch("/api/stream/token", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          role: "admin",
+          role: "spectator",
           meetingId,
-          userId: `agent-${meetingId}`,
+          userId: `viewer-${meetingId}`,
           userName: participantName
         })
       });
