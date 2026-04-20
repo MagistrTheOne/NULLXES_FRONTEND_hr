@@ -79,6 +79,13 @@ const INTERVIEW_EXTEND_BY_MINUTES = (() => {
 
 const HARD_CONTEXT_GUARD_ENABLED = process.env.NEXT_PUBLIC_INTERVIEW_HARD_GUARD === "1";
 const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
+/**
+ * Observer (third participant panel) is hidden from the HR dashboard until
+ * live-summary and real-time scoring are wired up in P4. The Stream-level
+ * wiring and token issuance stay intact — flipping this env var to "1" brings
+ * the panel back without any code changes.
+ */
+const OBSERVER_PANEL_ENABLED = process.env.NEXT_PUBLIC_ENABLE_OBSERVER_PANEL === "1";
 const INTERVIEWS_PAGE_SIZE = 8;
 const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
   visibility: "visible",
@@ -1211,7 +1218,7 @@ export function InterviewShell() {
             <main
               className={cn(
                 "relative mt-4 grid grid-cols-1 gap-8 lg:items-stretch lg:gap-6",
-                isCandidateFlow ? "lg:grid-cols-2" : "lg:grid-cols-3",
+                isCandidateFlow || !OBSERVER_PANEL_ENABLED ? "lg:grid-cols-2" : "lg:grid-cols-3",
                 sessionUiState === "completed" && "pointer-events-none opacity-60"
               )}
               aria-busy={sessionUiState === "completed" ? "true" : undefined}
@@ -1263,7 +1270,7 @@ export function InterviewShell() {
             mobilePip={isCandidateFlow}
           />
           </div>
-          {isCandidateFlow ? null : (
+          {isCandidateFlow || !OBSERVER_PANEL_ENABLED ? null : (
           <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
           <ObserverStreamCard
             title="Наблюдатель"
