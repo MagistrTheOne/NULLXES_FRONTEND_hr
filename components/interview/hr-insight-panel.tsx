@@ -19,7 +19,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Flag, MessageSquarePlus, Star, StickyNote } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { TranscriptTurn } from "@/hooks/use-interview-session";
@@ -163,17 +163,22 @@ export function HrInsightPanel({
   const quickFlagDisabled = sessionEnded || lastCandidateTurnIndex === -1;
 
   return (
-    <Card className="flex min-h-0 min-w-0 flex-col rounded-2xl border-slate-200 bg-white/90 shadow-sm lg:h-full">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 border-b border-slate-100 py-3">
-        <CardTitle className="text-sm font-semibold text-slate-800">
+    // Match the outer frame of CandidateStreamCard / AvatarStreamCard
+    // (see stream-participant-shell.tsx) so all three dashboard columns line
+    // up at the same height: external H3 title, then a neumorphic Card that
+    // takes the remaining vertical space via flex-1. Inner scrollable area
+    // replaces the 420-px video box used by the other two.
+    <section className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col items-center gap-3">
+      <div className="flex w-full flex-col items-center gap-1">
+        <h3 className="h-9 shrink-0 text-center text-xl font-medium leading-none text-slate-600 sm:text-[30px]">
           HR наблюдение
-        </CardTitle>
-        <span className="text-[10px] uppercase tracking-wider text-slate-400">
+        </h3>
+        <p className="max-w-[min(100%,20rem)] text-center text-[11px] leading-snug text-slate-500 sm:text-xs">
           live · {transcripts.length} реплик
-        </span>
-      </CardHeader>
-
-      <CardContent className="flex min-h-0 flex-1 flex-col gap-3 p-3">
+        </p>
+      </div>
+      <Card className="flex w-full min-h-0 min-w-0 flex-1 flex-col rounded-2xl border-0 bg-[#d9dee7] p-3 shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]">
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 p-2">
         {/* Quick-flag toolbar */}
         <div className="flex flex-wrap gap-2">
           <Button
@@ -326,7 +331,8 @@ export function HrInsightPanel({
             />
           </div>
         ) : null}
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </section>
   );
 }
