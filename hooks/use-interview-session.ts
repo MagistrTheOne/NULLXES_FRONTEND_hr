@@ -778,6 +778,33 @@ export function useInterviewSession() {
     const internalMeetingId = `meeting-${Date.now()}`;
     const triggerSource = options?.triggerSource ?? "frontend_manual";
 
+    // HARD ROLE GUARD: создать новую AI-сессию (meeting + OpenAI Realtime
+    // peer) имеет право ТОЛЬКО кандидат, зашедший по своей уникальной
+    // ссылке. Раньше HR из dashboard мог нажать «Запустить интервью» →
+    // хук поднимал meeting без кандидата в комнате, AI говорил с HR как
+    // с кандидатом, а реальный кандидат потом получал «сессия уже
+    // завершена». Whitelist легальных инициаторов:
+    //   - candidate_auto_start  (candidate-flow, переход по ссылке)
+    //   - join_stream           (кандидат присоединился к stream-room,
+    //                            в реальном стеке попадает в hydrate
+    //                            path раньше чем сюда)
+    //   - webrtc_restore        (внутренняя реконнект-логика хука)
+    //   - candidate_*           (любой наш future candidate trigger)
+    // Все прочие источники (manual_start_button из HR-dashboard, любой
+    // внешний вызов) — блокируются с явной ошибкой.
+    const CANDIDATE_INITIATED_TRIGGERS = new Set<string>([
+      "candidate_auto_start",
+      "join_stream",
+      "webrtc_restore"
+    ]);
+    const isCandidateInitiated =
+      CANDIDATE_INITIATED_TRIGGERS.has(triggerSource) || triggerSource.startsWith("candidate_");
+    if (!isCandidateInitiated) {
+      throw new Error(
+        "Интервью может запустить только кандидат, перешедший по своей персональной ссылке. HR-сторона не инициирует AI-сессию."
+      );
+    }
+
     if (options?.meetingAt && !canBypassMeetingAtGuard(options)) {
       const meetingTimestamp = new Date(options.meetingAt).getTime();
       if (Number.isFinite(meetingTimestamp) && Date.now() < meetingTimestamp) {

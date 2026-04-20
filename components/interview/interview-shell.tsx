@@ -1051,12 +1051,14 @@ export function InterviewShell() {
           candidateFirstName={interviewStartContext?.candidateFirstName ?? candidateFio.split(" ")[0]}
           interviewActive={phase === "connected" && !completedInterviewLocked && Boolean(meetingId)}
           onStart={() => {
-            void start({
-              triggerSource: "manual_start_button",
-              interviewId: selectedInterviewId ?? selectedRow?.jobAiId ?? undefined,
-              meetingAt: selectedInterviewDetailMatched?.interview.meetingAt ?? selectedRow?.meetingAt,
-              interviewContext: interviewStartContext
-            });
+            // HR-сторона больше не может запускать AI-сессию. Кнопка «Запустить»
+            // убрана из meeting-header, этот callback остаётся как safety net на
+            // случай, если где-то в дереве его ещё дёрнут — покажем понятное
+            // сообщение вместо тихой ошибки. Сама сессия инициируется только
+            // переходом кандидата по его уникальной ссылке (candidate-flow).
+            toast.info(
+              "Интервью запускает кандидат, перейдя по своей персональной ссылке. HR-сторона не инициирует сессию."
+            );
           }}
           onStopSession={() => openExitDialog("end")}
           stopSessionDisabled={

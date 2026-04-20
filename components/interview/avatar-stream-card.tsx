@@ -58,13 +58,21 @@ function AvatarCallBody({ showStreamToolbar, meetingId, onLeave }: AvatarCallBod
     const { useCallCallingState, useParticipants } = useCallStateHooks();
     const state = useCallCallingState();
     const participants = useParticipants();
-    // Pod publishes as `agent_<sessionId>` (underscore form). We accept either
-    // shape so the legacy `agent-<meetingId>` simulation still renders.
+    // HARD WHITELIST: показываем в HR-avatar tile ТОЛЬКО participants, чей
+    // userId относится к avatar-поду:
+    //   - `agent_<sessionId>` (production shape из RunPod avatar service)
+    //   - `agent-<meetingId>`  (legacy simulation)
+    //
+    // Никаких fallback'ов на «любого не-viewer participant» — раньше это
+    // приводило к тому, что когда avatar-pod офф, HR-avatar tile подхватывал
+    // видеопоток кандидата (он единственный не-viewer в комнате) и в двух
+    // колонках отображалось одно и то же лицо. Если pod не публикует —
+    // participant = null и выше по дереву рендерится Anna-placeholder.
     const avatarParticipant =
       participants.find(
         (participant) =>
           participant.userId.startsWith("agent_") || participant.userId === `agent-${meetingId}`
-      ) ?? participants.find((participant) => participant.userId !== `viewer-${meetingId}`) ?? null;
+      ) ?? null;
   if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
     return <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание потока аватара…</div>;
   }

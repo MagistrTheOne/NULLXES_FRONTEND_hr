@@ -221,16 +221,19 @@ export function MeetingHeader({
                   (filled red), Запустить уходит в outline-disabled. В idle —
                   наоборот. Оператор глазами видит ровно одно primary-действие.
                  */}
+                {/*
+                  HR-сторона БОЛЬШЕ НЕ инициирует AI-сессию.
+                  Интервью стартует только когда кандидат переходит по своей
+                  уникальной ссылке (candidate-flow). HR-dashboard — это
+                  исключительно surface наблюдения и управления завершением.
+                  См. use-interview-session.start()::CANDIDATE_INITIATED_TRIGGERS.
+                 */}
                 {interviewActive ? (
                   <>
-                    <Button
-                      onClick={onStart}
-                      disabled
-                      variant="outline"
-                      className="h-9 shrink-0 rounded-lg px-4 text-xs"
-                    >
-                      Запустить интервью
-                    </Button>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                      <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden />
+                      Кандидат на связи
+                    </span>
                     {onStopSession ? (
                       <Button
                         type="button"
@@ -245,13 +248,10 @@ export function MeetingHeader({
                   </>
                 ) : (
                   <>
-                    <Button
-                      onClick={onStart}
-                      disabled={startDisabled}
-                      className="h-9 shrink-0 rounded-lg bg-[#3a8edb] px-4 text-xs text-white hover:bg-[#2f7bc0]"
-                    >
-                      Запустить интервью
-                    </Button>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200">
+                      <span className="size-1.5 rounded-full bg-slate-400" aria-hidden />
+                      Ожидаем подключения кандидата по ссылке
+                    </span>
                     {onStopSession ? (
                       <Button
                         type="button"
