@@ -137,10 +137,21 @@ export function computeScoreTotal(scores: InterviewScores4): number {
   return Math.round(total * 10) / 10;
 }
 
-/** score → decision по фиксированным порогам. */
+/**
+ * score → decision по фиксированным порогам.
+ *
+ * Формула (v2.1): consider — это "нейтральный кандидат без явных red flags",
+ * поэтому нижняя граница consider = 5.0, а не 5.5. Раньше кандидаты с
+ * нейтральными 5/5/5/5 автоматом попадали в "rejected", хотя по смыслу они
+ * "на рассмотрение".
+ *
+ *   >= 7.5  recommended  — явно сильный кандидат
+ *   >= 5.0  consider     — нейтральный / смешанный сигнал, решает HR
+ *   <  5.0  rejected     — подтверждённые слабые ответы / red flags
+ */
 export function decisionFromScore(scoreTotal: number): InterviewDecision {
   if (scoreTotal >= 7.5) return "recommended";
-  if (scoreTotal >= 5.5) return "consider";
+  if (scoreTotal >= 5.0) return "consider";
   return "rejected";
 }
 
@@ -204,12 +215,19 @@ export function buildInterviewSummaryPayload(input: InterviewSummaryContextInput
       assessment: "not_discussed" as const
     }));
 
-  // Conservative baseline: 5/10 по всем — нет данных для лучше / хуже.
+  // Conservative baseline: 6/10 по всем. Почему именно 6, а не 5:
+  //   - 5/5/5/5 попадает в "rejected" через weighted sum → автоматический
+  //     отказ для любого кандидата, по которому не успел проехаться LLM
+  //     (OPENAI_API_KEY отсутствует, таймаут, fallback, нет транскрипта).
+  //   - "Нейтральный / пока неизвестно" → по смыслу это "consider", а не
+  //     "rejected". Нельзя отказывать человеку из-за отсутствия данных.
+  // 6/6/6/6 даёт scoreTotal 6.0 → decision="consider" и даёт HR возможность
+  // посмотреть интервью самостоятельно, а не получить штамп "Отклонён".
   const scores4: InterviewScores4 = {
-    experience: 5,
-    communication: 5,
-    thinking: 5,
-    objections: 5
+    experience: 6,
+    communication: 6,
+    thinking: 6,
+    objections: 6
   };
   const scoreTotal = computeScoreTotal(scores4);
   const decision = decisionFromScore(scoreTotal);
@@ -409,13 +427,14 @@ export function normalizeInterviewSummary(value: unknown): InterviewSummaryPaylo
   }
 
   // Adapt v1 → v2: reuse legacy `scores` (1-10 ints) if present, otherwise
-  // fall back to neutral 5/10 across the board so the UI always renders.
+  // fall back to neutral 6/10 across the board (see buildInterviewSummaryPayload
+  // — 6 keeps the candidate in "consider" instead of silent auto-reject).
   const legacyScores = (v.scores ?? null) as InterviewScoreDimensions | null;
   const scores4: InterviewScores4 = {
-    experience: clampScore(legacyScores?.experience1to10 ?? 5),
-    communication: clampScore(legacyScores?.communication1to10 ?? 5),
-    thinking: clampScore(legacyScores?.thinking1to10 ?? 5),
-    objections: 5
+    experience: clampScore(legacyScores?.experience1to10 ?? 6),
+    communication: clampScore(legacyScores?.communication1to10 ?? 6),
+    thinking: clampScore(legacyScores?.thinking1to10 ?? 6),
+    objections: 6
   };
   const scoreTotal = computeScoreTotal(scores4);
 
