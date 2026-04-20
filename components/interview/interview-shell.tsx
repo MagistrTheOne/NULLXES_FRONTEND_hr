@@ -50,6 +50,7 @@ import { InterviewsTablePreview } from "./interviews-table-preview";
 import { MeetingHeader } from "./meeting-header";
 import { InterviewSummaryDisplay } from "./interview-summary-display";
 import { ObserverStreamCard } from "./observer-stream-card";
+import { HrInsightPanel } from "./hr-insight-panel";
 import { InterviewPhaseIndicator } from "./interview-phase-indicator";
 import { AgentStateIndicator } from "./agent-state-indicator";
 import { LiveCaptionsOverlay } from "./live-captions";
@@ -86,6 +87,14 @@ const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1"
  * the panel back without any code changes.
  */
 const OBSERVER_PANEL_ENABLED = process.env.NEXT_PUBLIC_ENABLE_OBSERVER_PANEL === "1";
+/**
+ * HR Insight Panel (P4) — right-column replacement for the legacy Observer.
+ * Enabled by default; can be force-disabled via
+ * NEXT_PUBLIC_ENABLE_HR_INSIGHT_PANEL="0" to fall back to a 2-column layout.
+ * If the old Observer panel is explicitly enabled, that one wins.
+ */
+const HR_INSIGHT_PANEL_ENABLED =
+  process.env.NEXT_PUBLIC_ENABLE_HR_INSIGHT_PANEL !== "0";
 const INTERVIEWS_PAGE_SIZE = 8;
 const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
   visibility: "visible",
@@ -146,7 +155,8 @@ export function InterviewShell() {
     flowPhase,
     agentState,
     questionsAsked,
-    latestCaptions
+    latestCaptions,
+    transcripts
   } =
     useInterviewSession();
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -1218,7 +1228,9 @@ export function InterviewShell() {
             <main
               className={cn(
                 "relative mt-4 grid grid-cols-1 gap-8 lg:items-stretch lg:gap-6",
-                isCandidateFlow || !OBSERVER_PANEL_ENABLED ? "lg:grid-cols-2" : "lg:grid-cols-3",
+                isCandidateFlow || (!OBSERVER_PANEL_ENABLED && !HR_INSIGHT_PANEL_ENABLED)
+                  ? "lg:grid-cols-2"
+                  : "lg:grid-cols-3",
                 sessionUiState === "completed" && "pointer-events-none opacity-60"
               )}
               aria-busy={sessionUiState === "completed" ? "true" : undefined}
@@ -1270,7 +1282,7 @@ export function InterviewShell() {
             mobilePip={isCandidateFlow}
           />
           </div>
-          {isCandidateFlow || !OBSERVER_PANEL_ENABLED ? null : (
+          {isCandidateFlow ? null : OBSERVER_PANEL_ENABLED ? (
           <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
           <ObserverStreamCard
             title="Наблюдатель"
@@ -1308,7 +1320,17 @@ export function InterviewShell() {
             }}
           />
           </div>
-          )}
+          ) : HR_INSIGHT_PANEL_ENABLED ? (
+          <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
+            <HrInsightPanel
+              transcripts={transcripts}
+              summary={lastInterviewSummary ?? meetingSummaryFromServer}
+              sessionEnded={completedInterviewLocked}
+              streamEnabled={streamSurfaceEnabled}
+              interviewKey={selectedInterviewId ?? selectedRow?.jobAiId ?? recoveredMeetingId}
+            />
+          </div>
+          ) : null}
         </main>
         {isCandidateFlow ? (
           <div className="mt-3 flex w-full justify-center gap-4 sm:gap-3">

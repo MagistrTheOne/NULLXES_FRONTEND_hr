@@ -337,6 +337,14 @@ export function useInterviewSession() {
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [questionsAsked, setQuestionsAsked] = useState(0);
   const [latestCaptions, setLatestCaptions] = useState<LiveCaptions>({});
+  /**
+   * Reactive mirror of `transcriptsRef.current` — identical data, but state so
+   * the HR insight panel can re-render when new turns arrive. We push to BOTH
+   * the ref (used by stop() flush / post-meeting summary pipeline) and this
+   * state (consumed by UI). Kept as a ref-shaped array, not a Map, because
+   * transcript order is meaningful.
+   */
+  const [transcripts, setTranscripts] = useState<TranscriptTurn[]>([]);
 
   const rtcRef = useRef<WebRtcInterviewClient | null>(null);
   const reconnectAttemptForSessionRef = useRef<string | null>(null);
@@ -401,12 +409,14 @@ export function useInterviewSession() {
       const transcript =
         readString(payload, "transcript") ?? agentTranscriptBufferRef.current.get(itemId) ?? "";
       if (transcript.trim().length > 0) {
-        transcriptsRef.current.push({
+        const turn: TranscriptTurn = {
           role: "agent",
           text: transcript,
           ts: Date.now(),
           itemId
-        });
+        };
+        transcriptsRef.current.push(turn);
+        setTranscripts((prev) => [...prev, turn]);
         scheduleCaptionUpdate("agent", transcript);
       }
       agentTranscriptBufferRef.current.delete(itemId);
@@ -417,12 +427,14 @@ export function useInterviewSession() {
       const transcript = readString(payload, "transcript") ?? "";
       const itemId = readString(payload, "item_id") ?? undefined;
       if (transcript.trim().length > 0) {
-        transcriptsRef.current.push({
+        const turn: TranscriptTurn = {
           role: "candidate",
           text: transcript,
           ts: Date.now(),
           ...(itemId ? { itemId } : {})
-        });
+        };
+        transcriptsRef.current.push(turn);
+        setTranscripts((prev) => [...prev, turn]);
         scheduleCaptionUpdate("candidate", transcript);
       }
       return;
@@ -808,6 +820,7 @@ export function useInterviewSession() {
     setQuestionsAsked(0);
     setLatestCaptions({});
     transcriptsRef.current = [];
+    setTranscripts([]);
     agentTranscriptBufferRef.current.clear();
     greetingDoneRef.current = false;
     lastResponseIdRef.current = null;
@@ -1057,6 +1070,8 @@ export function useInterviewSession() {
     questionsAsked,
     /** Latest single-turn caption per role; keys disappear after ~8s of silence. */
     latestCaptions,
+    /** Accumulated per-turn transcript history (agent + candidate). Reactive. */
+    transcripts,
     start,
     stop,
     markFailed,
