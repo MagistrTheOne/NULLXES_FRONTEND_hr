@@ -9,10 +9,12 @@ import {
   getInterviewById,
   getMeetingDetail,
   isApiRequestError,
+  issueCandidateJoinLink,
   listInterviews,
   type CandidateAdmissionStatus,
   type InterviewDetail,
-  type InterviewListRow
+  type InterviewListRow,
+  type JoinLinkIssued
 } from "@/lib/api";
 import { extractCoreFieldsFromInterviewRaw, mergeStartContextWithInterviewDetail } from "@/lib/interview-detail-fields";
 import { normalizeInterviewListRows } from "@/lib/normalize-interview-list-row";
@@ -230,6 +232,56 @@ export function InterviewShell() {
     const base = resolveHrCandidateEntryBasePath(selectedRow.candidateEntryPath, selectedRow.jobAiId);
     return withCandidateEntryQuery(base);
   }, [selectedRow]);
+
+  /**
+   * Per-jobAiId cache of signed candidate JWT links.
+   * Auto-issued via POST /interviews/:id/links/candidate when HR selects a row,
+   * so the input in the header shows the new `/join/candidate/<JWT>` URL by default
+   * (instead of the legacy `?jobAiId=…&entry=candidate` shorthand). The legacy URL
+   * is still accepted on the candidate entry route for backward compatibility.
+   *
+   * Refresh strategy: re-issue when cache miss OR remaining TTL < 5 minutes,
+   * to avoid handing the candidate a token that expires while they're typing.
+   */
+  const [signedCandidateLinks, setSignedCandidateLinks] = useState<
+    Record<number, JoinLinkIssued>
+  >({});
+  const signedLinkInflightRef = useRef<Set<number>>(new Set());
+
+  useEffect(() => {
+    const id = selectedRow?.jobAiId;
+    if (typeof id !== "number" || !Number.isInteger(id) || id <= 0) {
+      return;
+    }
+    const cached = signedCandidateLinks[id];
+    const now = Date.now();
+    const valid = cached && cached.expiresAt - now > 5 * 60 * 1000;
+    if (valid) {
+      return;
+    }
+    if (signedLinkInflightRef.current.has(id)) {
+      return;
+    }
+    signedLinkInflightRef.current.add(id);
+    issueCandidateJoinLink(id)
+      .then((issued) => {
+        setSignedCandidateLinks((prev) => ({ ...prev, [id]: issued }));
+      })
+      .catch(() => {
+        // Silent fall-through: input keeps showing the legacy `?jobAiId=` URL
+        // so HR is never blocked from copying *something*. The "Скопировать ссылку"
+        // button in the table also retries via issueAndCopyLink with toast on error.
+      })
+      .finally(() => {
+        signedLinkInflightRef.current.delete(id);
+      });
+  }, [selectedRow?.jobAiId, signedCandidateLinks]);
+
+  const selectedCandidateSignedUrl = useMemo(() => {
+    const id = selectedRow?.jobAiId;
+    if (typeof id !== "number") return null;
+    return signedCandidateLinks[id]?.url ?? null;
+  }, [selectedRow?.jobAiId, signedCandidateLinks]);
 
   const selectedInterviewDetailMatched = useMemo(() => {
     if (!selectedInterviewDetail || !selectedInterviewId) {
@@ -963,7 +1015,10 @@ export function InterviewShell() {
           jobTitle={interviewStartContext?.jobTitle}
           meetingAt={selectedInterviewDetailMatched?.interview.meetingAt ?? selectedRow?.meetingAt}
           prototypeEntryUrl={
-            selectedRow && origin ? toAbsoluteUrl(selectedCandidateEntryPath, origin) : undefined
+            selectedRow
+              ? selectedCandidateSignedUrl
+                ?? (origin ? toAbsoluteUrl(selectedCandidateEntryPath, origin) : undefined)
+              : undefined
           }
           onEntryUrlCommit={handleEntryUrlCommit}
           candidateFio={candidateFio}
