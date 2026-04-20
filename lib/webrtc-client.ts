@@ -118,7 +118,20 @@ export class WebRtcInterviewClient {
     pc.addTransceiver("audio", { direction: "sendrecv" });
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      // Explicit audio constraints — browser defaults vary across Chrome/Safari/Firefox.
+      // For HR-interview UX we MUST have noise suppression and AEC on (room noise, fan,
+      // keyboard, distant TV). channelCount=1 keeps payload small for OpenAI Realtime
+      // and avoids stereo dropouts on flaky uplinks.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 48000
+        },
+        video: false
+      });
       if (this.peerConnection !== pc || pc.signalingState === "closed") {
         for (const track of stream.getTracks()) track.stop();
         throw new Error("connect aborted: peer connection replaced during getUserMedia");
