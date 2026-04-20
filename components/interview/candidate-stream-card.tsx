@@ -137,6 +137,29 @@ export function CandidateStreamCard({
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Фильтр: какие ошибки мы НЕ показываем кандидату красной плашкой.
+  // Технические транспорт-ошибки (timeout / network / stream-io) ничего
+  // полезного кандидату не сообщают, а только пугают его посреди интервью.
+  // Retry-логика live-рефреша токена и реконнект Stream разруливают
+  // это сами; если что-то действительно фатально — сессия всё равно
+  // переведётся в «завершено» по сигналу из хука. Оставляем только
+  // бизнес-сообщения (лобби/ожидание HR/отказ одобрения и т.п.).
+  const isTransientTransportError = useCallback((message: string): boolean => {
+    const lower = message.toLowerCase();
+    return (
+      lower.includes("timeout") ||
+      lower.includes("timed out") ||
+      lower.includes("failed to fetch") ||
+      lower.includes("network") ||
+      lower.includes("aborterror") ||
+      lower.includes("abort") ||
+      lower.includes("failed to start candidate stream") ||
+      lower.includes("failed to issue stream token") ||
+      lower.includes("stream-io") ||
+      lower.includes("websocket")
+    );
+  }, []);
+  const visibleError = error && !isTransientTransportError(error) ? error : null;
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
   const autoJoinAttemptForRef = useRef<string | null>(null);
   const autoEntryAttemptRef = useRef<boolean>(false);
@@ -286,7 +309,12 @@ export function CandidateStreamCard({
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start candidate stream");
+      const message = err instanceof Error ? err.message : "Failed to start candidate stream";
+      // Всегда логируем в консоль — чтобы в dev-tools осталась диагностика,
+      // даже если UI-плашка подавлена фильтром visibleError.
+      // eslint-disable-next-line no-console
+      console.warn("[candidate-stream-card] startStream failed:", message, err);
+      setError(message);
       autoJoinAttemptForRef.current = null;
     } finally {
       setBusy(false);
@@ -392,7 +420,7 @@ export function CandidateStreamCard({
           </div>
         </>
       }
-      error={error ? <p className="w-full rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+      error={visibleError ? <p className="w-full rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">{visibleError}</p> : null}
     >
       {client && call ? (
         <div className={cn("h-full w-full", interactiveDisabled && "pointer-events-none opacity-70")}>
