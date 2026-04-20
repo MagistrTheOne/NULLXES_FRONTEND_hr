@@ -891,15 +891,20 @@ export function InterviewShell() {
         } catch {
           // best-effort — admission release is optional, the rejoin window still applies.
         }
-        if (typeof window !== "undefined") {
-          window.location.reload();
-        }
       }
       setExitDialog({ open: false, mode: exitDialog.mode, busy: false });
+      // В обоих режимах («Завершить» и «Выйти») кандидат должен приземлиться
+      // на главную. Раньше «Выйти» делал window.location.reload() и кандидат
+      // оставался на том же URL с замороженным UI, а «Завершить» просто
+      // переводил phase → "completed" и показывал ThankYouScreen, из которого
+      // тоже не было явного возврата. По ТЗ: оба пути ведут на "/".
+      if (isCandidateFlow && typeof window !== "undefined") {
+        window.location.href = "/";
+      }
     } catch {
       setExitDialog((prev) => ({ ...prev, busy: false }));
     }
-  }, [candidateFio, exitDialog.mode, recoveredMeetingId, selectedInterviewId, selectedRow?.jobAiId, stop]);
+  }, [candidateFio, exitDialog.mode, isCandidateFlow, recoveredMeetingId, selectedInterviewId, selectedRow?.jobAiId, stop]);
 
   useEffect(() => {
     if (!isCandidateFlow || !selectedInterviewId) {

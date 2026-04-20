@@ -30,29 +30,14 @@ export function ThankYouScreen({
   }, [secondsLeft]);
 
   /**
-   * Try to close the tab; if the browser blocks it (typical when the tab was
-   * opened directly by the user and not by `window.open`), fall back to
-   * navigating to the home route so the user lands on the dashboard instead
-   * of being stuck on the thank-you screen. This is the fix for the
-   * "Закрыть вкладку не возвращает в home" bug reported during smoke.
+   * "Завершить" / "Закрыть вкладку" — всегда отправляем на главную. Раньше
+   * пробовали window.close(), но современные браузеры блокируют close() на
+   * вкладках, не открытых через JS, и кандидат оставался залипшим на
+   * экране. По ТЗ клиента: оба пути («Завершить» в интервью и «Закрыть
+   * вкладку» на thank-you) ведут на "/".
    */
   const handleLeave = (): void => {
-    if (typeof window === "undefined") {
-      router.push("/");
-      return;
-    }
-    try {
-      window.close();
-    } catch {
-      /* ignore, fall through to router */
-    }
-    // Browsers block window.close() on tabs not opened via JS — use a short
-    // delay to detect if the close actually happened and fall back to home.
-    setTimeout(() => {
-      if (!window.closed) {
-        router.push("/");
-      }
-    }, 150);
+    router.push("/");
   };
 
   const greeting = candidateFirstName?.trim()
@@ -81,20 +66,10 @@ export function ThankYouScreen({
             className="h-11 rounded-xl bg-[#3a8edb] px-8 text-sm font-semibold text-white hover:bg-[#2f7bc0]"
             onClick={handleLeave}
           >
-            Закрыть вкладку
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-10 rounded-xl border-slate-300 px-6 text-sm font-medium text-slate-600 hover:bg-slate-50"
-            onClick={() => router.push("/")}
-          >
             Вернуться на главную
           </Button>
           {secondsLeft > 0 ? (
-            <p className="text-xs text-slate-400">
-              Если вкладка не закроется автоматически — нажмите «Вернуться на главную». ({secondsLeft} с)
-            </p>
+            <p className="text-xs text-slate-400">Вкладку можно закрыть или вернуться на главную. ({secondsLeft} с)</p>
           ) : (
             <p className="text-xs text-slate-400">Вкладку можно закрыть или вернуться на главную.</p>
           )}

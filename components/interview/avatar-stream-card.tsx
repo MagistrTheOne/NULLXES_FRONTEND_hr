@@ -2,11 +2,39 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CallControls, CallingState, ParticipantView, StreamCall, StreamTheme, StreamVideo, StreamVideoClient, useCallStateHooks } from "@stream-io/video-react-sdk";
+import Image from "next/image";
 import { Loader2 } from "lucide-react";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
 import { Badge } from "@/components/ui/badge";
 import type { SessionUIState } from "@/lib/session-ui-state";
 import { cn } from "@/lib/utils";
+
+/**
+ * Временный placeholder для HR-аватара пока avatar-pod выключен / не успел
+ * опубликовать видео в Stream. Файл лежит в /public/anna.jpg и отдаётся
+ * Next'ом как статический asset. Убрать / заменить на live video, как
+ * только RunPod avatar service начнёт публиковать `agent_<sessionId>`.
+ */
+const AVATAR_PLACEHOLDER_SRC = "/anna.jpg";
+
+function AvatarPlaceholder({ emphasize }: { emphasize?: boolean }) {
+  return (
+    <div className="relative h-full w-full overflow-hidden">
+      <Image
+        src={AVATAR_PLACEHOLDER_SRC}
+        alt="HR ассистент NULLXES"
+        fill
+        sizes="(max-width: 1024px) 100vw, 480px"
+        priority
+        className={cn(
+          "object-cover object-center",
+          emphasize ? "scale-[1.02]" : undefined
+        )}
+      />
+      <div className="pointer-events-none absolute inset-0 bg-linear-to-t from-black/35 via-transparent to-transparent" />
+    </div>
+  );
+}
 
 type StreamTokenResponse = {
   apiKey: string;
@@ -46,7 +74,11 @@ function AvatarCallBody({ showStreamToolbar, meetingId, onLeave }: AvatarCallBod
         {avatarParticipant ? (
           <ParticipantView participant={avatarParticipant} trackType="videoTrack" />
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание HR-аватара</div>
+          // Pod ещё не опубликовал свой video-track — показываем статичный
+          // портрет Анны как плейсхолдер, чтобы HR-колонка не выглядела
+          // пустой / "ломалась". Убрать когда avatar-service начнёт реально
+          // стримить видео.
+          <AvatarPlaceholder />
         )}
       </div>
       {showStreamToolbar ? (
@@ -295,15 +327,31 @@ export function AvatarStreamCard({
             </StreamTheme>
           </StreamVideo>
         </div>
-      ) : (
+      ) : ended ? (
         <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-          {(busy || (enabled && meetingId && !call)) && !ended ? (
-            <Loader2 className="h-7 w-7 shrink-0 animate-spin text-slate-600" aria-hidden />
-          ) : null}
           <p className="text-sm font-medium text-slate-700">{hrStatusLabel}</p>
-          {!ended && !canRenderAvatarWindow && avatarReady ? (
-            <p className="text-xs text-slate-600">Сигнал готовности получен, подключаем поток…</p>
-          ) : null}
+        </div>
+      ) : (
+        // До момента, пока viewer-клиент Stream не получил видео пода,
+        // показываем статичный портрет Анны + маленький overlay со
+        // статусом ("Подключаемся…" / "Ожидаем запуск"). Это визуально
+        // совпадает с финальным видео-аватаром и избавляет кандидата
+        // от пустой серой заглушки.
+        <div className="relative h-full w-full">
+          <AvatarPlaceholder emphasize={emphasizePrimary} />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 px-4 pb-3 text-center">
+            {(busy || (enabled && meetingId && !call)) ? (
+              <Loader2 className="h-5 w-5 shrink-0 animate-spin text-white/90" aria-hidden />
+            ) : null}
+            <p className="rounded-full bg-black/45 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm">
+              {hrStatusLabel}
+            </p>
+            {!canRenderAvatarWindow && avatarReady ? (
+              <p className="rounded-full bg-black/35 px-3 py-1 text-[11px] text-white/90 backdrop-blur-sm">
+                Сигнал готовности получен, подключаем поток…
+              </p>
+            ) : null}
+          </div>
         </div>
       )}
     </StreamParticipantShell>
