@@ -252,6 +252,15 @@ async function postIntroResponseToRtc(
       instructions: runtimeInstructions
     }
   });
+
+  // Короткая пауза между session.update и response.create. Без неё на GA
+  // endpoint агент иногда ждёт первого `input_audio` от кандидата перед тем
+  // как озвучить intro — потому что `response.create` прилетает раньше, чем
+  // сервер подтвердил `session.updated`, и уходит в конец очереди. 800мс
+  // достаточно чтобы session.updated долетел в 99% случаев, но визуально
+  // почти неощутимо для пользователя (по ТЗ клиента: «сразу или 1–2 сек»).
+  await new Promise((resolve) => setTimeout(resolve, 800));
+
   const openingUtterance = buildOpeningUtterance(effectiveContext, mode);
   const hasGreetingSpeech = Boolean(effectiveContext?.greetingSpeech?.trim());
 
