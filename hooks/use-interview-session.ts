@@ -233,14 +233,14 @@ async function postIntroResponseToRtc(
   // Without it the API silently rejects the update and our instructions never
   // reach the model, leaving the agent stuck on default behaviour.
   //
-  // turn_detection: noise-robust server VAD tuned for a quiet-ish but not
-  // studio-grade candidate environment (home, cafe, open-office). Defaults in
-  // the OpenAI GA spec are too sensitive — threshold=0.5 and silence_duration=500ms
-  // caused the agent to stop/restart on keyboard clicks, distant TV, and cough.
-  // With threshold=0.6 + silence_duration_ms=800 we ignore short transients the
-  // way consumer assistants (Alice / Google) do, while still reacting quickly
-  // to real speech. prefix_padding keeps the first phoneme of the candidate's
-  // reply from being clipped.
+  // turn_detection: noise-robust server VAD. We only tune the three core
+  // VAD thresholds (threshold / silence_duration_ms / prefix_padding_ms) —
+  // `create_response` and `interrupt_response` stay on the OpenAI default
+  // (true) because passing them explicitly here has been observed to cause
+  // two `[OpenAI Realtime] error` events immediately after `session.updated`
+  // on the GA endpoint, which also silently drops the `instructions` part of
+  // the same update — and the model falls back to its vanilla "Рад вас
+  // слышать, чем помочь?" greeting instead of the JobAI intro.
   await rtc.postEvent({
     type: "session.update",
     session: {
@@ -250,9 +250,7 @@ async function postIntroResponseToRtc(
         type: "server_vad",
         threshold: 0.6,
         prefix_padding_ms: 300,
-        silence_duration_ms: 800,
-        create_response: true,
-        interrupt_response: true
+        silence_duration_ms: 800
       }
     }
   });
@@ -756,9 +754,7 @@ export function useInterviewSession() {
                     type: "server_vad",
                     threshold: 0.6,
                     prefix_padding_ms: 300,
-                    silence_duration_ms: 800,
-                    create_response: true,
-                    interrupt_response: true
+                    silence_duration_ms: 800
                   }
                 }
               });

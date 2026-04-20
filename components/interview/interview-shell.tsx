@@ -81,20 +81,23 @@ const INTERVIEW_EXTEND_BY_MINUTES = (() => {
 const HARD_CONTEXT_GUARD_ENABLED = process.env.NEXT_PUBLIC_INTERVIEW_HARD_GUARD === "1";
 const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
 /**
- * Observer (third participant panel) is hidden from the HR dashboard until
- * live-summary and real-time scoring are wired up in P4. The Stream-level
- * wiring and token issuance stay intact — flipping this env var to "1" brings
- * the panel back without any code changes.
+ * Observer (third participant panel) — the Stream-level spectator tile that
+ * shows the live observer in the 3-column dashboard. This is the production
+ * default: the right column in the HR dashboard is the Observer, exactly as
+ * before the P4 experiment. Can be disabled via
+ * NEXT_PUBLIC_ENABLE_OBSERVER_PANEL="0" for the HR-only 2-column layout.
  */
-const OBSERVER_PANEL_ENABLED = process.env.NEXT_PUBLIC_ENABLE_OBSERVER_PANEL === "1";
+const OBSERVER_PANEL_ENABLED =
+  process.env.NEXT_PUBLIC_ENABLE_OBSERVER_PANEL !== "0";
 /**
- * HR Insight Panel (P4) — right-column replacement for the legacy Observer.
- * Enabled by default; can be force-disabled via
- * NEXT_PUBLIC_ENABLE_HR_INSIGHT_PANEL="0" to fall back to a 2-column layout.
- * If the old Observer panel is explicitly enabled, that one wins.
+ * HR Insight Panel (P4) — live transcript + quick flags + summary. This is
+ * an ADDITIONAL surface, not a replacement for the Observer. It lives on the
+ * dedicated HR panel route / button and is off by default in the main grid;
+ * flip NEXT_PUBLIC_ENABLE_HR_INSIGHT_PANEL="1" to reintroduce it into the
+ * main dashboard grid (only takes effect when the Observer column is off).
  */
 const HR_INSIGHT_PANEL_ENABLED =
-  process.env.NEXT_PUBLIC_ENABLE_HR_INSIGHT_PANEL !== "0";
+  process.env.NEXT_PUBLIC_ENABLE_HR_INSIGHT_PANEL === "1";
 const INTERVIEWS_PAGE_SIZE = 8;
 const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
   visibility: "visible",
