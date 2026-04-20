@@ -288,10 +288,15 @@ export function CandidateStreamCard({
       }
 
       const payload = (await response.json()) as StreamTokenResponse;
+      // Переопределяем дефолтный axios-timeout SDK (5000мс) на 60_000мс —
+      // см. комментарий в avatar-stream-card про источник «timeout of
+      // 5000ms exceeded». 5с недостаточно для coordinator round-trip на
+      // плохой сети и ломает сессию кандидата посреди интервью.
       const streamClient = new StreamVideoClient({
         apiKey: payload.apiKey,
         token: payload.token,
-        user: payload.user
+        user: payload.user,
+        options: { timeout: 60_000 }
       });
       const streamCall = streamClient.call(payload.callType, payload.callId);
       await streamCall.camera.disable().catch(() => undefined);

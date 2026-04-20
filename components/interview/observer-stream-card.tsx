@@ -247,10 +247,14 @@ export function ObserverStreamCard({
       }
 
       const payload = (await response.json()) as StreamTokenResponse;
+      // См. avatar-stream-card: переопределяем axios-timeout Stream SDK
+      // с дефолтных 5с на 60с, чтобы observer не падал посреди сессии
+      // сообщением «timeout of 5000ms exceeded».
       const streamClient = new StreamVideoClient({
         apiKey: payload.apiKey,
         token: payload.token,
-        user: payload.user
+        user: payload.user,
+        options: { timeout: 60_000 }
       });
       const streamCall = streamClient.call(payload.callType, payload.callId);
       await streamCall.camera.disable().catch(() => undefined);

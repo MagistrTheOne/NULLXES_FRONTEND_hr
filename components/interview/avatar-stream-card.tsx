@@ -209,10 +209,18 @@ export function AvatarStreamCard({
       }
 
       const payload = (await response.json()) as StreamTokenResponse;
+      // StreamClientOptions extends Partial<AxiosRequestConfig>. Дефолт axios
+      // внутри SDK — timeout=5000мс (см. @stream-io/video-client
+      // index.es.js:«timeout: 5000»). На живом интервью 5с бюджет на HTTP
+      // вызов Stream-API часто не хватает: бизнес-процесс ломается
+      // сообщением «timeout of 5000ms exceeded» посреди диалога.
+      // Переопределяем на 60_000мс — достаточно для любых штатных
+      // coordinator/SFU round-trip даже при плохой сети.
       const streamClient = new StreamVideoClient({
         apiKey: payload.apiKey,
         token: payload.token,
-        user: payload.user
+        user: payload.user,
+        options: { timeout: 60_000 }
       });
       const streamCall = streamClient.call(payload.callType, payload.callId);
       await streamCall.camera.disable().catch(() => undefined);
