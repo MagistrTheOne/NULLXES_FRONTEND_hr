@@ -233,25 +233,23 @@ async function postIntroResponseToRtc(
   // Without it the API silently rejects the update and our instructions never
   // reach the model, leaving the agent stuck on default behaviour.
   //
-  // turn_detection: noise-robust server VAD. We only tune the three core
-  // VAD thresholds (threshold / silence_duration_ms / prefix_padding_ms) —
-  // `create_response` and `interrupt_response` stay on the OpenAI default
-  // (true) because passing them explicitly here has been observed to cause
-  // two `[OpenAI Realtime] error` events immediately after `session.updated`
-  // on the GA endpoint, which also silently drops the `instructions` part of
-  // the same update — and the model falls back to its vanilla "Рад вас
-  // слышать, чем помочь?" greeting instead of the JobAI intro.
+  // ВАЖНО — НЕ трогать состав этого `session.update`. Минимальный рабочий
+  // набор для GA endpoint это ровно `{ type: "realtime", instructions }`.
+  // Любая попытка добавить `turn_detection` (даже с только тремя core VAD
+  // полями, без create_response/interrupt_response) приводит к тому, что
+  // endpoint молча отклоняет ВЕСЬ update (в консоли видны 2 `[OpenAI
+  // Realtime] error` сразу после `session.updated`), и `instructions` в
+  // том же payload тоже теряются. Модель остаётся на дефолтном промпте и
+  // здоровается «Здравствуйте, чем могу помочь?» вместо JobAI-интро.
+  //
+  // Если понадобится тюнинг VAD для шумозащиты — делать это нужно в
+  // initial session config на backend (openaiRealtimeClient POST
+  // /v1/realtime/calls, multipart `session`), а не через runtime update.
   await rtc.postEvent({
     type: "session.update",
     session: {
       type: "realtime",
-      instructions: runtimeInstructions,
-      turn_detection: {
-        type: "server_vad",
-        threshold: 0.6,
-        prefix_padding_ms: 300,
-        silence_duration_ms: 800
-      }
+      instructions: runtimeInstructions
     }
   });
   const openingUtterance = buildOpeningUtterance(effectiveContext, mode);
@@ -745,17 +743,15 @@ export function useInterviewSession() {
                   triggerSource: options?.triggerSource
                 })
               );
+              // See postIntroResponseToRtc above — minimal safe payload only.
+              // Никаких turn_detection на runtime update: endpoint silently
+              // отклонит whole update вместе с instructions, и при reconnect
+              // агент опять уедет в дефолтное приветствие.
               await rtc.postEvent({
                 type: "session.update",
                 session: {
                   type: "realtime",
-                  instructions: runtimeInstructions,
-                  turn_detection: {
-                    type: "server_vad",
-                    threshold: 0.6,
-                    prefix_padding_ms: 300,
-                    silence_duration_ms: 800
-                  }
+                  instructions: runtimeInstructions
                 }
               });
             } catch {
