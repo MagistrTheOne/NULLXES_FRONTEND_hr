@@ -232,11 +232,28 @@ async function postIntroResponseToRtc(
   // OpenAI Realtime GA requires session.type to be set on every session.update.
   // Without it the API silently rejects the update and our instructions never
   // reach the model, leaving the agent stuck on default behaviour.
+  //
+  // turn_detection: noise-robust server VAD tuned for a quiet-ish but not
+  // studio-grade candidate environment (home, cafe, open-office). Defaults in
+  // the OpenAI GA spec are too sensitive — threshold=0.5 and silence_duration=500ms
+  // caused the agent to stop/restart on keyboard clicks, distant TV, and cough.
+  // With threshold=0.6 + silence_duration_ms=800 we ignore short transients the
+  // way consumer assistants (Alice / Google) do, while still reacting quickly
+  // to real speech. prefix_padding keeps the first phoneme of the candidate's
+  // reply from being clipped.
   await rtc.postEvent({
     type: "session.update",
     session: {
       type: "realtime",
-      instructions: runtimeInstructions
+      instructions: runtimeInstructions,
+      turn_detection: {
+        type: "server_vad",
+        threshold: 0.6,
+        prefix_padding_ms: 300,
+        silence_duration_ms: 800,
+        create_response: true,
+        interrupt_response: true
+      }
     }
   });
   const openingUtterance = buildOpeningUtterance(effectiveContext, mode);
@@ -722,7 +739,15 @@ export function useInterviewSession() {
                 type: "session.update",
                 session: {
                   type: "realtime",
-                  instructions: runtimeInstructions
+                  instructions: runtimeInstructions,
+                  turn_detection: {
+                    type: "server_vad",
+                    threshold: 0.6,
+                    prefix_padding_ms: 300,
+                    silence_duration_ms: 800,
+                    create_response: true,
+                    interrupt_response: true
+                  }
                 }
               });
             } catch {

@@ -9,8 +9,17 @@ export type ObserverControlState = {
   updatedAt: string;
 };
 
+/**
+ * Observer is VISIBLE by default since r4. Earlier default was "hidden" which
+ * caused the observer card to auto-skip Stream connection (canConnect=false)
+ * and render an empty "Включите видео чтобы видеть кандидата и агента"
+ * placeholder — users reported this as "observer не грузится, хотя я в сессии".
+ *
+ * Talk stays OFF by default (correct — observer must opt-in to speak so they
+ * don't accidentally blast audio into the interview).
+ */
 const DEFAULT_STATE: ObserverControlState = {
-  visibility: "hidden",
+  visibility: "visible",
   talk: "off",
   updatedAt: ""
 };
