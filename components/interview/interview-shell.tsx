@@ -740,7 +740,8 @@ export function InterviewShell() {
       const parsedId = extractJobAiIdFromEntryUrl(value);
       if (!parsedId) {
         toast.error("Ссылка не распознана", {
-          description: "В URL должен быть параметр jobAiId (число), как в ссылке для кандидата."
+          description:
+            "Ожидается ссылка /join/candidate/<JWT>, /join/spectator/<JWT> или legacy ?jobAiId=<число>."
         });
         return;
       }
