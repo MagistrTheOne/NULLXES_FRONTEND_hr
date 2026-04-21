@@ -39,6 +39,30 @@ export type ObserverConnectionStatus =
   | "error"
   | "idle_hidden";
 
+const OBSERVER_TOKEN_TIMEOUT_MS = 15_000;
+const OBSERVER_JOIN_TIMEOUT_MS = 20_000;
+const OBSERVER_MAX_ATTEMPTS = 2;
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 type ObserverCallBodyProps = {
   localUserId: string;
   onParticipantsDetected?: (hasParticipants: boolean) => void;
@@ -229,46 +253,86 @@ export function ObserverStreamCard({
     setError(null);
     try {
       const observerUserId = `observer-${meetingId}-${sessionSuffixRef.current}`;
-      const response = await fetch("/api/stream/token", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          role: "spectator",
-          meetingId,
-          userId: observerUserId,
-          userName: participantName
-        })
-      });
+      let lastError: Error | null = null;
 
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => ({}))) as { message?: string };
-        throw new Error(payload.message ?? "Failed to issue observer stream token");
+      for (let attempt = 1; attempt <= OBSERVER_MAX_ATTEMPTS; attempt += 1) {
+        let streamClient: StreamVideoClient | null = null;
+        let streamCall: ReturnType<StreamVideoClient["call"]> | null = null;
+        try {
+          const tokenAbort = new AbortController();
+          const abortTimer = setTimeout(() => tokenAbort.abort(), OBSERVER_TOKEN_TIMEOUT_MS);
+          let response: Response;
+          try {
+            response = await fetch("/api/stream/token", {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              signal: tokenAbort.signal,
+              body: JSON.stringify({
+                role: "spectator",
+                meetingId,
+                userId: observerUserId,
+                userName: participantName
+              })
+            });
+          } finally {
+            clearTimeout(abortTimer);
+          }
+
+          if (!response.ok) {
+            const payload = (await response.json().catch(() => ({}))) as { message?: string };
+            throw new Error(payload.message ?? "Failed to issue observer stream token");
+          }
+
+          const payload = (await response.json()) as StreamTokenResponse;
+          // См. avatar-stream-card: переопределяем axios-timeout Stream SDK
+          // с дефолтных 5с на 60с, чтобы observer не падал посреди сессии
+          // сообщением «timeout of 5000ms exceeded».
+          streamClient = new StreamVideoClient({
+            apiKey: payload.apiKey,
+            token: payload.token,
+            user: payload.user,
+            options: { timeout: 60_000 }
+          });
+          streamCall = streamClient.call(payload.callType, payload.callId);
+          await streamCall.camera.disable().catch(() => undefined);
+          await streamCall.microphone.disable().catch(() => undefined);
+          // Allow observer to create the call to avoid race conditions
+          // when spectator joins slightly earlier than candidate/HR.
+          await withTimeout(
+            streamCall.join({ create: true, video: false }),
+            OBSERVER_JOIN_TIMEOUT_MS,
+            "Observer stream join timeout"
+          );
+          await streamCall.camera.disable().catch(() => undefined);
+          await streamCall.microphone.disable().catch(() => undefined);
+
+          setClient(streamClient);
+          setCall(streamCall);
+          setLocalUserId(payload.user.id);
+          setHasParticipants(null);
+          return;
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error("Failed to start observer stream");
+          await streamCall?.leave().catch(() => undefined);
+          await streamClient?.disconnectUser().catch(() => undefined);
+          const lower = lastError.message.toLowerCase();
+          const transient =
+            lower.includes("timeout") ||
+            lower.includes("timed out") ||
+            lower.includes("failed to fetch") ||
+            lower.includes("network") ||
+            lower.includes("abort");
+          if (!transient || attempt >= OBSERVER_MAX_ATTEMPTS) {
+            throw lastError;
+          }
+          await wait(1200);
+        }
       }
 
-      const payload = (await response.json()) as StreamTokenResponse;
-      // См. avatar-stream-card: переопределяем axios-timeout Stream SDK
-      // с дефолтных 5с на 60с, чтобы observer не падал посреди сессии
-      // сообщением «timeout of 5000ms exceeded».
-      const streamClient = new StreamVideoClient({
-        apiKey: payload.apiKey,
-        token: payload.token,
-        user: payload.user,
-        options: { timeout: 60_000 }
-      });
-      const streamCall = streamClient.call(payload.callType, payload.callId);
-      await streamCall.camera.disable().catch(() => undefined);
-      await streamCall.microphone.disable().catch(() => undefined);
-      // Allow observer to create the call to avoid race conditions
-      // when spectator joins slightly earlier than candidate/HR.
-      await streamCall.join({ create: true, video: false });
-      await streamCall.camera.disable().catch(() => undefined);
-      await streamCall.microphone.disable().catch(() => undefined);
-
-      setClient(streamClient);
-      setCall(streamCall);
-      setLocalUserId(payload.user.id);
-      setHasParticipants(null);
+      if (lastError) {
+        throw lastError;
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start observer stream");
       // Let auto-join attempt again on next render cycle after transient failures.
