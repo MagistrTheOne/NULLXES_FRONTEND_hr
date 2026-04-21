@@ -102,6 +102,7 @@ type AvatarStreamCardProps = {
   participantName: string;
   enabled: boolean;
   avatarReady: boolean;
+  telemetryUnavailable?: boolean;
   meetingId: string | null;
   /** Show mic/camera/layout controls from Stream (often includes «video mode»). Default off for HR. */
   showStreamToolbar?: boolean;
@@ -128,6 +129,7 @@ export function AvatarStreamCard({
   participantName,
   enabled,
   avatarReady,
+  telemetryUnavailable = false,
   meetingId,
   showStreamToolbar = false,
   showStatusBadge = true,
@@ -362,7 +364,12 @@ export function AvatarStreamCard({
             <p className="rounded-full bg-black/45 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm">
               {hrStatusLabel}
             </p>
-            {!canRenderAvatarWindow && avatarReady ? (
+            {!canRenderAvatarWindow && telemetryUnavailable ? (
+              <p className="rounded-full bg-black/35 px-3 py-1 text-[11px] text-white/90 backdrop-blur-sm">
+                Телеметрия недоступна, ждём фактический видеопоток
+              </p>
+            ) : null}
+            {!canRenderAvatarWindow && avatarReady && !telemetryUnavailable ? (
               <p className="rounded-full bg-black/35 px-3 py-1 text-[11px] text-white/90 backdrop-blur-sm">
                 Сигнал готовности получен, подключаем поток…
               </p>

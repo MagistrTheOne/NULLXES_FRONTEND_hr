@@ -32,6 +32,31 @@ const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
 
 const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
 
+function stripHtmlTags(input: string): string {
+  return input.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function normalizeSpectatorLoadError(error: unknown): { userMessage: string; technical: string } {
+  const fallback = "Не удалось загрузить собеседование";
+  const raw = error instanceof Error ? error.message : String(error ?? fallback);
+  const stripped = stripHtmlTags(raw);
+  const normalized = stripped.length > 0 ? stripped : fallback;
+  if (isApiRequestError(error)) {
+    if (error.status === 502 || error.status === 503 || error.status === 504) {
+      return {
+        userMessage:
+          "Gateway временно недоступен. Блокер для observer: не удаётся получить meetingId для этой сессии. Обновите страницу через 10-20 секунд.",
+        technical: `gateway_${error.status}: ${normalized}`
+      };
+    }
+    return {
+      userMessage: normalized,
+      technical: `api_${error.status ?? "unknown"}: ${normalized}`
+    };
+  }
+  return { userMessage: normalized, technical: normalized };
+}
+
 /**
  * Маппинг ObserverConnectionStatus (внутренний enum карточки) в публичный
  * VideoConnectionState. Дублирует логику внутри ObserverStreamCard, чтобы
@@ -72,11 +97,13 @@ function SpectatorBody() {
   const [observerStatus, setObserverStatus] = useState<ObserverConnectionStatus>("waiting_meeting");
   const [meetingSummary, setMeetingSummary] = useState<InterviewSummaryPayload | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [technicalError, setTechnicalError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!jobAiId) {
       setDetail(null);
       setError("Некорректный jobAiId");
+      setTechnicalError(null);
       return;
     }
     let cancelled = false;
@@ -89,10 +116,13 @@ function SpectatorBody() {
         if (!cancelled) {
           setDetail(next);
           setError(null);
+          setTechnicalError(null);
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Не удалось загрузить собеседование");
+          const normalized = normalizeSpectatorLoadError(err);
+          setError(normalized.userMessage);
+          setTechnicalError(normalized.technical);
         }
       } finally {
         if (!cancelled) {
@@ -272,6 +302,12 @@ function SpectatorBody() {
                   {SHOW_INTERNAL_DEBUG_UI ? (
                     <p className="sm:col-span-2">
                       jobAiStatus · <span className="font-mono text-[11px] text-slate-700">{detail?.projection.jobAiStatus ?? "—"}</span>
+                    </p>
+                  ) : null}
+                  {technicalError ? (
+                    <p className="sm:col-span-2">
+                      gateway diagnostic ·{" "}
+                      <span className="font-mono text-[11px] text-slate-700 break-all">{technicalError}</span>
                     </p>
                   ) : null}
                 </div>

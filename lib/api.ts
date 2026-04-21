@@ -455,12 +455,27 @@ function postJobAiIngestNotification(id: number, status: string): void {
   if (typeof window === "undefined") {
     return;
   }
+  const correlationId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `ingest-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   void fetch("/api/jobai/ingest", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-correlation-id": correlationId
+    },
     body: JSON.stringify({ id, status }),
     credentials: "same-origin",
-  }).catch(() => {});
+  }).catch((error) => {
+    // eslint-disable-next-line no-console
+    console.warn("[jobai-ingest] fire-and-forget failed", {
+      id,
+      status,
+      correlationId,
+      message: error instanceof Error ? error.message : String(error)
+    });
+  });
 }
 
 export async function updateInterviewStatus(id: number, status: JobAiInterviewStatus): Promise<InterviewDetail> {

@@ -9,6 +9,69 @@ import {
 export const runtime = "nodejs";
 
 const DEFAULT_MODEL = "gpt-4o";
+const FALLBACK_HTTP_STATUS = 206;
+
+type SummaryMode = "real" | "fallback";
+type FallbackReason =
+  | "missing_openai_api_key"
+  | "openai_http_error"
+  | "openai_empty_completion"
+  | "openai_invalid_json"
+  | "openai_request_failed"
+  | "invalid_json_body";
+
+function getCorrelationId(request: NextRequest): string {
+  return request.headers.get("x-correlation-id")?.trim() || crypto.randomUUID();
+}
+
+function jsonWithCorrelation(
+  body: Record<string, unknown>,
+  correlationId: string,
+  status = 200
+): NextResponse {
+  const response = NextResponse.json({ ...body, correlationId }, { status });
+  response.headers.set("x-correlation-id", correlationId);
+  return response;
+}
+
+function fallbackSummaryResponse(params: {
+  correlationId: string;
+  summary: ReturnType<typeof buildInterviewSummaryPayload>;
+  warning: string;
+  fallbackReason: FallbackReason;
+  model?: string;
+  transcriptTurns?: number;
+  detail?: string;
+  message?: string;
+  status?: number;
+}): NextResponse {
+  const {
+    correlationId,
+    summary,
+    warning,
+    fallbackReason,
+    model,
+    transcriptTurns,
+    detail,
+    message,
+    status = FALLBACK_HTTP_STATUS
+  } = params;
+
+  return jsonWithCorrelation(
+    {
+      ai_summary_mode: "fallback" as SummaryMode,
+      warning,
+      fallbackReason,
+      summary,
+      ...(model ? { model } : {}),
+      ...(typeof transcriptTurns === "number" ? { transcriptTurns } : {}),
+      ...(detail ? { detail } : {}),
+      ...(message ? { message } : {})
+    },
+    correlationId,
+    status
+  );
+}
 
 /**
  * NULLXES HR analyst prompt (v2). Решение всегда обязательно — никаких
@@ -129,12 +192,20 @@ function buildUserPayload(input: InterviewSummaryContextInput | null, transcript
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const correlationId = getCorrelationId(request);
   let input: InterviewSummaryContextInput | null = null;
   try {
     const raw = (await request.json()) as InterviewSummaryContextInput | { context?: InterviewSummaryContextInput };
     input = "context" in raw && raw.context ? raw.context : (raw as InterviewSummaryContextInput);
   } catch {
-    return NextResponse.json({ message: "Invalid JSON body" }, { status: 400 });
+    return fallbackSummaryResponse({
+      correlationId,
+      summary: buildInterviewSummaryPayload(null),
+      warning: "summary_input_invalid_json",
+      fallbackReason: "invalid_json_body",
+      message: "Invalid JSON body",
+      status: 400
+    });
   }
 
   const baseline = buildInterviewSummaryPayload(input);
@@ -143,10 +214,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
-    return NextResponse.json({
-      message: "OPENAI_API_KEY is not set; returned deterministic baseline.",
+    console.warn("[interview-summary] fallback missing OPENAI_API_KEY", {
+      correlationId,
+      transcriptTurns: transcript?.length ?? 0
+    });
+    return fallbackSummaryResponse({
+      correlationId,
       summary: baseline,
-      skipped: true,
+      warning: "summary_fallback_missing_openai_api_key",
+      fallbackReason: "missing_openai_api_key",
+      message: "OPENAI_API_KEY is not set; returned deterministic baseline.",
       transcriptTurns: transcript?.length ?? 0
     });
   }
@@ -177,15 +254,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (!completion.ok) {
       const errText = await completion.text().catch(() => "");
-      return NextResponse.json(
-        {
-          message: `OpenAI error ${completion.status}`,
-          detail: errText.slice(0, 500),
-          summary: baseline,
-          model
-        },
-        { status: 200 }
-      );
+      console.warn("[interview-summary] fallback openai http error", {
+        correlationId,
+        model,
+        openaiStatus: completion.status
+      });
+      return fallbackSummaryResponse({
+        correlationId,
+        summary: baseline,
+        warning: "summary_fallback_openai_http_error",
+        fallbackReason: "openai_http_error",
+        message: `OpenAI error ${completion.status}`,
+        detail: errText.slice(0, 500),
+        model,
+        transcriptTurns: transcript?.length ?? 0
+      });
     }
 
     const payload = (await completion.json()) as {
@@ -193,20 +276,62 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     };
     const content = payload.choices?.[0]?.message?.content?.trim();
     if (!content) {
-      return NextResponse.json({ summary: baseline, model, warning: "empty_completion" });
+      console.warn("[interview-summary] fallback empty completion", { correlationId, model });
+      return fallbackSummaryResponse({
+        correlationId,
+        summary: baseline,
+        warning: "summary_fallback_empty_completion",
+        fallbackReason: "openai_empty_completion",
+        model,
+        transcriptTurns: transcript?.length ?? 0
+      });
     }
 
     let draft: unknown;
     try {
       draft = JSON.parse(content) as unknown;
     } catch {
-      return NextResponse.json({ summary: baseline, model, warning: "invalid_json" });
+      console.warn("[interview-summary] fallback invalid json from model", { correlationId, model });
+      return fallbackSummaryResponse({
+        correlationId,
+        summary: baseline,
+        warning: "summary_fallback_invalid_json",
+        fallbackReason: "openai_invalid_json",
+        model,
+        transcriptTurns: transcript?.length ?? 0
+      });
     }
 
     const merged = mergeInterviewSummaryAiDraft(baseline, draft, { model });
-    return NextResponse.json({ summary: merged, model, transcriptTurns: transcript?.length ?? 0 });
+    console.info("[interview-summary] real summary generated", {
+      correlationId,
+      model,
+      transcriptTurns: transcript?.length ?? 0
+    });
+    return jsonWithCorrelation(
+      {
+        ai_summary_mode: "real" as SummaryMode,
+        summary: merged,
+        model,
+        transcriptTurns: transcript?.length ?? 0
+      },
+      correlationId
+    );
   } catch (e) {
     const message = e instanceof Error ? e.message : "OpenAI request failed";
-    return NextResponse.json({ message, summary: baseline, model }, { status: 200 });
+    console.error("[interview-summary] fallback request failed", {
+      correlationId,
+      model,
+      message
+    });
+    return fallbackSummaryResponse({
+      correlationId,
+      summary: baseline,
+      warning: "summary_fallback_openai_request_failed",
+      fallbackReason: "openai_request_failed",
+      message,
+      model,
+      transcriptTurns: transcript?.length ?? 0
+    });
   }
 }

@@ -20,7 +20,10 @@ import { createAgentContextTrace, type AgentContextTrace } from "@/lib/interview
 import { extractCoreFieldsFromInterviewRaw, mergeStartContextWithInterviewDetail } from "@/lib/interview-detail-fields";
 import type { InterviewStartContext } from "@/lib/interview-start-context";
 import type { InterviewSummaryPayload } from "@/lib/interview-summary";
-import { resolveInterviewSummaryPayload } from "@/lib/resolve-interview-summary";
+import {
+  resolveInterviewSummaryPayload,
+  type AiSummaryMode
+} from "@/lib/resolve-interview-summary";
 import { WebRtcInterviewClient, type OpenAiServerEvent, type WebRtcConnectionState } from "@/lib/webrtc-client";
 
 export type InterviewPhase = "idle" | "starting" | "connected" | "stopping" | "failed";
@@ -49,6 +52,12 @@ export type TranscriptTurn = {
   text: string;
   ts: number;
   itemId?: string;
+};
+export type InterviewDegradationState = {
+  aiSummaryFallback: boolean;
+  aiSummaryWarning?: string;
+  aiSummaryCorrelationId?: string;
+  telemetryUnavailable: boolean;
 };
 
 export type LiveCaptions = {
@@ -226,7 +235,11 @@ type IntroMode = "first" | "reconnect";
 async function postIntroResponseToRtc(
   rtc: WebRtcInterviewClient,
   effectiveContext: InterviewStartContext | undefined,
-  mode: IntroMode = "first"
+  mode: IntroMode = "first",
+  gateOptions?: {
+    getSessionUpdatedVersion: () => number;
+    waitForSessionUpdatedAck: (previousVersion: number, timeoutMs: number) => Promise<boolean>;
+  }
 ): Promise<void> {
   const runtimeInstructions = buildInterviewInstructions(effectiveContext);
   // OpenAI Realtime GA requires session.type to be set on every session.update.
@@ -245,21 +258,35 @@ async function postIntroResponseToRtc(
   // Если понадобится тюнинг VAD для шумозащиты — делать это нужно в
   // initial session config на backend (openaiRealtimeClient POST
   // /v1/realtime/calls, multipart `session`), а не через runtime update.
-  await rtc.postEvent({
+  const sessionUpdatePayload = {
     type: "session.update",
     session: {
       type: "realtime",
       instructions: runtimeInstructions
     }
-  });
+  } as const;
 
-  // Короткая пауза между session.update и response.create. Без неё на GA
-  // endpoint агент иногда ждёт первого `input_audio` от кандидата перед тем
-  // как озвучить intro — потому что `response.create` прилетает раньше, чем
-  // сервер подтвердил `session.updated`, и уходит в конец очереди. 800мс
-  // достаточно чтобы session.updated долетел в 99% случаев, но визуально
-  // почти неощутимо для пользователя (по ТЗ клиента: «сразу или 1–2 сек»).
-  await new Promise((resolve) => setTimeout(resolve, 800));
+  if (!gateOptions) {
+    await rtc.postEvent(sessionUpdatePayload);
+  } else {
+    const MAX_ATTEMPTS = 3;
+    const ACK_TIMEOUT_MS = 1800;
+    let acked = false;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      const previousVersion = gateOptions.getSessionUpdatedVersion();
+      await rtc.postEvent(sessionUpdatePayload);
+      acked = await gateOptions.waitForSessionUpdatedAck(previousVersion, ACK_TIMEOUT_MS);
+      if (acked) {
+        break;
+      }
+      // eslint-disable-next-line no-console
+      console.warn(`[interview] session.update ACK timeout (attempt ${attempt}/${MAX_ATTEMPTS})`);
+    }
+    if (!acked) {
+      // eslint-disable-next-line no-console
+      console.warn("[interview] proceeding with response.create without confirmed session.updated ACK");
+    }
+  }
 
   const openingUtterance = buildOpeningUtterance(effectiveContext, mode);
   const hasGreetingSpeech = Boolean(effectiveContext?.greetingSpeech?.trim());
@@ -336,6 +363,10 @@ export function useInterviewSession() {
   const [runtimeRecoveryState, setRuntimeRecoveryState] = useState<RuntimeRecoveryState>("idle");
   const [activeInterviewId, setActiveInterviewId] = useState<number | null>(null);
   const [lastInterviewSummary, setLastInterviewSummary] = useState<InterviewSummaryPayload | null>(null);
+  const [lastSummaryMode, setLastSummaryMode] = useState<AiSummaryMode>("real");
+  const [lastSummaryWarning, setLastSummaryWarning] = useState<string | undefined>(undefined);
+  const [lastSummaryCorrelationId, setLastSummaryCorrelationId] = useState<string | undefined>(undefined);
+  const [telemetryUnavailable, setTelemetryUnavailable] = useState(false);
 
   // Phase indicator (B), agent state (C), live captions (F.3)
   const [flowPhase, setFlowPhase] = useState<InterviewFlowPhase>("lobby");
@@ -355,6 +386,10 @@ export function useInterviewSession() {
   const reconnectAttemptForSessionRef = useRef<string | null>(null);
   const avatarPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastInterviewContextRef = useRef<InterviewStartContext | null>(null);
+  const sessionUpdatedVersionRef = useRef(0);
+  const pendingSessionUpdatedWaitersRef = useRef<
+    Array<{ previousVersion: number; resolve: (acked: boolean) => void }>
+  >([]);
 
   // Transcript collection (F.2). We use refs so accumulation does not trigger
   // re-renders on every audio-transcript delta — only the captions state does.
@@ -366,6 +401,43 @@ export function useInterviewSession() {
     agent: null,
     candidate: null
   });
+  const getSessionUpdatedVersion = useCallback(() => sessionUpdatedVersionRef.current, []);
+  const flushSessionUpdatedWaiters = useCallback((acked: boolean) => {
+    if (pendingSessionUpdatedWaitersRef.current.length === 0) {
+      return;
+    }
+    const waiters = pendingSessionUpdatedWaitersRef.current.splice(0, pendingSessionUpdatedWaitersRef.current.length);
+    for (const waiter of waiters) {
+      waiter.resolve(acked);
+    }
+  }, []);
+  const waitForSessionUpdatedAck = useCallback(
+    (previousVersion: number, timeoutMs: number): Promise<boolean> => {
+      if (sessionUpdatedVersionRef.current > previousVersion) {
+        return Promise.resolve(true);
+      }
+      return new Promise<boolean>((resolve) => {
+        const waiter = {
+          previousVersion,
+          resolve: (acked: boolean) => resolve(acked)
+        };
+        pendingSessionUpdatedWaitersRef.current.push(waiter);
+        const timer = setTimeout(() => {
+          const idx = pendingSessionUpdatedWaitersRef.current.indexOf(waiter);
+          if (idx >= 0) {
+            pendingSessionUpdatedWaitersRef.current.splice(idx, 1);
+          }
+          resolve(false);
+        }, timeoutMs);
+        const originalResolve = waiter.resolve;
+        waiter.resolve = (acked: boolean) => {
+          clearTimeout(timer);
+          originalResolve(acked);
+        };
+      });
+    },
+    []
+  );
 
   /**
    * Reducer over the OpenAI Realtime DataChannel event stream. Drives:
@@ -469,7 +541,21 @@ export function useInterviewSession() {
       return;
     }
 
-    if (type === "session.created" || type === "session.updated") {
+    if (type === "session.updated") {
+      sessionUpdatedVersionRef.current += 1;
+      if (pendingSessionUpdatedWaitersRef.current.length > 0) {
+        const waiters = pendingSessionUpdatedWaitersRef.current.splice(
+          0,
+          pendingSessionUpdatedWaitersRef.current.length
+        );
+        for (const waiter of waiters) {
+          waiter.resolve(sessionUpdatedVersionRef.current > waiter.previousVersion);
+        }
+      }
+      return;
+    }
+
+    if (type === "session.created") {
       // Session is live but agent has not yet generated greeting.
       // We promote lobby → intro on the FIRST response.created (above).
       return;
@@ -539,6 +625,7 @@ export function useInterviewSession() {
     if (!sessionId || phase !== "connected") {
       queueMicrotask(() => {
         setAvatarReady(false);
+        setTelemetryUnavailable(false);
       });
       if (avatarPollTimerRef.current) {
         clearInterval(avatarPollTimerRef.current);
@@ -555,6 +642,7 @@ export function useInterviewSession() {
         const counts = state.session.eventTypeCounts ?? {};
         const isReady = AVATAR_READY_EVENT_TYPES.some((type) => (counts[type] ?? 0) > 0);
         if (!cancelled) {
+          setTelemetryUnavailable(false);
           setAvatarReady(isReady);
           if (isReady && avatarPollTimerRef.current) {
             clearInterval(avatarPollTimerRef.current);
@@ -570,13 +658,15 @@ export function useInterviewSession() {
           console.warn(
             "[interview] getRealtimeSessionState: upstream 404 — на gateway нет GET /realtime/session/:id; опрос avatar_ready отключён, WebRTC не страдает."
           );
-          setAvatarReady(true);
+          setTelemetryUnavailable(true);
+          setAvatarReady(false);
           if (avatarPollTimerRef.current) {
             clearInterval(avatarPollTimerRef.current);
             avatarPollTimerRef.current = null;
           }
           return;
         }
+        setTelemetryUnavailable(false);
         setAvatarReady(false);
       }
     };
@@ -682,7 +772,10 @@ export function useInterviewSession() {
                       triggerSource: "webrtc_restore"
                     })
                   );
-                  await postIntroResponseToRtc(rtc, effectiveContext, "reconnect");
+                  await postIntroResponseToRtc(rtc, effectiveContext, "reconnect", {
+                    getSessionUpdatedVersion,
+                    waitForSessionUpdatedAck
+                  });
                 }
               }
             } catch (introErr) {
@@ -711,7 +804,16 @@ export function useInterviewSession() {
     return () => {
       cancelled = true;
     };
-  }, [activeInterviewId, ensureClient, meetingId, phase, runtimeRecoveryState, sessionId]);
+  }, [
+    activeInterviewId,
+    ensureClient,
+    getSessionUpdatedVersion,
+    meetingId,
+    phase,
+    runtimeRecoveryState,
+    sessionId,
+    waitForSessionUpdatedAck
+  ]);
 
   const start = useCallback(async (options?: StartOptions): Promise<InterviewStartResult> => {
     if (phase === "connected" && meetingId && sessionId) {
@@ -842,6 +944,12 @@ export function useInterviewSession() {
     setError(null);
     setRuntimeRecoveryState("idle");
     setLastInterviewSummary(null);
+    setLastSummaryMode("real");
+    setLastSummaryWarning(undefined);
+    setLastSummaryCorrelationId(undefined);
+    setTelemetryUnavailable(false);
+    sessionUpdatedVersionRef.current = 0;
+    flushSessionUpdatedWaiters(false);
     // Reset flow / agent / transcript state — fresh interview from scratch.
     setFlowPhase("intro");
     setAgentState("idle");
@@ -907,7 +1015,10 @@ export function useInterviewSession() {
           triggerSource
         })
       );
-      await postIntroResponseToRtc(rtc, effectiveContext);
+      await postIntroResponseToRtc(rtc, effectiveContext, "first", {
+        getSessionUpdatedVersion,
+        waitForSessionUpdatedAck
+      });
 
       setPhase("connected");
       setRuntimeRecoveryState("idle");
@@ -931,7 +1042,7 @@ export function useInterviewSession() {
       }
       throw startError;
     }
-  }, [ensureClient, meetingId, phase, sessionId]);
+  }, [ensureClient, flushSessionUpdatedWaiters, getSessionUpdatedVersion, meetingId, phase, sessionId, waitForSessionUpdatedAck]);
 
   const stop = useCallback(async (options?: { interviewId?: number }) => {
     if (!meetingId) {
@@ -957,8 +1068,12 @@ export function useInterviewSession() {
       }
 
       const collectedTranscripts = transcriptsRef.current.slice();
-      const summaryPayload = await resolveInterviewSummaryPayload(summaryInput, collectedTranscripts);
+      const summaryResult = await resolveInterviewSummaryPayload(summaryInput, collectedTranscripts);
+      const summaryPayload = summaryResult.summary;
       setLastInterviewSummary(summaryPayload);
+      setLastSummaryMode(summaryResult.aiSummaryMode);
+      setLastSummaryWarning(summaryResult.warning);
+      setLastSummaryCorrelationId(summaryResult.correlationId);
       setFlowPhase("closing");
 
       if (activeSessionId) {
@@ -1036,7 +1151,10 @@ export function useInterviewSession() {
       setActiveInterviewId(null);
       lastInterviewContextRef.current = null;
       setAvatarReady(false);
+      setTelemetryUnavailable(false);
       setAgentInputEnabled(true);
+      sessionUpdatedVersionRef.current = 0;
+      flushSessionUpdatedWaiters(false);
       setFlowPhase("completed");
       setAgentState("idle");
       setLatestCaptions({});
@@ -1045,7 +1163,7 @@ export function useInterviewSession() {
       setPhase("failed");
       setError(err instanceof Error ? err.message : "Failed to stop session");
     }
-  }, [activeInterviewId, meetingId, sessionId]);
+  }, [activeInterviewId, flushSessionUpdatedWaiters, meetingId, sessionId]);
 
   const markFailed = useCallback(async () => {
     if (!meetingId) {
@@ -1058,6 +1176,16 @@ export function useInterviewSession() {
     setRuntimeRecoveryState("idle");
     setPhase("failed");
   }, [meetingId]);
+
+  const degradationState = useMemo<InterviewDegradationState>(
+    () => ({
+      aiSummaryFallback: lastSummaryMode === "fallback",
+      aiSummaryWarning: lastSummaryWarning,
+      aiSummaryCorrelationId: lastSummaryCorrelationId,
+      telemetryUnavailable
+    }),
+    [lastSummaryCorrelationId, lastSummaryMode, lastSummaryWarning, telemetryUnavailable]
+  );
 
   const statusLabel = useMemo(() => {
     if (runtimeRecoveryState === "recovering") return "Recovering runtime";
@@ -1074,8 +1202,9 @@ export function useInterviewSession() {
       const timers = captionFadeTimerRef.current;
       if (timers.agent) clearTimeout(timers.agent);
       if (timers.candidate) clearTimeout(timers.candidate);
+      flushSessionUpdatedWaiters(false);
     };
-  }, []);
+  }, [flushSessionUpdatedWaiters]);
 
   return {
     phase,
@@ -1083,6 +1212,7 @@ export function useInterviewSession() {
     meetingId,
     sessionId,
     avatarReady,
+    degradationState,
     lastInterviewSummary,
     lastAgentContextTrace,
     rtcState,

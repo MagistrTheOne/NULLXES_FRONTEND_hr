@@ -146,6 +146,7 @@ export function InterviewShell() {
     meetingId,
     sessionId,
     avatarReady,
+    degradationState,
     statusLabel,
     phase,
     error,
@@ -388,6 +389,15 @@ export function InterviewShell() {
       });
     }
   }, [connectionQuality]);
+
+  const unifiedDegradationState = useMemo(
+    () => ({
+      stream_down: connectionQuality?.quality === "offline" || connectionQuality?.quality === "reconnecting",
+      ai_summary_fallback: degradationState.aiSummaryFallback,
+      telemetry_unavailable: degradationState.telemetryUnavailable
+    }),
+    [connectionQuality?.quality, degradationState.aiSummaryFallback, degradationState.telemetryUnavailable]
+  );
 
   const candidateFio = useMemo(() => {
     const sourceFullName = selectedInterviewDetailMatched?.prototypeCandidate?.sourceFullName?.trim();
@@ -1095,6 +1105,23 @@ export function InterviewShell() {
             Восстанавливаем runtime после обновления страницы. Подключение может занять несколько секунд.
           </p>
         ) : null}
+        {unifiedDegradationState.telemetry_unavailable ? (
+          <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-sm">
+            telemetry_unavailable: endpoint телеметрии аватара временно недоступен, показываем только фактическое состояние видеопотока.
+          </p>
+        ) : null}
+        {unifiedDegradationState.ai_summary_fallback ? (
+          <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-sm">
+            ai_summary_fallback: итог сессии рассчитан по baseline без подтверждённого AI-обогащения.
+            {degradationState.aiSummaryWarning ? ` warning=${degradationState.aiSummaryWarning}.` : ""}
+            {degradationState.aiSummaryCorrelationId ? ` correlationId=${degradationState.aiSummaryCorrelationId}.` : ""}
+          </p>
+        ) : null}
+        {unifiedDegradationState.stream_down ? (
+          <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-800 shadow-sm">
+            stream_down: видеоканал нестабилен, возможны задержки или кратковременный разрыв потока.
+          </p>
+        ) : null}
         {SHOW_INTERNAL_DEBUG_UI && candidateAdmissionError ? (
           <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 shadow-sm">
             {candidateAdmissionError}
@@ -1178,7 +1205,13 @@ export function InterviewShell() {
           <section className="grid gap-3 md:grid-cols-2">
             <div className="rounded-xl border border-slate-200 bg-white/70 px-4 py-3 text-sm text-slate-700 shadow-sm">
               <p className="font-medium text-slate-800">Сигнал HR-аватара</p>
-              <p className="mt-1">{avatarReady ? "avatar_ready получен" : "avatar_ready пока не получен"}</p>
+              <p className="mt-1">
+                {degradationState.telemetryUnavailable
+                  ? "telemetry_unavailable (статус готовности берём только из фактического потока)"
+                  : avatarReady
+                    ? "avatar_ready получен"
+                    : "avatar_ready пока не получен"}
+              </p>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white/70 px-4 py-3 text-sm text-slate-700 shadow-sm">
               <p className="font-medium text-slate-800">Контекст для агента</p>
@@ -1278,6 +1311,7 @@ export function InterviewShell() {
             participantName="HR ассистент"
             enabled={streamSurfaceEnabled}
             avatarReady={avatarReady}
+            telemetryUnavailable={degradationState.telemetryUnavailable}
             meetingId={recoveredMeetingId}
             showStreamToolbar={false}
             showStatusBadge
