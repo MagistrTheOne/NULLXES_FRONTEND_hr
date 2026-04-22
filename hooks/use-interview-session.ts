@@ -386,6 +386,8 @@ export function useInterviewSession() {
   const reconnectAttemptForSessionRef = useRef<string | null>(null);
   const avatarPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastInterviewContextRef = useRef<InterviewStartContext | null>(null);
+  const activeSessionIdRef = useRef<string | null>(null);
+  const agentStateRef = useRef<AgentState>("idle");
   const sessionUpdatedVersionRef = useRef(0);
   const pendingSessionUpdatedWaitersRef = useRef<
     Array<{ previousVersion: number; resolve: (acked: boolean) => void }>
@@ -397,6 +399,13 @@ export function useInterviewSession() {
   const agentTranscriptBufferRef = useRef<Map<string, string>>(new Map());
   const greetingDoneRef = useRef(false);
   const lastResponseIdRef = useRef<string | null>(null);
+  const pendingCancelRef = useRef<{
+    requestId: string;
+    requestedAtMs: number;
+    reason: "manual_stop" | "barge_in";
+    responseId: string | null;
+  } | null>(null);
+  const cancelAckTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const captionFadeTimerRef = useRef<{ agent: ReturnType<typeof setTimeout> | null; candidate: ReturnType<typeof setTimeout> | null }>({
     agent: null,
     candidate: null
@@ -438,6 +447,17 @@ export function useInterviewSession() {
     },
     []
   );
+  const emitFrontendTelemetry = useCallback((type: string, payload: Record<string, unknown>) => {
+    const sid = activeSessionIdRef.current;
+    if (!sid) {
+      return;
+    }
+    void sendRealtimeEvent(sid, {
+      type,
+      source: "frontend",
+      ...payload
+    }).catch(() => undefined);
+  }, []);
 
   /**
    * Reducer over the OpenAI Realtime DataChannel event stream. Drives:
@@ -518,11 +538,48 @@ export function useInterviewSession() {
     }
 
     if (type === "input_audio_buffer.speech_started") {
+      if (agentStateRef.current === "speaking") {
+        const requestId =
+          typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `barge-${Date.now()}`;
+        const now = Date.now();
+        pendingCancelRef.current = {
+          requestId,
+          requestedAtMs: now,
+          reason: "barge_in",
+          responseId: lastResponseIdRef.current
+        };
+        emitFrontendTelemetry("agent.cancel.requested", {
+          requestId,
+          reason: "barge_in",
+          responseId: lastResponseIdRef.current,
+          requestedAtMs: now
+        });
+      }
       setAgentState("listening");
       return;
     }
 
     if (type === "response.done") {
+      if (pendingCancelRef.current) {
+        const pending = pendingCancelRef.current;
+        const ackAtMs = Date.now();
+        if (cancelAckTimeoutRef.current) {
+          clearTimeout(cancelAckTimeoutRef.current);
+          cancelAckTimeoutRef.current = null;
+        }
+        emitFrontendTelemetry("agent.cancel.acknowledged", {
+          requestId: pending.requestId,
+          reason: pending.reason,
+          ackType: "response.done",
+          responseId: pending.responseId,
+          requestedAtMs: pending.requestedAtMs,
+          ackAtMs,
+          latencyMs: ackAtMs - pending.requestedAtMs
+        });
+        pendingCancelRef.current = null;
+      }
       setAgentState("listening");
       // First response.done = end of greeting → switch to questions phase.
       // Subsequent ones are answers to interview questions; count them.
@@ -537,6 +594,24 @@ export function useInterviewSession() {
     }
 
     if (type === "response.cancelled") {
+      if (pendingCancelRef.current) {
+        const pending = pendingCancelRef.current;
+        const ackAtMs = Date.now();
+        if (cancelAckTimeoutRef.current) {
+          clearTimeout(cancelAckTimeoutRef.current);
+          cancelAckTimeoutRef.current = null;
+        }
+        emitFrontendTelemetry("agent.cancel.acknowledged", {
+          requestId: pending.requestId,
+          reason: pending.reason,
+          ackType: "response.cancelled",
+          responseId: pending.responseId,
+          requestedAtMs: pending.requestedAtMs,
+          ackAtMs,
+          latencyMs: ackAtMs - pending.requestedAtMs
+        });
+        pendingCancelRef.current = null;
+      }
       setAgentState("listening");
       return;
     }
@@ -560,7 +635,7 @@ export function useInterviewSession() {
       // We promote lobby → intro on the FIRST response.created (above).
       return;
     }
-  }, []);
+  }, [emitFrontendTelemetry]);
 
   /** Throttled caption updater — drops "blink" effect on rapid deltas. */
   const scheduleCaptionUpdate = (role: "agent" | "candidate", text: string) => {
@@ -620,6 +695,14 @@ export function useInterviewSession() {
     },
     [ensureClient]
   );
+
+  useEffect(() => {
+    activeSessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
+    agentStateRef.current = agentState;
+  }, [agentState]);
 
   useEffect(() => {
     if (!sessionId || phase !== "connected") {
@@ -1092,6 +1175,39 @@ export function useInterviewSession() {
         // closed below — user perceives "Завершить" as not stopping the agent.
         // response.cancel is a real OpenAI client event (see whitelist in
         // webrtc-client.ts). It's a no-op if no response is in flight.
+        const cancelRequestId =
+          typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `stop-${Date.now()}`;
+        const cancelRequestedAtMs = Date.now();
+        pendingCancelRef.current = {
+          requestId: cancelRequestId,
+          requestedAtMs: cancelRequestedAtMs,
+          reason: "manual_stop",
+          responseId: lastResponseIdRef.current
+        };
+        emitFrontendTelemetry("agent.cancel.requested", {
+          requestId: cancelRequestId,
+          reason: "manual_stop",
+          responseId: lastResponseIdRef.current,
+          requestedAtMs: cancelRequestedAtMs
+        });
+        if (cancelAckTimeoutRef.current) {
+          clearTimeout(cancelAckTimeoutRef.current);
+          cancelAckTimeoutRef.current = null;
+        }
+        cancelAckTimeoutRef.current = setTimeout(() => {
+          if (pendingCancelRef.current?.requestId !== cancelRequestId) {
+            return;
+          }
+          emitFrontendTelemetry("agent.cancel.ack_timeout", {
+            requestId: cancelRequestId,
+            reason: "manual_stop",
+            responseId: lastResponseIdRef.current,
+            requestedAtMs: cancelRequestedAtMs,
+            timeoutMs: 2500
+          });
+        }, 2500);
         await rtc
           .postEvent({
             type: "response.cancel"
@@ -1155,15 +1271,24 @@ export function useInterviewSession() {
       setAgentInputEnabled(true);
       sessionUpdatedVersionRef.current = 0;
       flushSessionUpdatedWaiters(false);
+      pendingCancelRef.current = null;
+      if (cancelAckTimeoutRef.current) {
+        clearTimeout(cancelAckTimeoutRef.current);
+        cancelAckTimeoutRef.current = null;
+      }
       setFlowPhase("completed");
       setAgentState("idle");
       setLatestCaptions({});
       setPhase("idle");
     } catch (err) {
+      if (cancelAckTimeoutRef.current) {
+        clearTimeout(cancelAckTimeoutRef.current);
+        cancelAckTimeoutRef.current = null;
+      }
       setPhase("failed");
       setError(err instanceof Error ? err.message : "Failed to stop session");
     }
-  }, [activeInterviewId, flushSessionUpdatedWaiters, meetingId, sessionId]);
+  }, [activeInterviewId, emitFrontendTelemetry, flushSessionUpdatedWaiters, meetingId, sessionId]);
 
   const markFailed = useCallback(async () => {
     if (!meetingId) {
@@ -1202,6 +1327,10 @@ export function useInterviewSession() {
       const timers = captionFadeTimerRef.current;
       if (timers.agent) clearTimeout(timers.agent);
       if (timers.candidate) clearTimeout(timers.candidate);
+      if (cancelAckTimeoutRef.current) {
+        clearTimeout(cancelAckTimeoutRef.current);
+        cancelAckTimeoutRef.current = null;
+      }
       flushSessionUpdatedWaiters(false);
     };
   }, [flushSessionUpdatedWaiters]);
