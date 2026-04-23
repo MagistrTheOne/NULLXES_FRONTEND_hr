@@ -41,7 +41,8 @@ export type ObserverConnectionStatus =
 
 const OBSERVER_TOKEN_TIMEOUT_MS = 15_000;
 const OBSERVER_JOIN_TIMEOUT_MS = 20_000;
-const OBSERVER_MAX_ATTEMPTS = 2;
+const OBSERVER_MAX_ATTEMPTS = 4;
+const OBSERVER_RETRY_BACKOFF_MS = 800;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -280,7 +281,10 @@ export function ObserverStreamCard({
           }
 
           if (!response.ok) {
-            const payload = (await response.json().catch(() => ({}))) as { message?: string };
+            const payload = (await response.json().catch(() => ({}))) as { message?: string; code?: string };
+            if (response.status === 409 && payload.code === "meeting.not_active") {
+              throw new Error("meeting.not_active");
+            }
             throw new Error(payload.message ?? "Failed to issue observer stream token");
           }
 
@@ -322,11 +326,17 @@ export function ObserverStreamCard({
             lower.includes("timed out") ||
             lower.includes("failed to fetch") ||
             lower.includes("network") ||
-            lower.includes("abort");
+            lower.includes("abort") ||
+            lower.includes("meeting.not_active") ||
+            lower.includes("сессия не активна");
           if (!transient || attempt >= OBSERVER_MAX_ATTEMPTS) {
+            if (lower.includes("meeting.not_active") || lower.includes("сессия не активна")) {
+              throw new Error("Сессия еще запускается. Повторите подключение через 2-3 секунды.");
+            }
             throw lastError;
           }
-          await wait(1200);
+          const backoffMs = OBSERVER_RETRY_BACKOFF_MS * 2 ** (attempt - 1);
+          await wait(backoffMs);
         }
       }
 
