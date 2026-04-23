@@ -639,6 +639,8 @@ export function InterviewShell() {
   const duplicateJobAiIds = useMemo(() => {
     const byFingerprint = new Map<string, number[]>();
     for (const row of rows) {
+      const meetingAtTs = row.meetingAt ? new Date(row.meetingAt).getTime() : NaN;
+      const meetingAtFingerprint = Number.isFinite(meetingAtTs) ? new Date(meetingAtTs).toISOString() : "";
       const firstName = safeText((row as { candidateFirstName?: unknown }).candidateFirstName);
       const lastName = safeText((row as { candidateLastName?: unknown }).candidateLastName);
       const legacyCandidate = safeText((row as { candidateName?: unknown }).candidateName);
@@ -647,7 +649,7 @@ export function InterviewShell() {
         firstName || legacyCandidate,
         lastName,
         companyName,
-        new Date(row.meetingAt).toISOString()
+        meetingAtFingerprint
       ]
         .map((part) => part.toLowerCase())
         .join("|");
