@@ -255,6 +255,33 @@ function normalizePromptRuntimeOverrides(overrides?: PromptRuntimeOverrides): Pr
   return normalized.mainPrompt || normalized.idkAnswers?.length ? normalized : null;
 }
 
+const MAIN_PROMPT_TEMPLATE_KEYS = new Set([
+  "candidate_full_name",
+  "candidate_first_name",
+  "candidate_last_name",
+  "company_name",
+  "job_title",
+  "vacancy_text",
+  "specialty_name",
+  "questions_block",
+  "greeting_speech",
+  "final_speech",
+  "idk_answers_block"
+]);
+
+function renderMainPromptTemplate(
+  template: string,
+  vars: Record<string, string>
+): string {
+  return template.replace(/\{\{\s*([a-z0-9_]+)\s*\}\}/gi, (full, keyRaw) => {
+    const key = String(keyRaw).toLowerCase();
+    if (!MAIN_PROMPT_TEMPLATE_KEYS.has(key)) {
+      return full;
+    }
+    return vars[key] ?? "";
+  });
+}
+
 export function buildInterviewInstructions(
   context?: InterviewStartContext,
   runtimeOverrides?: PromptRuntimeOverrides
@@ -332,6 +359,46 @@ export function buildInterviewInstructions(
       ? "- Имя кандидата не передано: обращайся нейтрально («скажите, пожалуйста», «подскажите»), не выдумывай ФИО."
       : `- Имя кандидата: ${candidateFullName}. Используй его умеренно (1–2 раза за интервью), не «давите именем».`
   ].join("\n");
+
+  if (runtimeMainPrompt) {
+    const templateVars: Record<string, string> = {
+      candidate_full_name: candidateFullName,
+      candidate_first_name: context?.candidateFirstName?.trim() || "",
+      candidate_last_name: context?.candidateLastName?.trim() || "",
+      company_name: company,
+      job_title: jobTitle,
+      vacancy_text: vacancyForModel || "",
+      specialty_name: specialtyName || "",
+      questions_block: questions || "Вопросы для интервью не предоставлены.",
+      greeting_speech: greeting,
+      final_speech: finalSpeech,
+      idk_answers_block:
+        runtimeIdkAnswers.length > 0
+          ? runtimeIdkAnswers.map((answer, idx) => `${idx + 1}. ${answer}`).join("\n")
+          : ""
+    };
+    const renderedMainPrompt = renderMainPromptTemplate(runtimeMainPrompt, templateVars).trim();
+    if (renderedMainPrompt) {
+      return [
+        "# Runtime mainPrompt (primary)",
+        renderedMainPrompt,
+        "",
+        "# Runtime safety context",
+        `Кандидат: ${candidateFullName}`,
+        `Компания: ${company}`,
+        `Должность: ${jobTitle}`,
+        specialtyName ? `Специальность: ${specialtyName}` : "",
+        vacancyForModel
+          ? `Описание вакансии (из API):\n${vacancyForModel}`
+          : "Описание вакансии: не предоставлено",
+        questions ? `Вопросы (order):\n${questions}` : "Вопросы: не предоставлены",
+        `Приветствие (JobAI):\n${greeting}`,
+        `Финальная фраза (JobAI):\n${finalSpeech}`
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+    }
+  }
 
   return [
     "# Роль и задача",
