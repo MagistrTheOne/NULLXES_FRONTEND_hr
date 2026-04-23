@@ -154,6 +154,9 @@ export function InterviewShell() {
     setObserverTalkIsolation,
     hydrateActiveSession,
     runtimeRecoveryState,
+    promptSettingsSource,
+    promptSettingsLastStatus,
+    promptSettingsLastError,
     lastInterviewSummary,
     lastAgentContextTrace,
     flowPhase,
@@ -1221,6 +1224,11 @@ export function InterviewShell() {
                 {contextReadiness.vacancyTextReady ? "✅" : "⬜"} Вакансия ·{" "}
                 {contextReadiness.companyReady ? "✅" : "⬜"} Компания ·{" "}
                 {contextReadiness.questionsReady ? "✅" : "⬜"} Вопросы ({contextReadiness.questionsCount})
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                settings_source={promptSettingsSource}
+                {typeof promptSettingsLastStatus === "number" ? ` · settings_status=${promptSettingsLastStatus}` : ""}
+                {promptSettingsLastError ? ` · settings_error=${promptSettingsLastError}` : ""}
               </p>
             </div>
             {lastAgentContextTrace?.diagnostics ? (

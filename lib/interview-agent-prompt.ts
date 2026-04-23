@@ -1,6 +1,11 @@
 import { truncateVacancyForContext } from "@/lib/interview-summary";
 import type { InterviewStartContext } from "@/lib/interview-start-context";
 
+export type PromptRuntimeOverrides = {
+  mainPrompt?: string;
+  idkAnswers?: string[];
+};
+
 /** Одна фраза самопрезентации перед приветствием JobAI (устная речь). */
 export const AGENT_SELF_INTRO = "Я HR аватар, провожу это собеседование.";
 
@@ -230,7 +235,30 @@ export function buildAdaptiveInterviewerContract(options: {
   ].join("\n");
 }
 
-export function buildInterviewInstructions(context?: InterviewStartContext): string {
+function normalizePromptRuntimeOverrides(overrides?: PromptRuntimeOverrides): PromptRuntimeOverrides | null {
+  if (!overrides) {
+    return null;
+  }
+  const normalized: PromptRuntimeOverrides = {};
+  if (typeof overrides.mainPrompt === "string") {
+    const mainPrompt = overrides.mainPrompt.trim();
+    if (mainPrompt) {
+      normalized.mainPrompt = mainPrompt;
+    }
+  }
+  if (Array.isArray(overrides.idkAnswers)) {
+    const idkAnswers = overrides.idkAnswers.map((item) => item.trim()).filter(Boolean);
+    if (idkAnswers.length > 0) {
+      normalized.idkAnswers = idkAnswers;
+    }
+  }
+  return normalized.mainPrompt || normalized.idkAnswers?.length ? normalized : null;
+}
+
+export function buildInterviewInstructions(
+  context?: InterviewStartContext,
+  runtimeOverrides?: PromptRuntimeOverrides
+): string {
   const candidateFullName = getCandidateDisplayName(context);
   const company = context?.companyName?.trim() || "компания не указана";
   const jobTitle = context?.jobTitle?.trim() || "должность не указана";
@@ -287,6 +315,9 @@ export function buildInterviewInstructions(context?: InterviewStartContext): str
     sortedOrders,
     questionCount: sortedQs.length
   });
+  const normalizedOverrides = normalizePromptRuntimeOverrides(runtimeOverrides);
+  const runtimeMainPrompt = normalizedOverrides?.mainPrompt;
+  const runtimeIdkAnswers = normalizedOverrides?.idkAnswers ?? [];
 
   const candidateNameMissing = candidateFullName === "кандидат";
   const sanityCheck = [
@@ -354,6 +385,20 @@ export function buildInterviewInstructions(context?: InterviewStartContext): str
     "Поля «Компания», «Должность», «Специальность», «Описание вакансии» и список вопросов — ровно то, что пришло из HR-системы для этой сессии. Не подменяй их общими знаниями о рынке, городе, бренде или «типичной» вакансии с таким названием.",
     "Используй только контекст ниже; не придумывай новые факты и не меняй компанию/должность/имя кандидата.",
     "Если кандидат спрашивает «по какому собеседованию мы проводимся?», отвечай строго: должность + компания + имя кандидата (+ специальность из поля ниже, если есть).",
+    runtimeMainPrompt
+      ? [
+          "# Дополнительные правила из JobAI settings (runtime)",
+          "Применяй правила ниже как дополнительный policy-блок. Если есть конфликт, приоритет у более строгого правила безопасности и антигаллюцинации.",
+          runtimeMainPrompt
+        ].join("\n")
+      : "",
+    runtimeIdkAnswers.length > 0
+      ? [
+          "# Fallback-ответы для внерамочных запросов (runtime)",
+          "Если вопрос кандидата вне темы интервью или данных не хватает, выбери одну фразу из списка ниже близко к оригиналу (без добавления фактов).",
+          ...runtimeIdkAnswers.map((answer, idx) => `${idx + 1}. ${answer}`)
+        ].join("\n")
+      : "",
     sanityCheck,
     phaseProtocol,
     `Кандидат: ${candidateFullName}`,

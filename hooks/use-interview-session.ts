@@ -6,6 +6,7 @@ import {
   closeRealtimeSession,
   failMeeting,
   getRealtimeSessionState,
+  getRuntimePromptSettingsSoft,
   getInterviewById,
   linkInterviewSession,
   sendRealtimeEvent,
@@ -13,7 +14,8 @@ import {
   stopMeeting,
   updateInterviewStatus,
   type InterviewDetail,
-  type JobAiInterviewStatus
+  type JobAiInterviewStatus,
+  type RuntimePromptSettings
 } from "@/lib/api";
 import { buildInterviewInstructions, buildOpeningUtterance } from "@/lib/interview-agent-prompt";
 import { createAgentContextTrace, type AgentContextTrace } from "@/lib/interview-context-diagnostics";
@@ -88,6 +90,8 @@ const RECONNECT_ATTEMPTS = 3;
 const RECONNECT_BACKOFF_MS = [0, 450, 1400] as const;
 /** Интервал опроса готовности аватара до первого ready (после ready таймер останавливается). */
 const AVATAR_POLL_MS_ACTIVE = 2000;
+const PROMPT_SETTINGS_POLL_MS = 60_000;
+const DEFAULT_RUNTIME_PROMPT_SETTINGS: RuntimePromptSettings = {};
 
 /**
  * Best-effort field reader for arbitrary OpenAI server-event payloads. Realtime
@@ -236,12 +240,13 @@ async function postIntroResponseToRtc(
   rtc: WebRtcInterviewClient,
   effectiveContext: InterviewStartContext | undefined,
   mode: IntroMode = "first",
+  runtimePromptSettings?: RuntimePromptSettings,
   gateOptions?: {
     getSessionUpdatedVersion: () => number;
     waitForSessionUpdatedAck: (previousVersion: number, timeoutMs: number) => Promise<boolean>;
   }
 ): Promise<void> {
-  const runtimeInstructions = buildInterviewInstructions(effectiveContext);
+  const runtimeInstructions = buildInterviewInstructions(effectiveContext, runtimePromptSettings);
   // OpenAI Realtime GA requires session.type to be set on every session.update.
   // Without it the API silently rejects the update and our instructions never
   // reach the model, leaving the agent stuck on default behaviour.
@@ -367,6 +372,10 @@ export function useInterviewSession() {
   const [lastSummaryWarning, setLastSummaryWarning] = useState<string | undefined>(undefined);
   const [lastSummaryCorrelationId, setLastSummaryCorrelationId] = useState<string | undefined>(undefined);
   const [telemetryUnavailable, setTelemetryUnavailable] = useState(false);
+  const [activePromptSettings, setActivePromptSettings] = useState<RuntimePromptSettings | null>(null);
+  const [promptSettingsSource, setPromptSettingsSource] = useState<"remote" | "fallback_default">("fallback_default");
+  const [promptSettingsLastStatus, setPromptSettingsLastStatus] = useState<number | null>(null);
+  const [promptSettingsLastError, setPromptSettingsLastError] = useState<string | null>(null);
 
   // Phase indicator (B), agent state (C), live captions (F.3)
   const [flowPhase, setFlowPhase] = useState<InterviewFlowPhase>("lobby");
@@ -388,6 +397,8 @@ export function useInterviewSession() {
   const lastInterviewContextRef = useRef<InterviewStartContext | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const agentStateRef = useRef<AgentState>("idle");
+  const lastGoodPromptSettingsRef = useRef<RuntimePromptSettings | null>(null);
+  const promptSettingsInitializedRef = useRef(false);
   const sessionUpdatedVersionRef = useRef(0);
   const pendingSessionUpdatedWaitersRef = useRef<
     Array<{ previousVersion: number; resolve: (acked: boolean) => void }>
@@ -457,6 +468,57 @@ export function useInterviewSession() {
       source: "frontend",
       ...payload
     }).catch(() => undefined);
+  }, []);
+  const effectivePromptSettings = activePromptSettings ?? DEFAULT_RUNTIME_PROMPT_SETTINGS;
+
+  useEffect(() => {
+    let cancelled = false;
+    const pullPromptSettings = async () => {
+      const result = await getRuntimePromptSettingsSoft();
+      if (cancelled) {
+        return;
+      }
+      setPromptSettingsLastStatus(result.status || null);
+      if (result.ok && result.settings) {
+        lastGoodPromptSettingsRef.current = result.settings;
+        promptSettingsInitializedRef.current = true;
+        setActivePromptSettings(result.settings);
+        setPromptSettingsSource("remote");
+        setPromptSettingsLastError(null);
+        return;
+      }
+
+      setPromptSettingsLastError(result.error ?? "settings_fetch_failed");
+      if (!promptSettingsInitializedRef.current) {
+        promptSettingsInitializedRef.current = true;
+        setActivePromptSettings(DEFAULT_RUNTIME_PROMPT_SETTINGS);
+        setPromptSettingsSource("fallback_default");
+      }
+    };
+
+    void pullPromptSettings();
+    const timer = setInterval(() => {
+      void pullPromptSettings();
+    }, PROMPT_SETTINGS_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  /** Throttled caption updater — drops "blink" effect on rapid deltas. */
+  const scheduleCaptionUpdate = useCallback((role: "agent" | "candidate", text: string) => {
+    setLatestCaptions((prev) => ({ ...prev, [role]: text }));
+    if (captionFadeTimerRef.current[role]) {
+      clearTimeout(captionFadeTimerRef.current[role] as ReturnType<typeof setTimeout>);
+    }
+    captionFadeTimerRef.current[role] = setTimeout(() => {
+      setLatestCaptions((prev) => {
+        if (prev[role] !== text) return prev;
+        return { ...prev, [role]: undefined };
+      });
+    }, 8000);
   }, []);
 
   /**
@@ -635,21 +697,7 @@ export function useInterviewSession() {
       // We promote lobby → intro on the FIRST response.created (above).
       return;
     }
-  }, [emitFrontendTelemetry]);
-
-  /** Throttled caption updater — drops "blink" effect on rapid deltas. */
-  const scheduleCaptionUpdate = (role: "agent" | "candidate", text: string) => {
-    setLatestCaptions((prev) => ({ ...prev, [role]: text }));
-    if (captionFadeTimerRef.current[role]) {
-      clearTimeout(captionFadeTimerRef.current[role] as ReturnType<typeof setTimeout>);
-    }
-    captionFadeTimerRef.current[role] = setTimeout(() => {
-      setLatestCaptions((prev) => {
-        if (prev[role] !== text) return prev;
-        return { ...prev, [role]: undefined };
-      });
-    }, 8000);
-  };
+  }, [emitFrontendTelemetry, scheduleCaptionUpdate]);
 
   const ensureClient = useCallback(() => {
     if (!rtcRef.current) {
@@ -855,7 +903,7 @@ export function useInterviewSession() {
                       triggerSource: "webrtc_restore"
                     })
                   );
-                  await postIntroResponseToRtc(rtc, effectiveContext, "reconnect", {
+                  await postIntroResponseToRtc(rtc, effectiveContext, "reconnect", effectivePromptSettings, {
                     getSessionUpdatedVersion,
                     waitForSessionUpdatedAck
                   });
@@ -889,6 +937,7 @@ export function useInterviewSession() {
     };
   }, [
     activeInterviewId,
+    effectivePromptSettings,
     ensureClient,
     getSessionUpdatedVersion,
     meetingId,
@@ -927,7 +976,7 @@ export function useInterviewSession() {
           if (contextOk && effectiveContext) {
             try {
               lastInterviewContextRef.current = effectiveContext;
-              const runtimeInstructions = buildInterviewInstructions(effectiveContext);
+              const runtimeInstructions = buildInterviewInstructions(effectiveContext, effectivePromptSettings);
               setLastAgentContextTrace(
                 createAgentContextTrace(effectiveContext, syncDetail, {
                   meetingId,
@@ -1098,7 +1147,7 @@ export function useInterviewSession() {
           triggerSource
         })
       );
-      await postIntroResponseToRtc(rtc, effectiveContext, "first", {
+      await postIntroResponseToRtc(rtc, effectiveContext, "first", effectivePromptSettings, {
         getSessionUpdatedVersion,
         waitForSessionUpdatedAck
       });
@@ -1125,7 +1174,7 @@ export function useInterviewSession() {
       }
       throw startError;
     }
-  }, [ensureClient, flushSessionUpdatedWaiters, getSessionUpdatedVersion, meetingId, phase, sessionId, waitForSessionUpdatedAck]);
+  }, [effectivePromptSettings, ensureClient, flushSessionUpdatedWaiters, getSessionUpdatedVersion, meetingId, phase, sessionId, waitForSessionUpdatedAck]);
 
   const stop = useCallback(async (options?: { interviewId?: number }) => {
     if (!meetingId) {
@@ -1349,6 +1398,9 @@ export function useInterviewSession() {
     remoteAudioStream,
     agentInputEnabled,
     runtimeRecoveryState,
+    promptSettingsSource,
+    promptSettingsLastStatus,
+    promptSettingsLastError,
     /** UI flow indicator (independent from infra `phase`). */
     flowPhase,
     /** Visual indicator state for the agent avatar tile. */

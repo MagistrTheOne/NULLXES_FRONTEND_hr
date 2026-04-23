@@ -124,6 +124,18 @@ export type JobAiSourceStatus = {
   };
 };
 
+export type RuntimePromptSettings = {
+  mainPrompt?: string;
+  idkAnswers?: string[];
+};
+
+export type RuntimePromptSettingsFetchResult = {
+  ok: boolean;
+  status: number;
+  settings?: RuntimePromptSettings;
+  error?: string;
+};
+
 export type CandidateAdmissionParticipant = {
   participantId: string;
   displayName: string;
@@ -148,6 +160,38 @@ export type CandidateAdmissionStatus = {
 };
 
 type JsonRecord = Record<string, unknown>;
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+function normalizeRuntimePromptSettings(payload: unknown): RuntimePromptSettings | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const normalized: RuntimePromptSettings = {};
+  let hasAnyField = false;
+
+  if (typeof record.mainPrompt === "string") {
+    const mainPrompt = record.mainPrompt.trim();
+    if (mainPrompt.length > 0) {
+      normalized.mainPrompt = mainPrompt;
+      hasAnyField = true;
+    }
+  }
+
+  if (isStringArray(record.idkAnswers)) {
+    const idkAnswers = record.idkAnswers.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+    if (idkAnswers.length > 0) {
+      normalized.idkAnswers = idkAnswers;
+      hasAnyField = true;
+    }
+  }
+
+  return hasAnyField ? normalized : null;
+}
 
 export type ApiRequestErrorCode = "timeout" | "network" | "http" | "invalid_json";
 
@@ -489,6 +533,69 @@ export async function updateInterviewStatus(id: number, status: JobAiInterviewSt
 
 export async function getJobAiSourceStatus(): Promise<JobAiSourceStatus> {
   return requestJson<JobAiSourceStatus>("interviews/source/status", { method: "GET" });
+}
+
+export async function getRuntimePromptSettingsSoft(): Promise<RuntimePromptSettingsFetchResult> {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      "/api/gateway/api/v1/questions/general",
+      {
+        method: "GET",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        }
+      },
+      8000
+    );
+  } catch (error) {
+    if (isApiRequestError(error)) {
+      return {
+        ok: false,
+        status: 0,
+        error: error.message
+      };
+    }
+    return {
+      ok: false,
+      status: 0,
+      error: error instanceof Error ? error.message : "Failed to load runtime prompt settings"
+    };
+  }
+
+  let payload: unknown = null;
+  const raw = await response.text();
+  if (raw) {
+    try {
+      payload = JSON.parse(raw) as unknown;
+    } catch {
+      payload = null;
+    }
+  }
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      error: `settings_http_${response.status}`
+    };
+  }
+
+  const normalized = normalizeRuntimePromptSettings(payload);
+  if (!normalized) {
+    return {
+      ok: false,
+      status: response.status,
+      error: "settings_invalid_payload"
+    };
+  }
+
+  return {
+    ok: true,
+    status: response.status,
+    settings: normalized
+  };
 }
 
 export async function getCandidateAdmissionStatus(
