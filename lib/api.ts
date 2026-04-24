@@ -433,10 +433,26 @@ export type MeetingDetailResponse = {
   history: unknown[];
 };
 
+export type MeetingListItem = {
+  meetingId: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  metadata?: Record<string, unknown>;
+};
+
+export type MeetingListResponse = {
+  meetings: MeetingListItem[];
+};
+
 export async function getMeetingDetail(meetingId: string): Promise<MeetingDetailResponse> {
   return requestJson<MeetingDetailResponse>(`meetings/${encodeURIComponent(meetingId)}`, {
     method: "GET"
   });
+}
+
+export async function listMeetingsSnapshot(): Promise<MeetingListResponse> {
+  return requestJson<MeetingListResponse>("meetings", { method: "GET" });
 }
 
 export async function failMeeting(meetingId: string, input: FailMeetingInput): Promise<JsonRecord> {

@@ -8,7 +8,14 @@ import { InterviewStatusBadge } from "@/components/interview/interview-status-ba
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { getInterviewById, getMeetingDetail, isApiRequestError, type InterviewDetail } from "@/lib/api";
+import {
+  getInterviewById,
+  getMeetingDetail,
+  isApiRequestError,
+  listMeetingsSnapshot,
+  type InterviewDetail,
+  type MeetingListItem
+} from "@/lib/api";
 import type { InterviewSummaryPayload } from "@/lib/interview-summary";
 import { InterviewSummaryDisplay } from "@/components/interview/interview-summary-display";
 import {
@@ -31,6 +38,20 @@ const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
 };
 
 const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
+const ACTIVE_MEETING_STATUSES = new Set(["starting", "in_meeting"]);
+
+function pickActiveMeetingForInterview(jobAiId: number, meetings: MeetingListItem[]): string | null {
+  const matched = meetings
+    .filter((meeting) => {
+      if (!ACTIVE_MEETING_STATUSES.has(String(meeting.status ?? ""))) {
+        return false;
+      }
+      const raw = (meeting.metadata ?? {}).jobAiInterviewId;
+      return Number(raw) === jobAiId;
+    })
+    .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+  return matched[0]?.meetingId ?? null;
+}
 
 function stripHtmlTags(input: string): string {
   return input.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -98,6 +119,7 @@ function SpectatorBody() {
   const [meetingSummary, setMeetingSummary] = useState<InterviewSummaryPayload | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [technicalError, setTechnicalError] = useState<string | null>(null);
+  const [activeMeetingIdFallback, setActiveMeetingIdFallback] = useState<string | null>(null);
 
   useEffect(() => {
     if (!jobAiId) {
@@ -112,9 +134,24 @@ function SpectatorBody() {
         setLoading(true);
       }
       try {
-        const next = await getInterviewById(jobAiId, true);
+        const [next, meetingsSnapshot] = await Promise.all([
+          getInterviewById(jobAiId, true),
+          listMeetingsSnapshot().catch(() => null)
+        ]);
+        const projectedMeetingId = next?.projection?.nullxesMeetingId ?? null;
+        const fallbackMeetingId =
+          meetingsSnapshot && Array.isArray(meetingsSnapshot.meetings)
+            ? pickActiveMeetingForInterview(jobAiId, meetingsSnapshot.meetings)
+            : null;
         if (!cancelled) {
           setDetail(next);
+          setActiveMeetingIdFallback(
+            projectedMeetingId && fallbackMeetingId && projectedMeetingId !== fallbackMeetingId
+              ? fallbackMeetingId
+              : projectedMeetingId
+                ? null
+                : fallbackMeetingId
+          );
           setError(null);
           setTechnicalError(null);
         }
@@ -163,12 +200,13 @@ function SpectatorBody() {
   }, [jobAiId]);
 
   const meetingId = detail?.projection.nullxesMeetingId ?? null;
+  const effectiveMeetingId = activeMeetingIdFallback ?? meetingId;
   const candidateName = [detail?.projection.candidateFirstName, detail?.projection.candidateLastName]
     .filter(Boolean)
     .join(" ")
     .trim();
   const companyName = detail?.projection.companyName ?? "";
-  const canConnect = Boolean(meetingId);
+  const canConnect = Boolean(effectiveMeetingId);
 
   // Глобальный статус интервью (унифицирован с HR mapPhaseToStatus).
   const interviewStatus = useMemo(
@@ -182,7 +220,7 @@ function SpectatorBody() {
   );
 
   useEffect(() => {
-    if (!meetingId || detail?.projection.nullxesStatus !== "completed") {
+    if (!effectiveMeetingId || detail?.projection.nullxesStatus !== "completed") {
       setMeetingSummary(null);
       return;
     }
@@ -196,7 +234,7 @@ function SpectatorBody() {
     };
     const loadSummary = async () => {
       try {
-        const res = await getMeetingDetail(meetingId);
+        const res = await getMeetingDetail(effectiveMeetingId);
         const raw = res.meeting?.metadata?.interviewSummary;
         if (!cancelled && raw && typeof raw === "object") {
           setMeetingSummary(raw as InterviewSummaryPayload);
@@ -219,7 +257,7 @@ function SpectatorBody() {
       cancelled = true;
       stopPolling();
     };
-  }, [detail?.projection.nullxesStatus, meetingId]);
+  }, [detail?.projection.nullxesStatus, effectiveMeetingId]);
 
   return (
     <div className="min-h-screen bg-[#dfe4ec] px-4 py-6 sm:px-6 sm:py-8 md:px-10">
@@ -293,7 +331,7 @@ function SpectatorBody() {
                 <div className="grid grid-cols-1 gap-x-10 gap-y-2 text-xs text-slate-500 sm:grid-cols-2">
                   <p>
                     Внутренний идентификатор ·{" "}
-                    <span className="font-mono text-[11px] text-slate-700">{meetingId ?? "Появится после запуска"}</span>
+                    <span className="font-mono text-[11px] text-slate-700">{effectiveMeetingId ?? "Появится после запуска"}</span>
                   </p>
                   <p>
                     Видеопоток ·{" "}
@@ -320,7 +358,7 @@ function SpectatorBody() {
         <ObserverStreamCard
           title="Видео интервью"
           participantName="Наблюдатель"
-          meetingId={meetingId}
+          meetingId={effectiveMeetingId}
           enabled={canConnect}
           visible
           talkMode={observerControl.talk}
