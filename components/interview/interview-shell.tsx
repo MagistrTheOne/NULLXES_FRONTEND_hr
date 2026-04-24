@@ -1228,10 +1228,9 @@ export function InterviewShell() {
             meetingId={recoveredMeetingId}
             showStreamToolbar={false}
             showStatusBadge
-            // Кнопку «Остановить бота» видит только HR. Кандидат
-            // не имеет права останавливать AI-интервью и трогать
-            // управление аватаром (микрофон/камера/стоп). Для
-            // выхода у него есть отдельная кнопка «Выйти».
+            showPauseAI={phase === "connected" && Boolean(recoveredMeetingId) && !completedInterviewLocked}
+            pauseResumeCopy={isCandidateFlow ? "stop_bot" : "pause"}
+            // Полный stop сессии — только HR; кандидат: «Стоп бота» = пауза ответов HR аватара.
             showStopAI={!isCandidateFlow && phase === "connected" && Boolean(recoveredMeetingId) && !completedInterviewLocked}
             stopAIDisabled={busy}
             onStopAI={() => {

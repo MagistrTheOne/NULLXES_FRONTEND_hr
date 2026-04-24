@@ -108,22 +108,24 @@ type AvatarStreamCardProps = {
   showStreamToolbar?: boolean;
   /** Status badge under the card title */
   showStatusBadge?: boolean;
-  /** Остановить AI-сессию (звонок + бот) — см. useInterviewSession.stop */
-  showStopAI?: boolean;
-  onStopAI?: () => void;
-  stopAIDisabled?: boolean;
+  /** Пауза / продолжить HR аватар (кандидат и HR). */
+  showPauseAI?: boolean;
   onTogglePauseAI?: () => void;
   pauseAIDisabled?: boolean;
   aiPaused?: boolean;
+  /** Подписи на кнопке паузы: HR — «Пауза»/«Продолжить», кандидат — «Стоп бота»/«Продолжить бота». */
+  pauseResumeCopy?: "pause" | "stop_bot";
+  /** Полный stop сессии (только оператор HR, не кандидат). */
+  showStopAI?: boolean;
+  onStopAI?: () => void;
+  stopAIDisabled?: boolean;
   sessionEnded?: boolean;
   uiState?: SessionUIState;
   /** Визуально выделить колонку HR как основную (AI-интервьюер). */
   emphasizePrimary?: boolean;
   /**
-   * При true рендерим компактную "PiP" версию для mobile-portrait candidate-flow:
-   * без заголовка, без бейджа статуса, без кнопок "Остановить бота". На lg+ та же
-   * карточка автоматически возвращается в полный режим через wrapping CSS,
-   * но контент мы сжимаем намеренно.
+   * При true — компактный PiP для candidate-flow на узком экране (заголовок/подвал
+   * через compact). Кнопки паузы/стопа задаются отдельно через showPauseAI / showStopAI.
    */
   mobilePip?: boolean;
 };
@@ -136,6 +138,8 @@ export function AvatarStreamCard({
   meetingId,
   showStreamToolbar = false,
   showStatusBadge = true,
+  showPauseAI = false,
+  pauseResumeCopy = "pause",
   showStopAI = false,
   onStopAI,
   stopAIDisabled = false,
@@ -321,7 +325,7 @@ export function AvatarStreamCard({
             ) : null}
           </div>
           <div className="flex min-h-10 flex-wrap items-stretch gap-2">
-            {showStopAI && onTogglePauseAI ? (
+            {showPauseAI && onTogglePauseAI ? (
               <button
                 type="button"
                 disabled={pauseAIDisabled || ended}
@@ -332,9 +336,21 @@ export function AvatarStreamCard({
                     ? "border-emerald-300/80 bg-emerald-600 text-white hover:bg-emerald-700 focus-visible:ring-emerald-400"
                     : "border-amber-300/80 bg-amber-500 text-white hover:bg-amber-600 focus-visible:ring-amber-400"
                 )}
-                title={aiPaused ? "Возобновить работу HR аватара" : "Поставить HR аватар на паузу"}
+                title={
+                  aiPaused
+                    ? "Возобновить ответы HR аватара"
+                    : pauseResumeCopy === "stop_bot"
+                      ? "Приостановить ответы HR аватара"
+                      : "Поставить HR аватар на паузу"
+                }
               >
-                {aiPaused ? "Продолжить" : "Пауза"}
+                {pauseResumeCopy === "stop_bot"
+                  ? aiPaused
+                    ? "Продолжить бота"
+                    : "Стоп бота"
+                  : aiPaused
+                    ? "Продолжить"
+                    : "Пауза"}
               </button>
             ) : null}
             {showStopAI && onStopAI ? (
