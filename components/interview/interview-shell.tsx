@@ -196,6 +196,21 @@ export function InterviewShell() {
   const [connectionQuality, setConnectionQuality] = useState<ConnectionQualityReading | null>(null);
   const poorSinceMsRef = useRef<number | null>(null);
   const lastPoorToastAtMsRef = useRef<number>(0);
+  /** Avoid infinite render loops: child pushes quality every Stream tick with a new object ref. */
+  const reportCandidateConnectionQuality = useCallback((reading: ConnectionQualityReading) => {
+    setConnectionQuality((prev) => {
+      if (
+        prev &&
+        prev.quality === reading.quality &&
+        prev.reason === reading.reason &&
+        prev.rttMs === reading.rttMs &&
+        prev.packetLossPercent === reading.packetLossPercent
+      ) {
+        return prev;
+      }
+      return reading;
+    });
+  }, []);
 
   useEffect(() => {
     candidateRuntimeBootstrapRef.current = false;
@@ -1191,7 +1206,7 @@ export function InterviewShell() {
             showControls
             sessionEnded={completedInterviewLocked}
             uiState={sessionUiState}
-            onQualityChange={setConnectionQuality}
+            onQualityChange={reportCandidateConnectionQuality}
           />
           </div>
           <div

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CallingState, useCallStateHooks } from "@stream-io/video-react-sdk";
 
 export type ConnectionQuality = "excellent" | "fair" | "poor" | "offline" | "reconnecting";
@@ -83,35 +83,44 @@ export function useConnectionQuality(): ConnectionQualityReading {
     };
   }, []);
 
-  if (!online) {
-    return { quality: "offline", reason: "offline" };
-  }
-  if (callingState === CallingState.RECONNECTING) {
-    return { quality: "reconnecting", reason: "reconnecting" };
-  }
-
-  // Pull RTT and loss from publisher stats first (own outbound traffic), then
-  // subscriber stats as a secondary anchor. Use whichever is worse so the
-  // candidate gets the most pessimistic reading they can act on.
   const pubRtt = stats?.publisherStats.averageRoundTripTimeInMs;
   const subRtt = stats?.subscriberStats.averageRoundTripTimeInMs;
-  const rttMs = [pubRtt, subRtt]
-    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
-    .reduce<number | undefined>((acc, value) => (acc === undefined ? value : Math.max(acc, value)), undefined);
-
   const audioLost = stats?.publisherAudioStats.totalPacketsLost ?? 0;
   const audioReceived = stats?.publisherAudioStats.totalPacketsReceived ?? 0;
   const subAudioLost = stats?.subscriberAudioStats.totalPacketsLost ?? 0;
   const subAudioReceived = stats?.subscriberAudioStats.totalPacketsReceived ?? 0;
-  const totalLost = audioLost + subAudioLost;
-  const totalSeen = audioReceived + subAudioReceived + totalLost;
-  const packetLossPercent = totalSeen > 0 ? Math.min(100, (totalLost / totalSeen) * 100) : undefined;
 
-  const { quality, reason } = classify(rttMs, packetLossPercent);
-  const reading: ConnectionQualityReading = { quality, reason };
-  if (typeof rttMs === "number") reading.rttMs = Math.round(rttMs);
-  if (typeof packetLossPercent === "number") {
-    reading.packetLossPercent = Math.round(packetLossPercent * 10) / 10;
-  }
-  return reading;
+  return useMemo(() => {
+    if (!online) {
+      return { quality: "offline", reason: "offline" } satisfies ConnectionQualityReading;
+    }
+    if (callingState === CallingState.RECONNECTING) {
+      return { quality: "reconnecting", reason: "reconnecting" } satisfies ConnectionQualityReading;
+    }
+
+    const rttMs = [pubRtt, subRtt]
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+      .reduce<number | undefined>((acc, value) => (acc === undefined ? value : Math.max(acc, value)), undefined);
+
+    const totalLost = audioLost + subAudioLost;
+    const totalSeen = audioReceived + subAudioReceived + totalLost;
+    const packetLossPercent = totalSeen > 0 ? Math.min(100, (totalLost / totalSeen) * 100) : undefined;
+
+    const { quality, reason } = classify(rttMs, packetLossPercent);
+    const reading: ConnectionQualityReading = { quality, reason };
+    if (typeof rttMs === "number") reading.rttMs = Math.round(rttMs);
+    if (typeof packetLossPercent === "number") {
+      reading.packetLossPercent = Math.round(packetLossPercent * 10) / 10;
+    }
+    return reading;
+  }, [
+    online,
+    callingState,
+    pubRtt,
+    subRtt,
+    audioLost,
+    audioReceived,
+    subAudioLost,
+    subAudioReceived
+  ]);
 }
