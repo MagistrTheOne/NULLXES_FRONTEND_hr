@@ -145,6 +145,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     user_id: userId,
     validity_in_seconds: 60 * 60
   });
+  await fetch(`${backendUrl}/runtime/${encodeURIComponent(meetingId)}/events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "stream.token.issued",
+      actor: "frontend.stream-token",
+      payload: {
+        role,
+        userId,
+        callId,
+        callType
+      }
+    })
+  }).catch(() => undefined);
 
   return NextResponse.json({
     apiKey,

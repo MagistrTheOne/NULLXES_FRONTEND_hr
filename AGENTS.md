@@ -13,7 +13,7 @@
 
 Next.js 15 App Router. Два flow на одной кодовой базе:
 - **candidate-flow** — кандидат входит по персональной ссылке (`/?entry=candidate&jobAiId=...` или `/join/candidate/<JWT>`). Только он может стартовать AI-сессию.
-- **HR-dashboard** — `/` без entry-params, видит список интервью, live-observer, summary, «Остановить бота», «Завершить». НЕ инициирует сессию.
+- **HR-dashboard** — `/` без entry-params, видит список интервью, live-observer, «Остановить бота», «Завершить». НЕ инициирует сессию.
 
 Голос/видео: **Stream Video SDK** + **OpenAI Realtime API** (через свой WebRTC peer + наш `backend/realtime-gateway`).
 
@@ -48,14 +48,7 @@ Next.js 15 App Router. Два flow на одной кодовой базе:
 | `components/interview/avatar-stream-card.tsx` | HR-avatar viewer. Whitelist `agent_*` / `agent-<meetingId>`. Placeholder = `public/anna.jpg`. |
 | `components/interview/observer-stream-card.tsx` | Spectator. `/spectator?jobAiId=N`. |
 | `components/interview/meeting-header.tsx` | HR-dashboard CTA. Кнопка «Запустить» УДАЛЕНА, badge «Ожидаем кандидата». |
-| `components/interview/interview-summary-display.tsx` | Свёрнутая карточка саммари. Gradient-бары, shadcn/ui. |
 | `components/interview/thank-you-screen.tsx` | Финал кандидата, `router.push("/")`. |
-
-### Summary
-| Файл | За что отвечает |
-|---|---|
-| `lib/interview-summary.ts` | `decisionFromScore` (≥7.5 recommended, 5.0–7.4 consider, <5.0 rejected). Baseline 6/6/6/6 → default «consider». |
-| `app/api/interview/summary/route.ts` | OpenAI суммари. `SYSTEM_BASE` + `SYSTEM_NO_TRANSCRIPT`. |
 
 ---
 
@@ -68,7 +61,7 @@ Next.js 15 App Router. Два flow на одной кодовой базе:
 - `f4fbf7f` — Stream SDK `options.timeout = 60_000` (дефолт axios был 5000мс → ломал сессии).
 - `5b6b6c6` — 9 вставок в `interview-agent-prompt.ts`: ROTATION, BLACK-LIST, hard-cap на ФИО, pause-осмысления, запрет filler-ов.
 
-Перед этим (`778d57b`): exit-to-home redirect + `anna.jpg` placeholder + summary v2.
+Перед этим (`778d57b`): exit-to-home redirect + `anna.jpg` placeholder.
 
 ---
 

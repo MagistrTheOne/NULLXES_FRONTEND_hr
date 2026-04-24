@@ -1,6 +1,94 @@
 import { createRealtimeSession, getRealtimeToken, sendRealtimeEvent } from "@/lib/api";
 
 export type WebRtcConnectionState = "idle" | "connecting" | "connected" | "failed" | "closed";
+export type AudioPreflightResult =
+  | { ok: true }
+  | { ok: false; code: "permission_denied" | "device_unavailable" | "unknown"; message: string };
+
+export type MediaDevicesCheckResult =
+  | { ok: true; stream: MediaStream }
+  | { ok: false; code: "permission_denied" | "device_unavailable" | "unknown"; message: string };
+
+/**
+ * Одна проверка камеры + микрофона для лобби кандидата (до Stream/WebRTC интервью).
+ * Вызывающий обязан остановить треки, когда превью больше не нужно.
+ */
+export async function acquireLocalMediaPreviewStream(): Promise<MediaDevicesCheckResult> {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        sampleRate: 48000
+      },
+      video: {
+        facingMode: "user",
+        width: { ideal: 640 },
+        height: { ideal: 480 }
+      }
+    });
+    return { ok: true, stream };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "NotAllowedError") {
+      return {
+        ok: false,
+        code: "permission_denied",
+        message: "Нет доступа к камере или микрофону. Разрешите доступ в браузере и повторите."
+      };
+    }
+    if (error instanceof DOMException && (error.name === "NotFoundError" || error.name === "NotReadableError")) {
+      return {
+        ok: false,
+        code: "device_unavailable",
+        message: "Камера или микрофон недоступны. Проверьте устройства и повторите."
+      };
+    }
+    return {
+      ok: false,
+      code: "unknown",
+      message: "Не удалось проверить камеру и микрофон."
+    };
+  }
+}
+
+export async function runAudioInputPreflight(): Promise<AudioPreflightResult> {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        sampleRate: 48000
+      },
+      video: false
+    });
+    stream.getTracks().forEach((track) => track.stop());
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "NotAllowedError") {
+      return {
+        ok: false,
+        code: "permission_denied",
+        message: "Нет доступа к микрофону. Разрешите доступ и повторите запуск."
+      };
+    }
+    if (error instanceof DOMException && (error.name === "NotFoundError" || error.name === "NotReadableError")) {
+      return {
+        ok: false,
+        code: "device_unavailable",
+        message: "Микрофон недоступен. Проверьте устройство и повторите запуск."
+      };
+    }
+    return {
+      ok: false,
+      code: "unknown",
+      message: "Не удалось проверить микрофон перед запуском интервью."
+    };
+  }
+}
 
 function normalizeSdp(input: string): string {
   const normalized = input.replace(/\r?\n/g, "\r\n").trim();
@@ -275,7 +363,7 @@ export class WebRtcInterviewClient {
 
   async postEvent(payload: Record<string, unknown>): Promise<void> {
     // Only forward events with types that OpenAI Realtime API actually understands.
-    // Our internal telemetry (observer.*, candidate.stream.*, interview.summary.*, etc.)
+    // Our internal telemetry (observer.*, candidate.stream.*, hr.agent.*, etc.)
     // is gateway-only — sending it to OpenAI causes "unknown_event_type" errors that
     // pollute the session and may interfere with response generation.
     if (isOpenAiClientEventType(payload.type)) {

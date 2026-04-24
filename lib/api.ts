@@ -38,6 +38,15 @@ export type StopMeetingInput = {
 export type FailMeetingInput = {
   status: "failed_audio_pool_busy" | "failed_connect_ws_audio";
   reason: string;
+  reasonCode?:
+    | "openai_call_failed"
+    | "openai_client_secret_failed"
+    | "sfu_join_failed"
+    | "network_timeout"
+    | "device_permission_denied"
+    | "audio_input_unavailable"
+    | "gateway_upstream_unreachable"
+    | "unknown";
   metadata?: Record<string, unknown>;
 };
 
@@ -407,6 +416,34 @@ export async function closeRealtimeSession(sessionId: string): Promise<void> {
   });
 }
 
+export async function getRuntimeSnapshot(meetingId: string): Promise<RuntimeSnapshot> {
+  return requestJson<RuntimeSnapshot>(`runtime/${encodeURIComponent(meetingId)}`, { method: "GET" });
+}
+
+export async function getRuntimeSnapshotByInterview(jobAiId: number): Promise<RuntimeSnapshot> {
+  return requestJson<RuntimeSnapshot>(`runtime/by-interview/${encodeURIComponent(String(jobAiId))}`, {
+    method: "GET"
+  });
+}
+
+export async function issueRuntimeCommand(
+  meetingId: string,
+  input: {
+    type: RuntimeCommandType;
+    issuedBy?: string;
+    commandId?: string;
+    payload?: Record<string, unknown>;
+  }
+): Promise<{ command: NonNullable<RuntimeSnapshot["controls"]["lastCommand"]> }> {
+  return requestJson<{ command: NonNullable<RuntimeSnapshot["controls"]["lastCommand"]> }>(
+    `runtime/${encodeURIComponent(meetingId)}/commands`,
+    {
+      method: "POST",
+      body: JSON.stringify(input)
+    }
+  );
+}
+
 export async function startMeeting(input: StartMeetingInput): Promise<JsonRecord> {
   return requestJsonWithRetry<JsonRecord>("meetings/start", {
     method: "POST",
@@ -443,6 +480,65 @@ export type MeetingListItem = {
 
 export type MeetingListResponse = {
   meetings: MeetingListItem[];
+};
+
+export type RuntimeCommandType =
+  | "agent.pause"
+  | "agent.resume"
+  | "agent.cancel_response"
+  | "agent.force_next_question"
+  | "agent.end_interview"
+  | "observer.reconnect"
+  | "session.stop";
+
+export type RuntimeSnapshot = {
+  schemaVersion: "1.0";
+  generatedAtMs: number;
+  meetingId: string;
+  jobAiId?: number;
+  revision: number;
+  meeting: {
+    status: string;
+    sessionId?: string;
+    metadata?: Record<string, unknown>;
+    history: unknown[];
+  };
+  session?: RealtimeSessionState["session"];
+  admission?: CandidateAdmissionStatus;
+  avatar?: {
+    meetingId: string;
+    sessionId: string;
+    agentUserId?: string;
+    phase: string;
+    avatarReady: boolean;
+    lastEventAt: number;
+    lastError?: string;
+    startedAt: number;
+  } | null;
+  media: {
+    streamCallType: string;
+    streamCallId: string;
+    candidateUserId: string;
+    observerUserIdPrefix: string;
+    agentUserId?: string;
+  };
+  controls: {
+    lastCommand?: {
+      commandId: string;
+      type: RuntimeCommandType;
+      meetingId: string;
+      issuedBy: string;
+      createdAtMs: number;
+      ackStatus: "accepted";
+      revision: number;
+      payload: Record<string, unknown>;
+    };
+    agentPaused: boolean;
+  };
+  health: {
+    ready: boolean;
+    warnings: string[];
+  };
 };
 
 export async function getMeetingDetail(meetingId: string): Promise<MeetingDetailResponse> {

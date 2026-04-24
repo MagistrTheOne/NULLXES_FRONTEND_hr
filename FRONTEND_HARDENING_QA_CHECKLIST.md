@@ -15,9 +15,8 @@
 - [ ] Candidate and avatar stream cards recover from transient join failures (auto-retry on next attempt).
 - [ ] Кнопка **«Остановить бота»** крупная, красная; после стопа сессия уходит в завершение.
 - [ ] У HR-аватара **нет** панели Stream (`CallControls` / видео-режим).
-- [ ] Агент: одно приветствие без двойного self-intro; сценарий **intro → вопросы → closing → summary**.
-- [ ] Длинный `vacancyText` (>12k символов): в промпте обрезка с пометкой; UI/саммари помечают `vacancyTruncated` при необходимости.
-- [ ] После стопа отображается блок **«Итог интервью (саммари)»**; на `/spectator` саммари подтягивается из `GET /meetings/:id` после `completed`.
+- [ ] Агент: одно приветствие без двойного self-intro; сценарий **intro → вопросы → closing**.
+- [ ] Длинный `vacancyText` (>12k символов): в промпте обрезка с пометкой.
 - [ ] Ссылка с `?jobAiId=…&entry=candidate`: тот же полный UI (шапка, три колонки, список); до `meetingAt` — подсказка в синем баннере; после — авто-старт при статусах `received`/`pending`; при `in_meeting` с `meetingId`/`sessionId` — гидрация сессии.
 - [ ] Вставка URL в поле прототипа у HR: в адресной строке появляются `jobAiId` и при необходимости `entry=candidate`.
 

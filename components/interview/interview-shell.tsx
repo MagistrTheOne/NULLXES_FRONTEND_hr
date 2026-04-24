@@ -7,8 +7,6 @@ import {
   decideCandidateAdmission,
   getCandidateAdmissionStatus,
   getInterviewById,
-  getMeetingDetail,
-  isApiRequestError,
   issueCandidateJoinLink,
   listInterviews,
   type CandidateAdmissionStatus,
@@ -16,10 +14,9 @@ import {
   type InterviewListRow,
   type JoinLinkIssued
 } from "@/lib/api";
-import { extractCoreFieldsFromInterviewRaw, mergeStartContextWithInterviewDetail } from "@/lib/interview-detail-fields";
+import { extractCoreFieldsFromInterviewRaw } from "@/lib/interview-detail-fields";
 import { normalizeInterviewListRows } from "@/lib/normalize-interview-list-row";
 import { sortInterviewListRowsNewestFirst } from "@/lib/sort-interview-list-rows";
-import type { InterviewSummaryPayload } from "@/lib/interview-summary";
 import {
   getObserverControlState,
   resolveObserverTalkState,
@@ -48,7 +45,6 @@ import { AvatarStreamCard } from "./avatar-stream-card";
 import { CandidateStreamCard } from "./candidate-stream-card";
 import { InterviewsTablePreview } from "./interviews-table-preview";
 import { MeetingHeader } from "./meeting-header";
-import { InterviewSummaryDisplay } from "./interview-summary-display";
 import { ObserverStreamCard } from "./observer-stream-card";
 import { HrInsightPanel } from "./hr-insight-panel";
 import { InterviewPhaseIndicator } from "./interview-phase-indicator";
@@ -90,7 +86,7 @@ const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1"
 const OBSERVER_PANEL_ENABLED =
   process.env.NEXT_PUBLIC_ENABLE_OBSERVER_PANEL !== "0";
 /**
- * HR Insight Panel (P4) — live transcript + quick flags + summary. This is
+ * HR Insight Panel (P4) — live transcript + quick flags. This is
  * an ADDITIONAL surface, not a replacement for the Observer. It lives on the
  * dedicated HR panel route / button and is off by default in the main grid;
  * flip NEXT_PUBLIC_ENABLE_HR_INSIGHT_PANEL="1" to reintroduce it into the
@@ -152,12 +148,14 @@ export function InterviewShell() {
     error,
     remoteAudioStream,
     setObserverTalkIsolation,
+    pauseAgent,
+    resumeAgent,
+    agentPaused,
     hydrateActiveSession,
     runtimeRecoveryState,
     promptSettingsSource,
     promptSettingsLastStatus,
     promptSettingsLastError,
-    lastInterviewSummary,
     lastAgentContextTrace,
     flowPhase,
     agentState,
@@ -182,7 +180,6 @@ export function InterviewShell() {
   const [candidateAdmission, setCandidateAdmission] = useState<CandidateAdmissionStatus | null>(null);
   const [candidateAdmissionError, setCandidateAdmissionError] = useState<string | null>(null);
   const [candidateAdmissionBusy, setCandidateAdmissionBusy] = useState(false);
-  const [meetingSummaryFromServer, setMeetingSummaryFromServer] = useState<InterviewSummaryPayload | null>(null);
   const [exitDialog, setExitDialog] = useState<{ open: boolean; mode: ExitConfirmationMode; busy: boolean }>({
     open: false,
     mode: "leave",
@@ -396,10 +393,9 @@ export function InterviewShell() {
   const unifiedDegradationState = useMemo(
     () => ({
       stream_down: connectionQuality?.quality === "offline" || connectionQuality?.quality === "reconnecting",
-      ai_summary_fallback: degradationState.aiSummaryFallback,
       telemetry_unavailable: degradationState.telemetryUnavailable
     }),
-    [connectionQuality?.quality, degradationState.aiSummaryFallback, degradationState.telemetryUnavailable]
+    [connectionQuality?.quality, degradationState.telemetryUnavailable]
   );
 
   const candidateFio = useMemo(() => {
@@ -465,50 +461,6 @@ export function InterviewShell() {
       gatewayHint: buildGatewayVsExtractorHint(raw)
     });
   }, [interviewStartContext, selectedInterviewDetailMatched]);
-
-  useEffect(() => {
-    const meetingId = selectedRow?.nullxesMeetingId;
-    if (!meetingId || selectedRow?.nullxesStatus !== "completed") {
-      setMeetingSummaryFromServer(null);
-      return;
-    }
-    let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-    const stopPolling = () => {
-      if (timer) {
-        clearInterval(timer);
-        timer = null;
-      }
-    };
-    const load = async () => {
-      try {
-        const res = await getMeetingDetail(meetingId);
-        const raw = res.meeting?.metadata?.interviewSummary;
-        if (cancelled || !raw || typeof raw !== "object") {
-          return;
-        }
-        setMeetingSummaryFromServer(raw as InterviewSummaryPayload);
-      } catch (err) {
-        if (cancelled) return;
-        if (isApiRequestError(err) && err.status === 404) {
-          // meeting record was purged on backend (e.g. after restart without persisted store) —
-          // stop polling permanently so we don't flood gateway logs with 404s.
-          setMeetingSummaryFromServer(null);
-          stopPolling();
-          return;
-        }
-        setMeetingSummaryFromServer(null);
-      }
-    };
-    void load();
-    timer = setInterval(() => {
-      void load();
-    }, 8000);
-    return () => {
-      cancelled = true;
-      stopPolling();
-    };
-  }, [selectedRow?.nullxesMeetingId, selectedRow?.nullxesStatus]);
 
   const contextReadiness = useMemo(() => {
     const candidateReady = Boolean(
@@ -579,7 +531,7 @@ export function InterviewShell() {
     if (HARD_CONTEXT_GUARD_ENABLED && !contextHardReady) {
       return "Подготавливаем данные для интервью…";
     }
-    return "Подключаем вас к интервью…";
+    return "Сначала проверьте камеру и микрофон, затем нажмите «Подключиться к видео».";
   }, [
     busy,
     completedInterviewLocked,
@@ -887,7 +839,7 @@ export function InterviewShell() {
   }, []);
 
   /**
-   * Resolve confirmation: end = full stopMeeting + summary; leave = best-effort
+   * Resolve confirmation: end = full stopMeeting; leave = best-effort
    * release admission slot and tear down WebRTC, but keep the meeting open so the
    * candidate can rejoin within the rejoin window (backend default 60s).
    */
@@ -954,67 +906,13 @@ export function InterviewShell() {
       return;
     }
 
-    if (jobStatus !== "received" && jobStatus !== "pending") {
-      return;
-    }
-
-    const meetingAtRaw = detail.interview.meetingAt || selectedRow?.meetingAt;
-    if (!meetingAtRaw) {
-      return;
-    }
-    const meetingTs = new Date(meetingAtRaw).getTime();
-    if (!Number.isFinite(meetingTs) || Date.now() < meetingTs) {
-      return;
-    }
-
-    if (HARD_CONTEXT_GUARD_ENABLED && !contextHardReady) {
-      return;
-    }
-
-    void (async () => {
-      try {
-        candidateRuntimeBootstrapRef.current = true;
-        let contextForStart = interviewStartContext;
-        const needSync =
-          !contextForStart?.jobTitle ||
-          !contextForStart?.vacancyText ||
-          !contextForStart?.companyName ||
-          (contextForStart?.questions?.length ?? 0) === 0;
-
-        // Кандидат по ссылке: projection списка часто без полного JD / вопросов — всегда тянем sync=1 перед стартом.
-        if (needSync || isCandidateFlow) {
-          const syncedDetail = await getInterviewById(selectedInterviewId, true);
-          setSelectedInterviewDetail(syncedDetail);
-          contextForStart = mergeStartContextWithInterviewDetail(interviewStartContext, syncedDetail);
-        }
-
-        if (HARD_CONTEXT_GUARD_ENABLED) {
-          const ok =
-            Boolean(
-              contextForStart?.candidateFullName?.trim() ||
-                contextForStart?.candidateFirstName?.trim() ||
-                contextForStart?.candidateLastName?.trim()
-            ) &&
-            Boolean(contextForStart?.jobTitle?.trim()) &&
-            Boolean(contextForStart?.vacancyText?.trim()) &&
-            Boolean(contextForStart?.companyName?.trim()) &&
-            (contextForStart?.questions?.length ?? 0) > 0;
-          if (!ok) {
-            candidateRuntimeBootstrapRef.current = false;
-            return;
-          }
-        }
-
-        await start({
-          triggerSource: "candidate_auto_start",
-          interviewId: selectedInterviewId,
-          meetingAt: meetingAtRaw,
-          interviewContext: contextForStart
-        });
-      } catch {
-        candidateRuntimeBootstrapRef.current = false;
-      }
-    })();
+    // Candidate-link mode is intentionally manual now:
+    // 1) local camera+mic check in CandidateStreamCard,
+    // 2) user clicks "Подключиться к видео",
+    // 3) CandidateStreamCard calls ensureInterviewStart(), which starts WebRTC
+    //    and then joins GetStream. This prevents OpenAI/WebRTC from starting
+    //    before browser device permissions are confirmed.
+    void jobStatus;
   }, [
     busy,
     candidateFio,
@@ -1092,10 +990,6 @@ export function InterviewShell() {
           candidateMode={isCandidateFlow}
         />
 
-        <InterviewSummaryDisplay
-          summary={lastInterviewSummary ?? meetingSummaryFromServer}
-          title="Итог интервью (саммари)"
-        />
         </>
         {error ? (
           <p className="rounded-xl bg-rose-100 px-4 py-2 text-sm text-rose-700 shadow-sm">{error}</p>
@@ -1113,13 +1007,6 @@ export function InterviewShell() {
         {unifiedDegradationState.telemetry_unavailable ? (
           <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-sm">
             telemetry_unavailable: endpoint телеметрии аватара временно недоступен, показываем только фактическое состояние видеопотока.
-          </p>
-        ) : null}
-        {unifiedDegradationState.ai_summary_fallback ? (
-          <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-sm">
-            ai_summary_fallback: итог сессии рассчитан по baseline без подтверждённого AI-обогащения.
-            {degradationState.aiSummaryWarning ? ` warning=${degradationState.aiSummaryWarning}.` : ""}
-            {degradationState.aiSummaryCorrelationId ? ` correlationId=${degradationState.aiSummaryCorrelationId}.` : ""}
           </p>
         ) : null}
         {unifiedDegradationState.stream_down ? (
@@ -1294,7 +1181,8 @@ export function InterviewShell() {
             meetingId={recoveredMeetingId}
             sessionId={recoveredSessionId}
             enabled={streamSurfaceEnabled}
-            autoConnectOnEntry={streamSurfaceEnabled}
+            autoConnectOnEntry={streamSurfaceEnabled && !isCandidateFlow}
+            requireMediaCheckBeforeConnect={isCandidateFlow}
             participantName={candidateFio.trim() || "Кандидат"}
             interviewId={selectedInterviewId ?? selectedRow?.jobAiId}
             meetingAt={selectedInterviewDetailMatched?.interview.meetingAt ?? selectedRow?.meetingAt}
@@ -1335,6 +1223,11 @@ export function InterviewShell() {
               const jid = selectedInterviewId ?? selectedRow?.jobAiId;
               void stop(typeof jid === "number" ? { interviewId: jid } : undefined);
             }}
+            onTogglePauseAI={() => {
+              void (agentPaused ? resumeAgent() : pauseAgent());
+            }}
+            pauseAIDisabled={busy || phase !== "connected"}
+            aiPaused={agentPaused}
             sessionEnded={completedInterviewLocked}
             uiState={sessionUiState}
             emphasizePrimary
@@ -1383,7 +1276,6 @@ export function InterviewShell() {
           <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
             <HrInsightPanel
               transcripts={transcripts}
-              summary={lastInterviewSummary ?? meetingSummaryFromServer}
               sessionEnded={completedInterviewLocked}
               streamEnabled={streamSurfaceEnabled}
               interviewKey={selectedInterviewId ?? selectedRow?.jobAiId ?? recoveredMeetingId}

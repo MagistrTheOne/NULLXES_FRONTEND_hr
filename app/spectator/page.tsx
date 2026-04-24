@@ -10,14 +10,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   getInterviewById,
-  getMeetingDetail,
+  getRuntimeSnapshotByInterview,
   isApiRequestError,
   listMeetingsSnapshot,
   type InterviewDetail,
-  type MeetingListItem
+  type MeetingListItem,
+  type RuntimeSnapshot
 } from "@/lib/api";
-import type { InterviewSummaryPayload } from "@/lib/interview-summary";
-import { InterviewSummaryDisplay } from "@/components/interview/interview-summary-display";
 import {
   mapProjectionToInterviewStatus,
   mapVideoStatus,
@@ -116,10 +115,10 @@ function SpectatorBody() {
   const [error, setError] = useState<string | null>(null);
   const [observerControl, setObserverControl] = useState<ObserverControlState>(DEFAULT_OBSERVER_CONTROL);
   const [observerStatus, setObserverStatus] = useState<ObserverConnectionStatus>("waiting_meeting");
-  const [meetingSummary, setMeetingSummary] = useState<InterviewSummaryPayload | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [technicalError, setTechnicalError] = useState<string | null>(null);
   const [activeMeetingIdFallback, setActiveMeetingIdFallback] = useState<string | null>(null);
+  const [runtimeSnapshot, setRuntimeSnapshot] = useState<RuntimeSnapshot | null>(null);
 
   useEffect(() => {
     if (!jobAiId) {
@@ -134,24 +133,31 @@ function SpectatorBody() {
         setLoading(true);
       }
       try {
-        const [next, meetingsSnapshot] = await Promise.all([
+        const [next, meetingsSnapshot, fetchedRuntimeSnapshot] = await Promise.all([
           getInterviewById(jobAiId, true),
-          listMeetingsSnapshot().catch(() => null)
+          listMeetingsSnapshot().catch(() => null),
+          getRuntimeSnapshotByInterview(jobAiId).catch(() => null)
         ]);
         const projectedMeetingId = next?.projection?.nullxesMeetingId ?? null;
+        const runtimeMeetingId = fetchedRuntimeSnapshot?.meetingId ?? null;
         const fallbackMeetingId =
           meetingsSnapshot && Array.isArray(meetingsSnapshot.meetings)
             ? pickActiveMeetingForInterview(jobAiId, meetingsSnapshot.meetings)
             : null;
+        const authoritativeFallback =
+          runtimeMeetingId && runtimeMeetingId !== projectedMeetingId
+            ? runtimeMeetingId
+            : runtimeMeetingId
+              ? null
+              : projectedMeetingId && fallbackMeetingId && projectedMeetingId !== fallbackMeetingId
+                ? fallbackMeetingId
+                : projectedMeetingId
+                  ? null
+                  : fallbackMeetingId;
         if (!cancelled) {
           setDetail(next);
-          setActiveMeetingIdFallback(
-            projectedMeetingId && fallbackMeetingId && projectedMeetingId !== fallbackMeetingId
-              ? fallbackMeetingId
-              : projectedMeetingId
-                ? null
-                : fallbackMeetingId
-          );
+          setRuntimeSnapshot(fetchedRuntimeSnapshot);
+          setActiveMeetingIdFallback(authoritativeFallback);
           setError(null);
           setTechnicalError(null);
         }
@@ -208,6 +214,28 @@ function SpectatorBody() {
   const companyName = detail?.projection.companyName ?? "";
   const canConnect = Boolean(effectiveMeetingId);
 
+  useEffect(() => {
+    if (!effectiveMeetingId) {
+      return;
+    }
+    const source = new EventSource(`/api/gateway/runtime/${encodeURIComponent(effectiveMeetingId)}/stream`);
+    source.addEventListener("snapshot", (event) => {
+      try {
+        const snapshot = JSON.parse((event as MessageEvent).data) as RuntimeSnapshot;
+        setRuntimeSnapshot(snapshot);
+        if (snapshot.meetingId !== meetingId) {
+          setActiveMeetingIdFallback(snapshot.meetingId);
+        }
+      } catch {
+        // Ignore malformed SSE frames; polling fallback still runs.
+      }
+    });
+    source.onerror = () => {
+      source.close();
+    };
+    return () => source.close();
+  }, [effectiveMeetingId, meetingId]);
+
   // Глобальный статус интервью (унифицирован с HR mapPhaseToStatus).
   const interviewStatus = useMemo(
     () => mapProjectionToInterviewStatus(detail?.projection.nullxesStatus),
@@ -218,46 +246,6 @@ function SpectatorBody() {
     () => mapVideoStatus(mapObserverStatusToVideoState(observerStatus)),
     [observerStatus]
   );
-
-  useEffect(() => {
-    if (!effectiveMeetingId || detail?.projection.nullxesStatus !== "completed") {
-      setMeetingSummary(null);
-      return;
-    }
-    let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-    const stopPolling = () => {
-      if (timer) {
-        clearInterval(timer);
-        timer = null;
-      }
-    };
-    const loadSummary = async () => {
-      try {
-        const res = await getMeetingDetail(effectiveMeetingId);
-        const raw = res.meeting?.metadata?.interviewSummary;
-        if (!cancelled && raw && typeof raw === "object") {
-          setMeetingSummary(raw as InterviewSummaryPayload);
-        }
-      } catch (err) {
-        if (cancelled) return;
-        if (isApiRequestError(err) && err.status === 404) {
-          setMeetingSummary(null);
-          stopPolling();
-          return;
-        }
-        setMeetingSummary(null);
-      }
-    };
-    void loadSummary();
-    timer = setInterval(() => {
-      void loadSummary();
-    }, 8000);
-    return () => {
-      cancelled = true;
-      stopPolling();
-    };
-  }, [detail?.projection.nullxesStatus, effectiveMeetingId]);
 
   return (
     <div className="min-h-screen bg-[#dfe4ec] px-4 py-6 sm:px-6 sm:py-8 md:px-10">
@@ -337,6 +325,16 @@ function SpectatorBody() {
                     Видеопоток ·{" "}
                     <span className="font-mono text-[11px] text-slate-700">{videoStatus.label}</span>
                   </p>
+                  <p>
+                    Runtime revision ·{" "}
+                    <span className="font-mono text-[11px] text-slate-700">{runtimeSnapshot?.revision ?? "—"}</span>
+                  </p>
+                  <p>
+                    Runtime health ·{" "}
+                    <span className="font-mono text-[11px] text-slate-700">
+                      {runtimeSnapshot?.health.ready ? "ready" : runtimeSnapshot ? runtimeSnapshot.health.warnings.join(",") || "not_ready" : "—"}
+                    </span>
+                  </p>
                   {SHOW_INTERNAL_DEBUG_UI ? (
                     <p className="sm:col-span-2">
                       jobAiStatus · <span className="font-mono text-[11px] text-slate-700">{detail?.projection.jobAiStatus ?? "—"}</span>
@@ -379,8 +377,6 @@ function SpectatorBody() {
           onStatusChange={setObserverStatus}
         />
 
-        {/* === Summary === */}
-        <InterviewSummaryDisplay summary={meetingSummary} title="Итог интервью" />
       </div>
     </div>
   );

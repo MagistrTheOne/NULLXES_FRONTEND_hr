@@ -240,6 +240,7 @@ export function MeetingHeader({
                         variant="destructive"
                         onClick={onStopSession}
                         disabled={stopSessionDisabled}
+                        title={stopSessionDisabled ? "Завершение временно недоступно" : "Завершить текущее интервью"}
                         className="ml-auto h-9 shrink-0 rounded-lg px-4 text-xs font-semibold"
                       >
                         Завершить интервью
@@ -258,6 +259,7 @@ export function MeetingHeader({
                         variant="outline"
                         onClick={onStopSession}
                         disabled
+                        title="Доступно после подключения кандидата"
                         className="ml-auto h-9 shrink-0 rounded-lg px-4 text-xs text-slate-500"
                       >
                         Завершить интервью

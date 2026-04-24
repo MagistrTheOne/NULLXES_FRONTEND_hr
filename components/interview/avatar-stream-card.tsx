@@ -112,6 +112,9 @@ type AvatarStreamCardProps = {
   showStopAI?: boolean;
   onStopAI?: () => void;
   stopAIDisabled?: boolean;
+  onTogglePauseAI?: () => void;
+  pauseAIDisabled?: boolean;
+  aiPaused?: boolean;
   sessionEnded?: boolean;
   uiState?: SessionUIState;
   /** Визуально выделить колонку HR как основную (AI-интервьюер). */
@@ -136,6 +139,9 @@ export function AvatarStreamCard({
   showStopAI = false,
   onStopAI,
   stopAIDisabled = false,
+  onTogglePauseAI,
+  pauseAIDisabled = false,
+  aiPaused = false,
   sessionEnded = false,
   uiState,
   emphasizePrimary = true,
@@ -315,6 +321,22 @@ export function AvatarStreamCard({
             ) : null}
           </div>
           <div className="flex min-h-10 flex-wrap items-stretch gap-2">
+            {showStopAI && onTogglePauseAI ? (
+              <button
+                type="button"
+                disabled={pauseAIDisabled || ended}
+                onClick={onTogglePauseAI}
+                className={cn(
+                  "h-10 min-h-10 rounded-xl border px-4 text-sm font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.15)] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+                  aiPaused
+                    ? "border-emerald-300/80 bg-emerald-600 text-white hover:bg-emerald-700 focus-visible:ring-emerald-400"
+                    : "border-amber-300/80 bg-amber-500 text-white hover:bg-amber-600 focus-visible:ring-amber-400"
+                )}
+                title={aiPaused ? "Возобновить работу HR аватара" : "Поставить HR аватар на паузу"}
+              >
+                {aiPaused ? "Продолжить" : "Пауза"}
+              </button>
+            ) : null}
             {showStopAI && onStopAI ? (
               <button
                 type="button"

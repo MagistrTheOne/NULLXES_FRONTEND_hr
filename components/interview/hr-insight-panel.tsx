@@ -9,8 +9,6 @@
  *   - quick-flag buttons (strong answer / red flag / HR comment) that stamp the
  *     most recent candidate turn — flags are kept in local component state and
  *     are meant as an immediate shorthand for HR while the session runs;
- *   - interview summary display (reuses InterviewSummaryDisplay) once the
- *     post-session summary event arrives.
  *
  * This panel is READ-mostly from the hook: all actual transcript data comes from
  * useInterviewSession().transcripts (agent + candidate audio transcription).
@@ -23,8 +21,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { TranscriptTurn } from "@/hooks/use-interview-session";
-import type { InterviewSummaryPayload } from "@/lib/interview-summary";
-import { InterviewSummaryDisplay } from "./interview-summary-display";
 
 type HrFlagKind = "strong" | "red" | "note";
 
@@ -67,7 +63,6 @@ function formatClock(ts: number): string {
 
 export interface HrInsightPanelProps {
   transcripts: TranscriptTurn[];
-  summary: InterviewSummaryPayload | null;
   /** "Interview is over" — panel should lock flag controls. */
   sessionEnded: boolean;
   /** "Not connected yet" — panel shows a placeholder. */
@@ -78,7 +73,6 @@ export interface HrInsightPanelProps {
 
 export function HrInsightPanel({
   transcripts,
-  summary,
   sessionEnded,
   streamEnabled,
   interviewKey
@@ -210,7 +204,7 @@ export function HrInsightPanel({
         >
           {!streamEnabled && transcripts.length === 0 ? (
             <div className="flex h-full items-center justify-center px-4 text-center text-[11px] text-slate-400">
-              Панель включится после старта сессии — здесь будет live-транскрипт диалога, быстрые флаги и финальный summary.
+              Панель включится после старта сессии — здесь будет live-транскрипт диалога и быстрые флаги HR.
             </div>
           ) : transcripts.length === 0 ? (
             <div className="flex h-full items-center justify-center px-4 text-center text-[11px] text-slate-400">
@@ -320,17 +314,6 @@ export function HrInsightPanel({
             </ul>
           ) : null}
         </div>
-
-        {/* Summary — visible once the post-meeting event lands */}
-        {summary ? (
-          <div className="rounded-xl border border-slate-100 bg-white/80 p-2">
-            <InterviewSummaryDisplay
-              summary={summary}
-              title="Итог интервью"
-              defaultOpen={false}
-            />
-          </div>
-        ) : null}
         </CardContent>
       </Card>
     </section>

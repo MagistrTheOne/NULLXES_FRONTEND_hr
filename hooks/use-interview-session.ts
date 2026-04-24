@@ -8,6 +8,7 @@ import {
   getRealtimeSessionState,
   getRuntimePromptSettingsSoft,
   getInterviewById,
+  issueRuntimeCommand,
   linkInterviewSession,
   sendRealtimeEvent,
   startMeeting,
@@ -19,14 +20,14 @@ import {
 } from "@/lib/api";
 import { buildInterviewInstructions, buildOpeningUtterance } from "@/lib/interview-agent-prompt";
 import { createAgentContextTrace, type AgentContextTrace } from "@/lib/interview-context-diagnostics";
-import { extractCoreFieldsFromInterviewRaw, mergeStartContextWithInterviewDetail } from "@/lib/interview-detail-fields";
+import { mergeStartContextWithInterviewDetail } from "@/lib/interview-detail-fields";
 import type { InterviewStartContext } from "@/lib/interview-start-context";
-import type { InterviewSummaryPayload } from "@/lib/interview-summary";
 import {
-  resolveInterviewSummaryPayload,
-  type AiSummaryMode
-} from "@/lib/resolve-interview-summary";
-import { WebRtcInterviewClient, type OpenAiServerEvent, type WebRtcConnectionState } from "@/lib/webrtc-client";
+  WebRtcInterviewClient,
+  runAudioInputPreflight,
+  type OpenAiServerEvent,
+  type WebRtcConnectionState
+} from "@/lib/webrtc-client";
 
 export type InterviewPhase = "idle" | "starting" | "connected" | "stopping" | "failed";
 export type InterviewStartResult = {
@@ -56,9 +57,6 @@ export type TranscriptTurn = {
   itemId?: string;
 };
 export type InterviewDegradationState = {
-  aiSummaryFallback: boolean;
-  aiSummaryWarning?: string;
-  aiSummaryCorrelationId?: string;
   telemetryUnavailable: boolean;
 };
 
@@ -139,6 +137,28 @@ function formatMeetingAtGuardMessage(meetingAt: string): string {
   return `Собеседование можно запустить только после ${localized}.`;
 }
 
+function inferMeetingFailureReasonCode(
+  message: string
+):
+  | "openai_call_failed"
+  | "openai_client_secret_failed"
+  | "sfu_join_failed"
+  | "network_timeout"
+  | "device_permission_denied"
+  | "audio_input_unavailable"
+  | "gateway_upstream_unreachable"
+  | "unknown" {
+  const lower = message.toLowerCase();
+  if (lower.includes("openai client secret")) return "openai_client_secret_failed";
+  if (lower.includes("realtime session failed") || lower.includes("openai")) return "openai_call_failed";
+  if (lower.includes("stream") || lower.includes("sfu")) return "sfu_join_failed";
+  if (lower.includes("timeout") || lower.includes("timed out")) return "network_timeout";
+  if (lower.includes("permission") || lower.includes("notallowederror")) return "device_permission_denied";
+  if (lower.includes("getusermedia") || lower.includes("audio input")) return "audio_input_unavailable";
+  if (lower.includes("upstream") || lower.includes("gateway")) return "gateway_upstream_unreachable";
+  return "unknown";
+}
+
 type RequiredContextCheck = {
   candidateReady: boolean;
   companyReady: boolean;
@@ -147,50 +167,6 @@ type RequiredContextCheck = {
   questionsReady: boolean;
   questionsCount: number;
 };
-
-function mergeInterviewContextForSummary(
-  existing: InterviewStartContext | null,
-  detail: InterviewDetail
-): InterviewStartContext {
-  const inv = detail.interview as Record<string, unknown>;
-  const ext = extractCoreFieldsFromInterviewRaw(inv);
-  const typed = detail.interview;
-  const proto = detail.prototypeCandidate;
-  const fullFromApi =
-    proto?.sourceFullName?.trim() ||
-    [typed.candidateFirstName, typed.candidateLastName].filter(Boolean).join(" ").trim();
-
-  const pick = (a: string | undefined, b: string | undefined): string | undefined => {
-    const ta = (a ?? "").trim();
-    if (ta) {
-      return a;
-    }
-    const tb = (b ?? "").trim();
-    return tb ? b : a;
-  };
-
-  const mergedQuestions =
-    existing?.questions && existing.questions.length > 0 ? existing.questions : typed.specialty?.questions;
-
-  return {
-    candidateFirstName: pick(existing?.candidateFirstName, typed.candidateFirstName),
-    candidateLastName: pick(existing?.candidateLastName, typed.candidateLastName),
-    candidateFullName: pick(existing?.candidateFullName, fullFromApi || undefined),
-    jobTitle: pick(existing?.jobTitle, ext.jobTitle),
-    vacancyText: pick(existing?.vacancyText, ext.vacancyText),
-    companyName: pick(existing?.companyName, ext.companyName),
-    specialtyName: pick(existing?.specialtyName, ext.specialtyName ?? typed.specialty?.name),
-    greetingSpeech: pick(
-      existing?.greetingSpeech,
-      (typed.greetingSpeechResolved as string | undefined) ?? typed.greetingSpeech
-    ),
-    finalSpeech: pick(
-      existing?.finalSpeech,
-      (typed.finalSpeechResolved as string | undefined) ?? typed.finalSpeech
-    ),
-    questions: mergedQuestions
-  };
-}
 
 function evaluateRequiredContext(context?: InterviewStartContext): RequiredContextCheck {
   const candidateReady = Boolean(
@@ -365,12 +341,9 @@ export function useInterviewSession() {
   const [rtcState, setRtcState] = useState<WebRtcConnectionState>("idle");
   const [remoteAudioStream, setRemoteAudioStream] = useState<MediaStream | null>(null);
   const [agentInputEnabled, setAgentInputEnabled] = useState(true);
+  const [agentPaused, setAgentPaused] = useState(false);
   const [runtimeRecoveryState, setRuntimeRecoveryState] = useState<RuntimeRecoveryState>("idle");
   const [activeInterviewId, setActiveInterviewId] = useState<number | null>(null);
-  const [lastInterviewSummary, setLastInterviewSummary] = useState<InterviewSummaryPayload | null>(null);
-  const [lastSummaryMode, setLastSummaryMode] = useState<AiSummaryMode>("real");
-  const [lastSummaryWarning, setLastSummaryWarning] = useState<string | undefined>(undefined);
-  const [lastSummaryCorrelationId, setLastSummaryCorrelationId] = useState<string | undefined>(undefined);
   const [telemetryUnavailable, setTelemetryUnavailable] = useState(false);
   const [activePromptSettings, setActivePromptSettings] = useState<RuntimePromptSettings | null>(null);
   const [promptSettingsSource, setPromptSettingsSource] = useState<"remote" | "fallback_default">("fallback_default");
@@ -385,9 +358,8 @@ export function useInterviewSession() {
   /**
    * Reactive mirror of `transcriptsRef.current` — identical data, but state so
    * the HR insight panel can re-render when new turns arrive. We push to BOTH
-   * the ref (used by stop() flush / post-meeting summary pipeline) and this
-   * state (consumed by UI). Kept as a ref-shaped array, not a Map, because
-   * transcript order is meaningful.
+   * the ref (used for lifecycle cleanup) and this state (consumed by UI).
+   * Kept as a ref-shaped array, not a Map, because transcript order is meaningful.
    */
   const [transcripts, setTranscripts] = useState<TranscriptTurn[]>([]);
 
@@ -744,6 +716,102 @@ export function useInterviewSession() {
     [ensureClient]
   );
 
+  const pauseAgent = useCallback(async () => {
+    if (phase !== "connected") {
+      return;
+    }
+    const rtc = ensureClient();
+    const activeSessionId = rtc.getSessionId();
+    if (!activeSessionId) {
+      return;
+    }
+
+    setAgentPaused(true);
+    rtc.setAudioInputEnabled(false);
+    setAgentInputEnabled(false);
+    setAgentState("idle");
+
+    try {
+      await rtc.postEvent({
+        type: "response.cancel"
+      });
+    } catch {
+      // Ignore no-op cancel failures: pause state remains local.
+    }
+    try {
+      await rtc.postEvent({
+        type: "session.update",
+        source: "frontend",
+        message: "agent_paused"
+      });
+    } catch {
+      // Breadcrumb only.
+    }
+    await sendRealtimeEvent(activeSessionId, {
+      type: "hr.agent.pause",
+      source: "jobaidemo",
+      meetingId: meetingId ?? undefined,
+      paused: true
+    }).catch(() => undefined);
+    if (meetingId) {
+      await issueRuntimeCommand(meetingId, {
+        type: "agent.pause",
+        issuedBy: "hr_ui",
+        payload: { sessionId: activeSessionId }
+      }).catch(() => undefined);
+    }
+  }, [ensureClient, meetingId, phase]);
+
+  const resumeAgent = useCallback(async () => {
+    if (phase !== "connected") {
+      return;
+    }
+    const rtc = ensureClient();
+    const activeSessionId = rtc.getSessionId();
+    if (!activeSessionId) {
+      return;
+    }
+
+    setAgentPaused(false);
+    rtc.setAudioInputEnabled(true);
+    setAgentInputEnabled(true);
+    setAgentState("listening");
+
+    try {
+      await rtc.postEvent({
+        type: "session.update",
+        source: "frontend",
+        message: "agent_resumed"
+      });
+    } catch {
+      // Breadcrumb only.
+    }
+    try {
+      await rtc.postEvent({
+        type: "response.create",
+        response: {
+          modalities: ["text", "audio"],
+          instructions: "Продолжи интервью с текущего места и задай следующий уместный вопрос."
+        }
+      });
+    } catch {
+      // Agent will continue naturally on next candidate speech.
+    }
+    await sendRealtimeEvent(activeSessionId, {
+      type: "hr.agent.resume",
+      source: "jobaidemo",
+      meetingId: meetingId ?? undefined,
+      paused: false
+    }).catch(() => undefined);
+    if (meetingId) {
+      await issueRuntimeCommand(meetingId, {
+        type: "agent.resume",
+        issuedBy: "hr_ui",
+        payload: { sessionId: activeSessionId }
+      }).catch(() => undefined);
+    }
+  }, [ensureClient, meetingId, phase]);
+
   useEffect(() => {
     activeSessionIdRef.current = sessionId;
   }, [sessionId]);
@@ -1072,13 +1140,15 @@ export function useInterviewSession() {
       );
     }
 
+    const preflight = await runAudioInputPreflight();
+    if (!preflight.ok) {
+      throw new Error(preflight.message);
+    }
+
     setPhase("starting");
     setError(null);
+    setAgentPaused(false);
     setRuntimeRecoveryState("idle");
-    setLastInterviewSummary(null);
-    setLastSummaryMode("real");
-    setLastSummaryWarning(undefined);
-    setLastSummaryCorrelationId(undefined);
     setTelemetryUnavailable(false);
     sessionUpdatedVersionRef.current = 0;
     flushSessionUpdatedWaiters(false);
@@ -1093,6 +1163,7 @@ export function useInterviewSession() {
     greetingDoneRef.current = false;
     lastResponseIdRef.current = null;
 
+    let meetingStarted = false;
     try {
       await startMeeting({
         internalMeetingId,
@@ -1112,6 +1183,7 @@ export function useInterviewSession() {
           }
         }
       });
+      meetingStarted = true;
       setMeetingId(internalMeetingId);
       setActiveInterviewId(options?.interviewId ?? null);
 
@@ -1162,11 +1234,15 @@ export function useInterviewSession() {
       setPhase("failed");
       const startError = err instanceof Error ? err : new Error("Failed to start session");
       setError(startError.message);
-      if (internalMeetingId) {
+      if (internalMeetingId && meetingStarted) {
         try {
           await failMeeting(internalMeetingId, {
             status: "failed_connect_ws_audio",
-            reason: "frontend_start_failed"
+            reason: "frontend_start_failed",
+            reasonCode: inferMeetingFailureReasonCode(startError.message),
+            metadata: {
+              failureSource: "useInterviewSession.start"
+            }
           });
         } catch {
           // Ignore secondary fail-notification errors in prototype.
@@ -1187,36 +1263,16 @@ export function useInterviewSession() {
       const activeMeetingId = meetingId;
       const activeSessionId = sessionId;
       const rtc = rtcRef.current;
-
-      let summaryInput: InterviewStartContext | null = lastInterviewContextRef.current;
-      const interviewIdForSummary = options?.interviewId ?? activeInterviewId ?? undefined;
-      if (interviewIdForSummary) {
-        try {
-          const detail = await getInterviewById(interviewIdForSummary, true);
-          summaryInput = mergeInterviewContextForSummary(summaryInput, detail);
-        } catch {
-          // Оставляем контекст из памяти сессии (например, офлайн gateway).
+      await issueRuntimeCommand(activeMeetingId, {
+        type: "session.stop",
+        issuedBy: "hr_ui",
+        payload: {
+          sessionId: activeSessionId ?? undefined,
+          interviewId: options?.interviewId ?? activeInterviewId ?? undefined
         }
-      }
+      }).catch(() => undefined);
 
-      const collectedTranscripts = transcriptsRef.current.slice();
-      const summaryResult = await resolveInterviewSummaryPayload(summaryInput, collectedTranscripts);
-      const summaryPayload = summaryResult.summary;
-      setLastInterviewSummary(summaryPayload);
-      setLastSummaryMode(summaryResult.aiSummaryMode);
-      setLastSummaryWarning(summaryResult.warning);
-      setLastSummaryCorrelationId(summaryResult.correlationId);
       setFlowPhase("closing");
-
-      if (activeSessionId) {
-        await sendRealtimeEvent(activeSessionId, {
-          type: "interview.summary.generated",
-          schemaVersion: "1.0",
-          source: "jobaidemo",
-          summarySchemaVersion: summaryPayload.summarySchemaVersion,
-          summary: summaryPayload
-        }).catch(() => undefined);
-      }
 
       if (rtc?.getSessionId()) {
         // Tell OpenAI to abort whatever the agent is currently saying. Without
@@ -1276,7 +1332,6 @@ export function useInterviewSession() {
         reason: "manual_stop",
         finalStatus: "completed",
         metadata: {
-          interviewSummary: summaryPayload,
           jobAiInterviewId: options?.interviewId ?? activeInterviewId ?? undefined
         }
       });
@@ -1318,6 +1373,7 @@ export function useInterviewSession() {
       setAvatarReady(false);
       setTelemetryUnavailable(false);
       setAgentInputEnabled(true);
+      setAgentPaused(false);
       sessionUpdatedVersionRef.current = 0;
       flushSessionUpdatedWaiters(false);
       pendingCancelRef.current = null;
@@ -1345,7 +1401,11 @@ export function useInterviewSession() {
     }
     await failMeeting(meetingId, {
       status: "failed_connect_ws_audio",
-      reason: "manual_mark_failed"
+      reason: "manual_mark_failed",
+      reasonCode: "unknown",
+      metadata: {
+        failureSource: "useInterviewSession.markFailed"
+      }
     });
     setRuntimeRecoveryState("idle");
     setPhase("failed");
@@ -1353,12 +1413,9 @@ export function useInterviewSession() {
 
   const degradationState = useMemo<InterviewDegradationState>(
     () => ({
-      aiSummaryFallback: lastSummaryMode === "fallback",
-      aiSummaryWarning: lastSummaryWarning,
-      aiSummaryCorrelationId: lastSummaryCorrelationId,
       telemetryUnavailable
     }),
-    [lastSummaryCorrelationId, lastSummaryMode, lastSummaryWarning, telemetryUnavailable]
+    [telemetryUnavailable]
   );
 
   const statusLabel = useMemo(() => {
@@ -1391,12 +1448,12 @@ export function useInterviewSession() {
     sessionId,
     avatarReady,
     degradationState,
-    lastInterviewSummary,
     lastAgentContextTrace,
     rtcState,
     error,
     remoteAudioStream,
     agentInputEnabled,
+    agentPaused,
     runtimeRecoveryState,
     promptSettingsSource,
     promptSettingsLastStatus,
@@ -1414,6 +1471,8 @@ export function useInterviewSession() {
     start,
     stop,
     markFailed,
+    pauseAgent,
+    resumeAgent,
     setObserverTalkIsolation,
     hydrateActiveSession
   };

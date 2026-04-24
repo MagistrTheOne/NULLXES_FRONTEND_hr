@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
 import { InterviewStatusBadge } from "@/components/interview/interview-status-badge";
 import { MicIndicator } from "@/components/interview/mic-indicator";
+import { issueRuntimeCommand } from "@/lib/api";
 import { mapVideoStatus, type VideoConnectionState } from "@/lib/interview-status";
 import type { SessionUIState } from "@/lib/session-ui-state";
 import { cn } from "@/lib/utils";
@@ -75,12 +76,15 @@ function ObserverCallBody({ localUserId, onParticipantsDetected }: ObserverCallB
   const participants = useParticipants();
 
   const orderedParticipants = useMemo(() => {
-    const observer = participants.find((participant) => participant.userId === localUserId) ?? null;
     const candidate = participants.find((participant) => participant.userId?.startsWith("candidate-")) ?? null;
-    const agent = participants.find((participant) => participant.userId?.startsWith("agent-")) ?? null;
+    const agent =
+      participants.find(
+        (participant) =>
+          participant.userId?.startsWith("agent-") || participant.userId?.startsWith("agent_")
+      ) ?? null;
     const byId = new Set<string>();
     const ordered: typeof participants = [];
-    for (const participant of [observer, candidate, agent]) {
+    for (const participant of [candidate, agent]) {
       if (!participant?.sessionId || byId.has(participant.sessionId)) {
         continue;
       }
@@ -88,7 +92,7 @@ function ObserverCallBody({ localUserId, onParticipantsDetected }: ObserverCallB
       ordered.push(participant);
     }
     for (const participant of participants) {
-      if (!participant.sessionId || byId.has(participant.sessionId)) {
+      if (!participant.sessionId || participant.userId === localUserId || byId.has(participant.sessionId)) {
         continue;
       }
       byId.add(participant.sessionId);
@@ -162,6 +166,7 @@ export function ObserverStreamCard({
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
   const autoJoinAttemptForRef = useRef<string | null>(null);
   const sessionSuffixRef = useRef<string>(Math.random().toString(36).slice(2, 8));
+  const connectEpochRef = useRef(0);
 
   const ended = Boolean(sessionEnded) || uiState === "completed";
   const canConnect = enabled && visible && Boolean(meetingId) && !ended;
@@ -202,6 +207,21 @@ export function ObserverStreamCard({
   }, [ended, status]);
 
   const videoStatusView = useMemo(() => mapVideoStatus(videoState), [videoState]);
+  const statusHint = useMemo(() => {
+    if (ended) {
+      return "Сессия завершена. Повторное подключение недоступно.";
+    }
+    if (!meetingId || !enabled) {
+      return "Интервью еще не запущено. Подключение доступно после активации сессии кандидата.";
+    }
+    if (busy) {
+      return "Подключаем наблюдателя к активной сессии...";
+    }
+    if (error) {
+      return "Подключение не удалось. Повторите попытку.";
+    }
+    return "Наблюдатель подключен к активной сессии.";
+  }, [busy, enabled, ended, error, meetingId]);
 
   useEffect(() => {
     onStatusChange?.(status);
@@ -226,6 +246,7 @@ export function ObserverStreamCard({
   }, [call, mutePlayback]);
 
   const disconnectStream = useCallback(async () => {
+    connectEpochRef.current += 1;
     if (call) {
       await call.leave().catch(() => undefined);
     }
@@ -252,6 +273,12 @@ export function ObserverStreamCard({
     }
     setBusy(true);
     setError(null);
+    const epoch = ++connectEpochRef.current;
+    await issueRuntimeCommand(meetingId, {
+      type: "observer.reconnect",
+      issuedBy: "observer_ui",
+      payload: { participantName }
+    }).catch(() => undefined);
     try {
       const observerUserId = `observer-${meetingId}-${sessionSuffixRef.current}`;
       let lastError: Error | null = null;
@@ -311,6 +338,11 @@ export function ObserverStreamCard({
           await streamCall.camera.disable().catch(() => undefined);
           await streamCall.microphone.disable().catch(() => undefined);
 
+          if (connectEpochRef.current !== epoch) {
+            await streamCall.leave().catch(() => undefined);
+            await streamClient.disconnectUser().catch(() => undefined);
+            return;
+          }
           setClient(streamClient);
           setCall(streamCall);
           setLocalUserId(payload.user.id);
@@ -344,16 +376,21 @@ export function ObserverStreamCard({
         throw lastError;
       }
     } catch (err) {
+      if (connectEpochRef.current !== epoch) {
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to start observer stream");
       // Let auto-join attempt again on next render cycle after transient failures.
       autoJoinAttemptForRef.current = null;
     } finally {
-      setBusy(false);
+      if (connectEpochRef.current === epoch) {
+        setBusy(false);
+      }
     }
   }, [ended, meetingId, participantName]);
 
   useEffect(() => {
-    if (!canConnect || call || busy) {
+    if (!canConnect || call || busy || error) {
       return;
     }
     const autoJoinKey = meetingId ?? "no-meeting";
@@ -362,7 +399,7 @@ export function ObserverStreamCard({
     }
     autoJoinAttemptForRef.current = autoJoinKey;
     void startStream();
-  }, [busy, call, canConnect, meetingId, startStream]);
+  }, [busy, call, canConnect, error, meetingId, startStream]);
 
   useEffect(() => {
     if (canConnect) {
@@ -443,6 +480,13 @@ export function ObserverStreamCard({
                 className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
                 onClick={() => void startStream()}
                 disabled={busy || ended}
+                title={
+                  ended
+                    ? "Сессия завершена"
+                    : busy
+                      ? "Выполняется подключение"
+                      : "Подключить наблюдателя к активной сессии"
+                }
               >
                 Подключиться
               </Button>
@@ -471,9 +515,7 @@ export function ObserverStreamCard({
         <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
           {showJoinLoader ? <Loader2 className="h-7 w-7 shrink-0 animate-spin text-slate-600" aria-hidden /> : null}
           <p className="text-sm font-medium text-slate-700">{videoStatusView.label}</p>
-          {!canConnect && !ended ? (
-            <p className="text-xs text-slate-600">Интервью ещё не запущено</p>
-          ) : null}
+          <p className="max-w-[280px] text-xs text-slate-600">{statusHint}</p>
         </div>
       )}
     </StreamParticipantShell>

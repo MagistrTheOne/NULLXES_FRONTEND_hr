@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  CallControls,
   CallingState,
   ParticipantView,
   StreamCall,
@@ -22,6 +21,7 @@ import { ConnectionQualityBadge } from "@/components/interview/connection-qualit
 import { useConnectionQuality, type ConnectionQualityReading } from "@/hooks/use-connection-quality";
 import { cn } from "@/lib/utils";
 import { VideoOff } from "lucide-react";
+import { acquireLocalMediaPreviewStream } from "@/lib/webrtc-client";
 
 type StreamTokenResponse = {
   apiKey: string;
@@ -35,14 +35,25 @@ type StreamTokenResponse = {
 };
 
 type CandidateCallBodyProps = {
+  call: ReturnType<StreamVideoClient["call"]>;
   showControls: boolean;
   meetingId: string;
+  initialCameraEnabled?: boolean;
+  initialMicEnabled?: boolean;
   onLeave?: (err?: Error) => void | Promise<void>;
   /** Bubble live connection quality up to the shell for banner / toast. */
   onQualityChange?: (reading: ConnectionQualityReading) => void;
 };
 
-function CandidateCallBody({ showControls, meetingId, onLeave, onQualityChange }: CandidateCallBodyProps) {
+function CandidateCallBody({
+  call,
+  showControls,
+  meetingId,
+  initialCameraEnabled = false,
+  initialMicEnabled = false,
+  onLeave,
+  onQualityChange
+}: CandidateCallBodyProps) {
   const { useCallCallingState, useParticipants } = useCallStateHooks();
   const state = useCallCallingState();
   const participants = useParticipants();
@@ -55,13 +66,59 @@ function CandidateCallBody({ showControls, meetingId, onLeave, onQualityChange }
   // component.
   useEffect(() => {
     onQualityChange?.(quality);
-  }, [
-    onQualityChange,
-    quality.quality,
-    quality.rttMs,
-    quality.packetLossPercent,
-    quality.reason
-  ]);
+  }, [onQualityChange, quality]);
+  const [cameraEnabled, setCameraEnabled] = useState(initialCameraEnabled);
+  const [micEnabled, setMicEnabled] = useState(initialMicEnabled);
+  const [cameraBusy, setCameraBusy] = useState(false);
+  const [micBusy, setMicBusy] = useState(false);
+
+  const runTrackAction = useCallback(
+    async (toggle: () => Promise<void>) => {
+      try {
+        await toggle();
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        await toggle();
+      }
+    },
+    []
+  );
+
+  const handleCameraToggle = useCallback(async () => {
+    if (cameraBusy) {
+      return;
+    }
+    setCameraBusy(true);
+    try {
+      if (cameraEnabled) {
+        await runTrackAction(() => call.camera.disable());
+        setCameraEnabled(false);
+      } else {
+        await runTrackAction(() => call.camera.enable());
+        setCameraEnabled(true);
+      }
+    } finally {
+      setCameraBusy(false);
+    }
+  }, [call.camera, cameraBusy, cameraEnabled, runTrackAction]);
+
+  const handleMicToggle = useCallback(async () => {
+    if (micBusy) {
+      return;
+    }
+    setMicBusy(true);
+    try {
+      if (micEnabled) {
+        await runTrackAction(() => call.microphone.disable());
+        setMicEnabled(false);
+      } else {
+        await runTrackAction(() => call.microphone.enable());
+        setMicEnabled(true);
+      }
+    } finally {
+      setMicBusy(false);
+    }
+  }, [call.microphone, micBusy, micEnabled, runTrackAction]);
 
   if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
     return <div className="flex h-full items-center justify-center text-sm text-slate-600">Поток не подключён</div>;
@@ -85,8 +142,35 @@ function CandidateCallBody({ showControls, meetingId, onLeave, onQualityChange }
         ) : null}
       </div>
       {showControls ? (
-        <div className="stream-call-controls">
-          <CallControls onLeave={onLeave} />
+        <div className="stream-call-controls flex flex-wrap items-center justify-center gap-2 p-2">
+          <Button
+            type="button"
+            variant={cameraEnabled ? "default" : "secondary"}
+            className="h-9 rounded-full px-4 text-xs"
+            disabled={cameraBusy}
+            onClick={() => void handleCameraToggle()}
+            title={cameraEnabled ? "Выключить камеру" : "Включить камеру"}
+          >
+            {cameraBusy ? "Камера..." : cameraEnabled ? "Камера: вкл" : "Камера: выкл"}
+          </Button>
+          <Button
+            type="button"
+            variant={micEnabled ? "default" : "secondary"}
+            className="h-9 rounded-full px-4 text-xs"
+            disabled={micBusy}
+            onClick={() => void handleMicToggle()}
+            title={micEnabled ? "Выключить микрофон" : "Включить микрофон"}
+          >
+            {micBusy ? "Микрофон..." : micEnabled ? "Микрофон: вкл" : "Микрофон: выкл"}
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            className="h-9 rounded-full px-4 text-xs"
+            onClick={() => void onLeave?.()}
+          >
+            Выйти из звонка
+          </Button>
         </div>
       ) : null}
     </div>
@@ -116,6 +200,11 @@ type CandidateStreamCardProps = {
   uiState?: SessionUIState;
   /** Bubble live connection quality up to the shell (banner + toast hooks). */
   onQualityChange?: (reading: ConnectionQualityReading) => void;
+  /**
+   * Кандидат: сначала одна кнопка проверки камеры+микрофона (вкл/выкл превью),
+   * затем ручное «Подключиться» к Stream; авто-join видео отключён.
+   */
+  requireMediaCheckBeforeConnect?: boolean;
 };
 
 export function CandidateStreamCard({
@@ -123,6 +212,7 @@ export function CandidateStreamCard({
   sessionId,
   enabled = true,
   autoConnectOnEntry = false,
+  requireMediaCheckBeforeConnect = false,
   participantName,
   interviewId,
   meetingAt,
@@ -137,6 +227,10 @@ export function CandidateStreamCard({
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
+  const [mediaCheckBusy, setMediaCheckBusy] = useState(false);
+  const [mediaCheckPassedOnce, setMediaCheckPassedOnce] = useState(false);
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   // Фильтр: какие ошибки мы НЕ показываем кандидату красной плашкой.
   // Технические транспорт-ошибки (timeout / network / stream-io) ничего
   // полезного кандидату не сообщают, а только пугают его посреди интервью.
@@ -168,6 +262,7 @@ export function CandidateStreamCard({
 
   const ended = Boolean(sessionEnded) || uiState === "completed";
   const interactiveDisabled = ended;
+  const mediaCheckActive = Boolean(previewStream);
 
   const statusBadgeLabel = useMemo(() => {
     if (ended) {
@@ -205,6 +300,66 @@ export function CandidateStreamCard({
     participantIdRef.current = generated;
     return generated;
   }, [interviewId]);
+
+  useEffect(() => {
+    const el = previewVideoRef.current;
+    if (!el || !previewStream) {
+      return;
+    }
+    el.srcObject = previewStream;
+    void el.play().catch(() => undefined);
+    return () => {
+      el.srcObject = null;
+    };
+  }, [previewStream]);
+
+  useEffect(() => {
+    return () => {
+      setPreviewStream((current) => {
+        current?.getTracks().forEach((track) => track.stop());
+        return null;
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    if (ended) {
+      setPreviewStream((current) => {
+        current?.getTracks().forEach((track) => track.stop());
+        return null;
+      });
+    }
+  }, [ended]);
+
+  const stopMediaPreview = useCallback(() => {
+    setPreviewStream((current) => {
+      current?.getTracks().forEach((track) => track.stop());
+      return null;
+    });
+  }, []);
+
+  const toggleMediaDevicesCheck = useCallback(async () => {
+    if (mediaCheckBusy) {
+      return;
+    }
+    if (previewStream) {
+      stopMediaPreview();
+      return;
+    }
+    setMediaCheckBusy(true);
+    setError(null);
+    try {
+      const result = await acquireLocalMediaPreviewStream();
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setMediaCheckPassedOnce(true);
+      setPreviewStream(result.stream);
+    } finally {
+      setMediaCheckBusy(false);
+    }
+  }, [mediaCheckBusy, previewStream, stopMediaPreview]);
 
   useEffect(() => {
     const root = streamViewportRef.current;
@@ -246,6 +401,10 @@ export function CandidateStreamCard({
     if (ended) {
       return;
     }
+    if (requireMediaCheckBeforeConnect && !mediaCheckPassedOnce) {
+      setError("Сначала нажмите «Проверить камеру и микрофон» и убедитесь, что превью открывается.");
+      return;
+    }
     if (isMeetingNotYetOpen(meetingAt)) {
       setError(formatCandidateMeetingLobbyMessage(meetingAt!.trim()));
       return;
@@ -255,6 +414,9 @@ export function CandidateStreamCard({
     try {
       let effectiveMeetingId = meetingId;
       let effectiveSessionId = sessionId;
+      if (requireMediaCheckBeforeConnect) {
+        stopMediaPreview();
+      }
 
       if (!effectiveMeetingId || !effectiveSessionId) {
         const started = await onEnsureInterviewStart({
@@ -299,12 +461,23 @@ export function CandidateStreamCard({
         options: { timeout: 60_000 }
       });
       const streamCall = streamClient.call(payload.callType, payload.callId);
-      await streamCall.camera.disable().catch(() => undefined);
-      await streamCall.join({ create: true, video: false });
-      await streamCall.camera.disable().catch(() => undefined);
+      const publishLocalMedia = requireMediaCheckBeforeConnect;
+      if (!publishLocalMedia) {
+        await streamCall.camera.disable().catch(() => undefined);
+        await streamCall.microphone.disable().catch(() => undefined);
+      }
+      await streamCall.join({ create: true, video: publishLocalMedia });
+      if (publishLocalMedia) {
+        await streamCall.camera.enable().catch(() => undefined);
+        await streamCall.microphone.enable().catch(() => undefined);
+      } else {
+        await streamCall.camera.disable().catch(() => undefined);
+        await streamCall.microphone.disable().catch(() => undefined);
+      }
 
       setClient(streamClient);
       setCall(streamCall);
+      stopMediaPreview();
 
       if (effectiveSessionId) {
         await sendRealtimeEvent(effectiveSessionId, {
@@ -317,14 +490,26 @@ export function CandidateStreamCard({
       const message = err instanceof Error ? err.message : "Failed to start candidate stream";
       // Всегда логируем в консоль — чтобы в dev-tools осталась диагностика,
       // даже если UI-плашка подавлена фильтром visibleError.
-      // eslint-disable-next-line no-console
       console.warn("[candidate-stream-card] startStream failed:", message, err);
       setError(message);
       autoJoinAttemptForRef.current = null;
     } finally {
       setBusy(false);
     }
-  }, [ended, getParticipantId, interviewContext, interviewId, meetingAt, meetingId, onEnsureInterviewStart, participantName, sessionId]);
+  }, [
+    ended,
+    getParticipantId,
+    interviewContext,
+    interviewId,
+    meetingAt,
+    meetingId,
+    mediaCheckPassedOnce,
+    onEnsureInterviewStart,
+    participantName,
+    requireMediaCheckBeforeConnect,
+    sessionId,
+    stopMediaPreview
+  ]);
 
   useEffect(() => {
     if (ended) {
@@ -338,6 +523,9 @@ export function CandidateStreamCard({
     if (!enabled || ended || !meetingId || call || busy) {
       return;
     }
+    if (requireMediaCheckBeforeConnect && !mediaCheckPassedOnce) {
+      return;
+    }
     if (isMeetingNotYetOpen(meetingAt)) {
       return;
     }
@@ -347,10 +535,13 @@ export function CandidateStreamCard({
     }
     autoJoinAttemptForRef.current = autoJoinKey;
     void startStream();
-  }, [busy, call, enabled, ended, meetingAt, meetingId, startStream]);
+  }, [busy, call, enabled, ended, mediaCheckPassedOnce, meetingAt, meetingId, requireMediaCheckBeforeConnect, startStream]);
 
   useEffect(() => {
     if (!autoConnectOnEntry || ended || autoEntryAttemptRef.current || call || busy) {
+      return;
+    }
+    if (requireMediaCheckBeforeConnect && !mediaCheckPassedOnce) {
       return;
     }
     if (isMeetingNotYetOpen(meetingAt)) {
@@ -358,7 +549,7 @@ export function CandidateStreamCard({
     }
     autoEntryAttemptRef.current = true;
     void startStream();
-  }, [autoConnectOnEntry, busy, call, ended, meetingAt, startStream]);
+  }, [autoConnectOnEntry, busy, call, ended, mediaCheckPassedOnce, meetingAt, requireMediaCheckBeforeConnect, startStream]);
 
   useEffect(() => {
     if (enabled && meetingId) {
@@ -407,6 +598,47 @@ export function CandidateStreamCard({
                 Сессия завершена.
                 <span className="mt-0.5 block">Повторное подключение недоступно.</span>
               </p>
+            ) : !call && showControls && requireMediaCheckBeforeConnect ? (
+              <>
+                <Button
+                  type="button"
+                  variant={mediaCheckActive ? "secondary" : "default"}
+                  className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+                  disabled={mediaCheckBusy || interactiveDisabled}
+                  onClick={() => void toggleMediaDevicesCheck()}
+                  title={
+                    mediaCheckActive
+                      ? "Остановить проверку и выключить камеру/микрофон"
+                      : "Включить камеру и микрофон для проверки"
+                  }
+                >
+                  {mediaCheckBusy
+                    ? "Проверка…"
+                    : mediaCheckActive
+                      ? "Остановить проверку"
+                      : "Проверить камеру и микрофон"}
+                </Button>
+                <Button
+                  type="button"
+                  className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+                  onClick={() => void startStream()}
+                  disabled={
+                    busy ||
+                    interactiveDisabled ||
+                    isMeetingNotYetOpen(meetingAt) ||
+                    !mediaCheckPassedOnce
+                  }
+                  title={
+                    !mediaCheckPassedOnce
+                      ? "Сначала выполните проверку устройств"
+                      : isMeetingNotYetOpen(meetingAt) && meetingAt?.trim()
+                          ? formatCandidateMeetingLobbyMessage(meetingAt.trim())
+                          : "Подключиться к видеопотоку собеседования"
+                  }
+                >
+                  Подключиться к видео
+                </Button>
+              </>
             ) : !call && showControls && !autoConnectOnEntry ? (
               <Button
                 type="button"
@@ -433,8 +665,11 @@ export function CandidateStreamCard({
             <StreamTheme>
               <StreamCall call={call}>
                 <CandidateCallBody
+                  call={call}
                   showControls={showControls && !interactiveDisabled}
                   meetingId={callRoomId}
+                  initialCameraEnabled={requireMediaCheckBeforeConnect}
+                  initialMicEnabled={requireMediaCheckBeforeConnect}
                   onLeave={handleLeaveFromControls}
                   onQualityChange={onQualityChange}
                 />
@@ -453,12 +688,23 @@ export function CandidateStreamCard({
           ) : (
             <>
               <p className="text-sm font-medium text-slate-700">Видео не подключено</p>
-              <p className="max-w-[260px] text-sm text-slate-600">
-                {autoConnectOnEntry
-                  ? "Подключение к потоку выполнится автоматически после старта сессии HR."
-                  : showControls
-                    ? "Нажмите «Подключиться», чтобы начать"
-                    : "Ожидание старта собеседования"}
+              {previewStream ? (
+                <video
+                  ref={previewVideoRef}
+                  className="mt-1 max-h-36 w-full max-w-[280px] rounded-lg border border-slate-200 bg-black object-cover shadow-sm"
+                  playsInline
+                  muted
+                  autoPlay
+                />
+              ) : null}
+              <p className="max-w-[280px] text-sm text-slate-600">
+                {requireMediaCheckBeforeConnect
+                  ? "Шаг 1: проверьте камеру и микрофон одной кнопкой внизу. Шаг 2: когда сессия активна — «Подключиться к видео»."
+                  : autoConnectOnEntry
+                    ? "Подключение к потоку выполнится автоматически после старта сессии HR."
+                    : showControls
+                      ? "Нажмите «Подключиться», чтобы начать"
+                      : "Ожидание старта собеседования"}
               </p>
             </>
           )}
