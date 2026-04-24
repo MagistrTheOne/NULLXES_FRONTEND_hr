@@ -46,19 +46,34 @@ type CandidateCallBodyProps = {
 };
 
 function CandidateCallBody({
-  call,
+  call: _call,
   showControls,
-  meetingId,
-  initialCameraEnabled = false,
-  initialMicEnabled = false,
+  meetingId: _meetingId,
+  initialCameraEnabled: _initialCameraEnabled = false,
+  initialMicEnabled: _initialMicEnabled = false,
   onLeave,
   onQualityChange
 }: CandidateCallBodyProps) {
-  const { useCallCallingState, useParticipants } = useCallStateHooks();
+  void _call;
+  void _meetingId;
+  void _initialCameraEnabled;
+  void _initialMicEnabled;
+  const {
+    useCallCallingState,
+    useLocalParticipant,
+    useCameraState,
+    useMicrophoneState
+  } = useCallStateHooks();
   const state = useCallCallingState();
-  const participants = useParticipants();
-  const candidateParticipant =
-    participants.find((participant) => participant.userId === `candidate-${meetingId}`) ?? participants[0] ?? null;
+  const localParticipant = useLocalParticipant();
+  const { camera, optionsAwareIsMute: cameraPublishMuted, isTogglePending: cameraTogglePending } = useCameraState({
+    optimisticUpdates: true
+  });
+  const { microphone, optionsAwareIsMute: micPublishMuted, isTogglePending: micTogglePending } = useMicrophoneState({
+    optimisticUpdates: true
+  });
+  const cameraEnabled = !cameraPublishMuted;
+  const micEnabled = !micPublishMuted;
   const quality = useConnectionQuality();
 
   // Push quality readings up to the shell so banner / toast can react. Wrap
@@ -67,8 +82,6 @@ function CandidateCallBody({
   useEffect(() => {
     onQualityChange?.(quality);
   }, [onQualityChange, quality]);
-  const [cameraEnabled, setCameraEnabled] = useState(initialCameraEnabled);
-  const [micEnabled, setMicEnabled] = useState(initialMicEnabled);
   const [cameraBusy, setCameraBusy] = useState(false);
   const [micBusy, setMicBusy] = useState(false);
 
@@ -85,40 +98,36 @@ function CandidateCallBody({
   );
 
   const handleCameraToggle = useCallback(async () => {
-    if (cameraBusy) {
+    if (cameraBusy || cameraTogglePending) {
       return;
     }
     setCameraBusy(true);
     try {
       if (cameraEnabled) {
-        await runTrackAction(() => call.camera.disable());
-        setCameraEnabled(false);
+        await runTrackAction(() => camera.disable());
       } else {
-        await runTrackAction(() => call.camera.enable());
-        setCameraEnabled(true);
+        await runTrackAction(() => camera.enable());
       }
     } finally {
       setCameraBusy(false);
     }
-  }, [call.camera, cameraBusy, cameraEnabled, runTrackAction]);
+  }, [camera, cameraBusy, cameraEnabled, cameraTogglePending, runTrackAction]);
 
   const handleMicToggle = useCallback(async () => {
-    if (micBusy) {
+    if (micBusy || micTogglePending) {
       return;
     }
     setMicBusy(true);
     try {
       if (micEnabled) {
-        await runTrackAction(() => call.microphone.disable());
-        setMicEnabled(false);
+        await runTrackAction(() => microphone.disable());
       } else {
-        await runTrackAction(() => call.microphone.enable());
-        setMicEnabled(true);
+        await runTrackAction(() => microphone.enable());
       }
     } finally {
       setMicBusy(false);
     }
-  }, [call.microphone, micBusy, micEnabled, runTrackAction]);
+  }, [micBusy, micEnabled, micTogglePending, microphone, runTrackAction]);
 
   if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
     return <div className="flex h-full items-center justify-center text-sm text-slate-600">Поток не подключён</div>;
@@ -129,8 +138,14 @@ function CandidateCallBody({
   return (
     <div className="stream-call-ui h-full w-full">
       <div className="stream-call-layout relative">
-        {candidateParticipant ? (
-          <ParticipantView participant={candidateParticipant} trackType="videoTrack" />
+        {localParticipant ? (
+          <ParticipantView
+            participant={localParticipant}
+            trackType="videoTrack"
+            // Default Stream chrome reads SFU track flags and often disagrees with
+            // publishing toggles for a beat; we already show камера/микрофон below.
+            ParticipantViewUI={() => null}
+          />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-500">Ожидание кандидата</div>
         )}
@@ -147,21 +162,21 @@ function CandidateCallBody({
             type="button"
             variant={cameraEnabled ? "default" : "secondary"}
             className="h-9 rounded-full px-4 text-xs"
-            disabled={cameraBusy}
+            disabled={cameraBusy || cameraTogglePending}
             onClick={() => void handleCameraToggle()}
             title={cameraEnabled ? "Выключить камеру" : "Включить камеру"}
           >
-            {cameraBusy ? "Камера..." : cameraEnabled ? "Камера: вкл" : "Камера: выкл"}
+            {cameraBusy || cameraTogglePending ? "Камера..." : cameraEnabled ? "Камера: вкл" : "Камера: выкл"}
           </Button>
           <Button
             type="button"
             variant={micEnabled ? "default" : "secondary"}
             className="h-9 rounded-full px-4 text-xs"
-            disabled={micBusy}
+            disabled={micBusy || micTogglePending}
             onClick={() => void handleMicToggle()}
             title={micEnabled ? "Выключить микрофон" : "Включить микрофон"}
           >
-            {micBusy ? "Микрофон..." : micEnabled ? "Микрофон: вкл" : "Микрофон: выкл"}
+            {micBusy || micTogglePending ? "Микрофон..." : micEnabled ? "Микрофон: вкл" : "Микрофон: выкл"}
           </Button>
           <Button
             type="button"
