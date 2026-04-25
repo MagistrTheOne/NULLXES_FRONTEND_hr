@@ -32,6 +32,11 @@ type StreamTokenResponse = {
   callType: string;
 };
 
+type StreamTokenErrorPayload = {
+  message?: string;
+  code?: string;
+};
+
 type ObserverTalkMode = "off" | "on";
 export type ObserverConnectionStatus =
   | "waiting_meeting"
@@ -48,6 +53,16 @@ const OBSERVER_RETRY_BACKOFF_MS = 800;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isObserverTicketError(payload: StreamTokenErrorPayload): boolean {
+  const code = (payload.code ?? "").toLowerCase();
+  return (
+    code.startsWith("spectator.ticket_") ||
+    code === "observer_ticket_invalid" ||
+    code === "observer_ticket_expired" ||
+    code === "observer_ticket_consumed"
+  );
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -265,6 +280,29 @@ export function ObserverStreamCard({
     setLocalUserId(null);
   }, [call, client]);
 
+  const refreshObserverTicket = useCallback(async (): Promise<string | null> => {
+    const joinToken = spectatorJoinToken?.trim();
+    if (!joinToken) {
+      return null;
+    }
+    const response = await fetch(
+      `/api/gateway/join/spectator/${encodeURIComponent(joinToken)}/session-ticket`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" }
+      }
+    ).catch(() => null);
+
+    if (!response?.ok) {
+      return null;
+    }
+    const payload = (await response.json().catch(() => ({}))) as { observerTicket?: unknown };
+    const observerTicket =
+      typeof payload.observerTicket === "string" ? payload.observerTicket.trim() : "";
+    return observerTicket.length > 0 ? observerTicket : null;
+  }, [spectatorJoinToken]);
+
   useEffect(() => {
     if (ended) {
       void disconnectStream();
@@ -290,6 +328,8 @@ export function ObserverStreamCard({
     try {
       const observerUserId = `observer-${meetingId}-${sessionSuffixRef.current}`;
       let lastError: Error | null = null;
+      let activeObserverTicket = spectatorObserverTicket?.trim() || null;
+      let refreshedTicketOnce = false;
 
       for (let attempt = 1; attempt <= OBSERVER_MAX_ATTEMPTS; attempt += 1) {
         let streamClient: StreamVideoClient | null = null;
@@ -310,7 +350,7 @@ export function ObserverStreamCard({
                 userId: observerUserId,
                 userName: participantName,
                 ...(spectatorJoinToken ? { joinToken: spectatorJoinToken } : {}),
-                ...(spectatorObserverTicket ? { observerTicket: spectatorObserverTicket } : {})
+                ...(activeObserverTicket ? { observerTicket: activeObserverTicket } : {})
               })
             });
           } finally {
@@ -318,9 +358,17 @@ export function ObserverStreamCard({
           }
 
           if (!response.ok) {
-            const payload = (await response.json().catch(() => ({}))) as { message?: string; code?: string };
+            const payload = (await response.json().catch(() => ({}))) as StreamTokenErrorPayload;
             if (response.status === 409 && payload.code === "meeting.not_active") {
               throw new Error("meeting.not_active");
+            }
+            if (!refreshedTicketOnce && isObserverTicketError(payload)) {
+              refreshedTicketOnce = true;
+              const refreshed = await refreshObserverTicket();
+              if (refreshed) {
+                activeObserverTicket = refreshed;
+                throw new Error("observer.ticket.refreshed_retry");
+              }
             }
             throw new Error(payload.message ?? "Failed to issue observer stream token");
           }
@@ -369,6 +417,7 @@ export function ObserverStreamCard({
             lower.includes("failed to fetch") ||
             lower.includes("network") ||
             lower.includes("abort") ||
+            lower.includes("observer.ticket.refreshed_retry") ||
             lower.includes("meeting.not_active") ||
             lower.includes("сессия не активна");
           if (!transient || attempt >= OBSERVER_MAX_ATTEMPTS) {
@@ -399,7 +448,14 @@ export function ObserverStreamCard({
         setBusy(false);
       }
     }
-  }, [ended, meetingId, participantName, spectatorJoinToken, spectatorObserverTicket]);
+  }, [
+    ended,
+    meetingId,
+    participantName,
+    refreshObserverTicket,
+    spectatorJoinToken,
+    spectatorObserverTicket
+  ]);
 
   useEffect(() => {
     if (!canConnect || call || busy || error) {

@@ -4,8 +4,11 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { ObserverStreamCard, type ObserverConnectionStatus } from "@/components/interview/observer-stream-card";
+import { AvatarStreamCard } from "@/components/interview/avatar-stream-card";
 import { InterviewStatusBadge } from "@/components/interview/interview-status-badge";
+import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -99,6 +102,51 @@ function mapObserverStatusToVideoState(status: ObserverConnectionStatus): VideoC
     default:
       return "idle";
   }
+}
+
+function CandidateReadonlyMirrorCard({
+  candidateName,
+  enabled
+}: {
+  candidateName: string;
+  enabled: boolean;
+}) {
+  return (
+    <StreamParticipantShell
+      title="Кандидат"
+      description="Режим наблюдения: управление отключено"
+      footer={
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+            <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">
+              {candidateName || "Кандидат"}
+            </p>
+            <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+              <span className="mr-1 text-slate-500" aria-hidden>
+                ●
+              </span>
+              Read-only
+            </Badge>
+          </div>
+          <div className="flex min-h-10 flex-wrap gap-2">
+            <Button type="button" variant="secondary" className="h-10 min-h-10 rounded-full px-4" disabled>
+              Камера: выкл
+            </Button>
+            <Button type="button" variant="secondary" className="h-10 min-h-10 rounded-full px-4" disabled>
+              Микрофон: выкл
+            </Button>
+          </div>
+        </>
+      }
+    >
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+        <p className="text-sm font-medium text-slate-700">{enabled ? "Поток кандидата доступен в сессии" : "Ожидание запуска"}</p>
+        <p className="max-w-[280px] text-xs text-slate-600">
+          Это зеркало интерфейса кандидата. Наблюдатель не управляет камерой/микрофоном кандидата.
+        </p>
+      </div>
+    </StreamParticipantShell>
+  );
 }
 
 function SpectatorBody() {
@@ -351,6 +399,18 @@ function SpectatorBody() {
               >
                 Открыть HR-панель
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  if (typeof window === "undefined") return;
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("popout", "1");
+                  window.open(url.toString(), "_blank", "noopener,noreferrer,width=1520,height=980");
+                }}
+              >
+                Открыть в отдельном окне
+              </Button>
             </div>
 
             {/* Tech details — collapsed by default, hidden внутренние ID */}
@@ -396,32 +456,55 @@ function SpectatorBody() {
           </CardContent>
         </Card>
 
-        {/* === Video card === */}
-        <ObserverStreamCard
-          title="Видео интервью"
-          participantName="Наблюдатель"
-          meetingId={effectiveMeetingId}
-          enabled={canConnect}
-          visible
-          talkMode={observerControl.talk}
-          mutePlayback={false}
-          allowVisibilityToggle={false}
-          allowTalkToggle
-          spectatorJoinToken={spectatorJoinToken}
-          spectatorObserverTicket={spectatorObserverTicket}
-          onTalkModeChange={(nextTalkMode) => {
-            if (!jobAiId) {
-              return;
-            }
-            const next = resolveObserverTalkState(observerControl, nextTalkMode);
-            setObserverControlState(jobAiId, {
-              visibility: "visible",
-              talk: next.talk,
-              updatedAt: new Date().toISOString()
-            });
-          }}
-          onStatusChange={setObserverStatus}
-        />
+        {/* === 3-column mirror layout (candidate-like, read-only) === */}
+        <main className="grid grid-cols-1 gap-8 lg:grid-cols-3 lg:items-stretch lg:gap-6">
+          <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
+            <CandidateReadonlyMirrorCard candidateName={candidateName || "Кандидат"} enabled={canConnect} />
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
+            <AvatarStreamCard
+              participantName="HR ассистент"
+              enabled={canConnect}
+              avatarReady={runtimeSnapshot?.avatar?.avatarReady ?? false}
+              telemetryUnavailable={!runtimeSnapshot?.avatar}
+              meetingId={effectiveMeetingId}
+              showStreamToolbar={false}
+              showStatusBadge
+              showPauseAI={false}
+              showStopAI={false}
+              sessionEnded={false}
+              uiState={canConnect ? "active" : "lobby"}
+              emphasizePrimary
+            />
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
+            <ObserverStreamCard
+              title="Наблюдатель"
+              participantName="Наблюдатель"
+              meetingId={effectiveMeetingId}
+              enabled={canConnect}
+              visible
+              talkMode={observerControl.talk}
+              mutePlayback={false}
+              allowVisibilityToggle={false}
+              allowTalkToggle={false}
+              spectatorJoinToken={spectatorJoinToken}
+              spectatorObserverTicket={spectatorObserverTicket}
+              onTalkModeChange={(nextTalkMode) => {
+                if (!jobAiId) {
+                  return;
+                }
+                const next = resolveObserverTalkState(observerControl, nextTalkMode);
+                setObserverControlState(jobAiId, {
+                  visibility: "visible",
+                  talk: next.talk,
+                  updatedAt: new Date().toISOString()
+                });
+              }}
+              onStatusChange={setObserverStatus}
+            />
+          </div>
+        </main>
 
       </div>
     </div>
