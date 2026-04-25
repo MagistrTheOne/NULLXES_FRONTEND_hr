@@ -278,7 +278,8 @@ export function ObserverStreamCard({
     setBusy(true);
     setError(null);
     const epoch = ++connectEpochRef.current;
-    await issueRuntimeCommand(meetingId, {
+    // Runtime command is advisory; never block Stream join on it.
+    void issueRuntimeCommand(meetingId, {
       type: "observer.reconnect",
       issuedBy: "observer_ui",
       payload: { participantName }
