@@ -28,6 +28,17 @@ function isPublicPath(pathname: string): boolean {
   if (pathname === "/login") {
     return true;
   }
+  /** Публичное интервью: кандидат/наблюдатель по ссылке без prototype-сессии. */
+  if (pathname === "/" || pathname.startsWith("/spectator")) {
+    return true;
+  }
+  if (pathname.startsWith("/join/candidate/") || pathname.startsWith("/join/spectator/")) {
+    return true;
+  }
+  /** Узкий доступ к gateway и Stream token для анонимных участников (не весь `/api/`). */
+  if (pathname.startsWith("/api/gateway/") || pathname === "/api/stream/token") {
+    return true;
+  }
   if (
     pathname === "/sign-in" ||
     pathname === "/sign-up" ||

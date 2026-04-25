@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CallControls, CallingState, ParticipantView, StreamCall, StreamTheme, StreamVideo, StreamVideoClient, useCallStateHooks } from "@stream-io/video-react-sdk";
 import Image from "next/image";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
 import { Badge } from "@/components/ui/badge";
 import type { SessionUIState } from "@/lib/session-ui-state";
@@ -243,7 +244,10 @@ export function AvatarStreamCard({
 
       setClient(streamClient);
       setCall(streamCall);
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Не удалось подключить видео HR";
+      console.error("[avatar-stream] Stream join failed", err);
+      toast.error("Видео HR-аватара", { description: msg });
       autoJoinAttemptForRef.current = null;
     } finally {
       setBusy(false);

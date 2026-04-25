@@ -890,21 +890,17 @@ export function useInterviewSession() {
   useEffect(() => {
     if (phase !== "connected" || !meetingId || !sessionId) {
       reconnectAttemptForSessionRef.current = null;
-      if (runtimeRecoveryState !== "idle") {
-        queueMicrotask(() => {
-          setRuntimeRecoveryState("idle");
-        });
-      }
+      queueMicrotask(() => {
+        setRuntimeRecoveryState((prev) => (prev === "idle" ? prev : "idle"));
+      });
       return;
     }
 
     const rtc = ensureClient();
     if (rtc.getState() === "connected" && rtc.getSessionId()) {
-      if (runtimeRecoveryState !== "idle") {
-        queueMicrotask(() => {
-          setRuntimeRecoveryState("idle");
-        });
-      }
+      queueMicrotask(() => {
+        setRuntimeRecoveryState((prev) => (prev === "idle" ? prev : "idle"));
+      });
       return;
     }
 
@@ -999,6 +995,9 @@ export function useInterviewSession() {
       );
     };
 
+    // Не добавлять `runtimeRecoveryState` в deps ниже: при setState("recovering") эффект
+    // перезапускался бы, cleanup ставил cancelled=true и обрывал in-flight connect(),
+    // а повторный вход блокировался reconnectAttemptForSessionRef — вечное «Восстановление…».
     void restoreRuntime();
     return () => {
       cancelled = true;
@@ -1010,7 +1009,6 @@ export function useInterviewSession() {
     getSessionUpdatedVersion,
     meetingId,
     phase,
-    runtimeRecoveryState,
     sessionId,
     waitForSessionUpdatedAck
   ]);

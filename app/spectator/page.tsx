@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { ObserverStreamCard, type ObserverConnectionStatus } from "@/components/interview/observer-stream-card";
@@ -110,6 +110,11 @@ function SpectatorBody() {
     const parsed = Number(rawJobAiId);
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
   }, [rawJobAiId]);
+  const spectatorJoinToken = useMemo(() => {
+    const raw = searchParams.get("joinToken");
+    const t = typeof raw === "string" ? raw.trim() : "";
+    return t.length > 0 ? t : null;
+  }, [searchParams]);
   const [detail, setDetail] = useState<InterviewDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -177,7 +182,7 @@ function SpectatorBody() {
     void load();
     const interval = setInterval(() => {
       void load();
-    }, 4000);
+    }, 8000);
 
     return () => {
       cancelled = true;
@@ -214,26 +219,60 @@ function SpectatorBody() {
   const companyName = detail?.projection.companyName ?? "";
   const canConnect = Boolean(effectiveMeetingId);
 
+  const sseAttemptRef = useRef(0);
+
   useEffect(() => {
     if (!effectiveMeetingId) {
       return;
     }
-    const source = new EventSource(`/api/gateway/runtime/${encodeURIComponent(effectiveMeetingId)}/stream`);
-    source.addEventListener("snapshot", (event) => {
-      try {
-        const snapshot = JSON.parse((event as MessageEvent).data) as RuntimeSnapshot;
-        setRuntimeSnapshot(snapshot);
-        if (snapshot.meetingId !== meetingId) {
-          setActiveMeetingIdFallback(snapshot.meetingId);
-        }
-      } catch {
-        // Ignore malformed SSE frames; polling fallback still runs.
+    let cancelled = false;
+    let source: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const url = `/api/gateway/runtime/${encodeURIComponent(effectiveMeetingId)}/stream`;
+
+    const connect = () => {
+      if (cancelled) {
+        return;
       }
-    });
-    source.onerror = () => {
-      source.close();
+      source?.close();
+      const es = new EventSource(url);
+      source = es;
+      es.addEventListener("open", () => {
+        sseAttemptRef.current = 0;
+      });
+      es.addEventListener("snapshot", (event) => {
+        try {
+          const snapshot = JSON.parse((event as MessageEvent).data) as RuntimeSnapshot;
+          setRuntimeSnapshot(snapshot);
+          if (snapshot.meetingId !== meetingId) {
+            setActiveMeetingIdFallback(snapshot.meetingId);
+          }
+        } catch {
+          // Ignore malformed SSE frames; polling fallback still runs.
+        }
+      });
+      es.onerror = () => {
+        es.close();
+        if (cancelled) {
+          return;
+        }
+        sseAttemptRef.current += 1;
+        const exp = Math.min(sseAttemptRef.current - 1, 5);
+        const delayMs = Math.min(30_000, 1000 * 2 ** exp);
+        reconnectTimer = setTimeout(connect, delayMs);
+      };
     };
-    return () => source.close();
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      source?.close();
+    };
   }, [effectiveMeetingId, meetingId]);
 
   // Глобальный статус интервью (унифицирован с HR mapPhaseToStatus).
@@ -363,6 +402,7 @@ function SpectatorBody() {
           mutePlayback={false}
           allowVisibilityToggle={false}
           allowTalkToggle
+          spectatorJoinToken={spectatorJoinToken}
           onTalkModeChange={(nextTalkMode) => {
             if (!jobAiId) {
               return;

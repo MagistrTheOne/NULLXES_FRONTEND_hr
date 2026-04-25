@@ -1,11 +1,26 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { hasTrustedAppUser } from "@/lib/server-app-trust";
+
 /**
  * Server-side forward to JobAI ingest webhook (minimal body: id, status).
  * Headers: Content-Type: application/json, x-jobai-ingest-secret
+ *
+ * Если задан JOBAI_INGEST_INBOUND_SECRET — принимаем только запросы с заголовком
+ * `x-jobai-ingest-inbound-secret` или с доверенной app-сессией (prototype / Better Auth).
  */
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get("x-correlation-id")?.trim() || crypto.randomUUID();
+  const inbound = process.env.JOBAI_INGEST_INBOUND_SECRET?.trim();
+  if (inbound) {
+    const provided = request.headers.get("x-jobai-ingest-inbound-secret")?.trim();
+    const machineOk = provided === inbound;
+    const userOk = await hasTrustedAppUser(request);
+    if (!machineOk && !userOk) {
+      return NextResponse.json({ message: "Unauthorized", correlationId }, { status: 401 });
+    }
+  }
+
   const url = process.env.JOBAI_INGEST_WEBHOOK_URL?.trim();
   const secret = process.env.JOBAI_INGEST_SECRET?.trim();
   if (!url || !secret) {

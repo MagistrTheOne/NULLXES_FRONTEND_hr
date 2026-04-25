@@ -11,6 +11,7 @@ import {
   useCallStateHooks
 } from "@stream-io/video-react-sdk";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
 import { InterviewStatusBadge } from "@/components/interview/interview-status-badge";
@@ -139,6 +140,8 @@ type ObserverStreamCardProps = {
   onStatusChange?: (status: ObserverConnectionStatus) => void;
   sessionEnded?: boolean;
   uiState?: SessionUIState;
+  /** Подписанная ссылка наблюдателя (query после /join/spectator/...); усиливает выдачу Stream token. */
+  spectatorJoinToken?: string | null;
 };
 
 export function ObserverStreamCard({
@@ -155,7 +158,8 @@ export function ObserverStreamCard({
   title = "Наблюдатель",
   onStatusChange,
   sessionEnded = false,
-  uiState
+  uiState,
+  spectatorJoinToken = null
 }: ObserverStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
@@ -300,7 +304,8 @@ export function ObserverStreamCard({
                 role: "spectator",
                 meetingId,
                 userId: observerUserId,
-                userName: participantName
+                userName: participantName,
+                ...(spectatorJoinToken ? { joinToken: spectatorJoinToken } : {})
               })
             });
           } finally {
@@ -379,7 +384,9 @@ export function ObserverStreamCard({
       if (connectEpochRef.current !== epoch) {
         return;
       }
-      setError(err instanceof Error ? err.message : "Failed to start observer stream");
+      const msg = err instanceof Error ? err.message : "Failed to start observer stream";
+      setError(msg);
+      toast.error("Видео наблюдателя", { description: msg });
       // Let auto-join attempt again on next render cycle after transient failures.
       autoJoinAttemptForRef.current = null;
     } finally {
@@ -387,19 +394,19 @@ export function ObserverStreamCard({
         setBusy(false);
       }
     }
-  }, [ended, meetingId, participantName]);
+  }, [ended, meetingId, participantName, spectatorJoinToken]);
 
   useEffect(() => {
     if (!canConnect || call || busy || error) {
       return;
     }
-    const autoJoinKey = meetingId ?? "no-meeting";
+    const autoJoinKey = `${meetingId ?? "no-meeting"}:${spectatorJoinToken ?? ""}`;
     if (autoJoinAttemptForRef.current === autoJoinKey) {
       return;
     }
     autoJoinAttemptForRef.current = autoJoinKey;
     void startStream();
-  }, [busy, call, canConnect, error, meetingId, startStream]);
+  }, [busy, call, canConnect, error, meetingId, spectatorJoinToken, startStream]);
 
   useEffect(() => {
     if (canConnect) {

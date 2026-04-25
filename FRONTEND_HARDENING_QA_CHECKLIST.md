@@ -3,6 +3,12 @@
 ## Automated
 
 - [x] `npm run lint`
+- [x] `npx tsc --noEmit` (после hardening: proxy, gateway allowlist, stream token, ingest, spectator SSE)
+
+## После релиза hardening (ручной смоук)
+
+- [ ] Публичный кандидат/наблюдатель при включённом prototype-auth: главная `/`, `/spectator`, `/api/gateway/*`, POST `/api/stream/token` без 401.
+- [ ] Редирект `/join/spectator/<token>` передаёт `joinToken` в query; Stream token для наблюдателя с валидным токеном проходит проверку `runtime/by-interview`.
 
 ## Manual smoke scenarios
 

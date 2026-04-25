@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { StreamClient } from "@stream-io/node-sdk";
 
+import { resolveBackendGatewayBaseUrl } from "@/lib/backend-gateway-env";
+import { hasTrustedAppUser } from "@/lib/server-app-trust";
+
 export const runtime = "nodejs";
 
 type TokenRequestBody = {
@@ -11,6 +14,8 @@ type TokenRequestBody = {
   callId?: string;
   callType?: string;
   participantId?: string;
+  /** Подписанная ссылка наблюдателя; связывает meeting с interview (GET /join/spectator + runtime). */
+  joinToken?: string;
 };
 
 type MeetingLookupResponse = {
@@ -31,6 +36,36 @@ function sanitizeIdentifier(value: string, fallback: string): string {
   return normalized.length > 0 ? normalized : fallback;
 }
 
+async function verifySpectatorJoinTokenToMeeting(
+  backendUrl: string,
+  joinToken: string,
+  expectedMeetingId: string
+): Promise<boolean> {
+  const joinRes = await fetch(`${backendUrl}/join/spectator/${encodeURIComponent(joinToken)}`, {
+    method: "GET",
+    cache: "no-store"
+  }).catch(() => null);
+  if (!joinRes?.ok) {
+    return false;
+  }
+  const joinBody = (await joinRes.json().catch(() => ({}))) as { jobAiId?: unknown };
+  const jobAiId = Number(joinBody.jobAiId);
+  if (!Number.isInteger(jobAiId) || jobAiId <= 0) {
+    return false;
+  }
+  const rtRes = await fetch(`${backendUrl}/runtime/by-interview/${encodeURIComponent(String(jobAiId))}`, {
+    method: "GET",
+    cache: "no-store"
+  }).catch(() => null);
+  if (!rtRes?.ok) {
+    return false;
+  }
+  const snap = (await rtRes.json().catch(() => ({}))) as { meetingId?: unknown };
+  const snapMeetingRaw = typeof snap.meetingId === "string" ? snap.meetingId : "";
+  const snapMeeting = sanitizeIdentifier(snapMeetingRaw, "");
+  return snapMeeting.length > 0 && snapMeeting === expectedMeetingId;
+}
+
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const apiKey = process.env.STREAM_API_KEY;
   const secret = process.env.STREAM_SECRET_KEY;
@@ -39,6 +74,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json(
       { message: "Missing Stream configuration. Set STREAM_API_KEY and STREAM_SECRET_KEY." },
       { status: 500 }
+    );
+  }
+
+  const backendUrl = resolveBackendGatewayBaseUrl();
+  if (!backendUrl) {
+    return NextResponse.json(
+      { message: "Gateway misconfigured: BACKEND_GATEWAY_URL is required in production", code: "gateway.misconfigured" },
+      { status: 503 }
     );
   }
 
@@ -53,7 +96,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const userName = (body.userName ?? (role === "candidate" ? "Candidate" : "Spectator")).trim() || "Participant";
   const callId = sanitizeIdentifier(body.callId ?? meetingId, meetingId);
   const callType = sanitizeIdentifier(body.callType ?? "default", "default");
-  const backendUrl = process.env.BACKEND_GATEWAY_URL ?? "http://localhost:8080";
 
   const meetingResponse = await fetch(`${backendUrl}/meetings/${encodeURIComponent(meetingId)}`, {
     method: "GET",
@@ -137,6 +179,35 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         },
         { status: admissionResponse.status }
       );
+    }
+  }
+
+  if (role === "spectator") {
+    const joinTokenRaw = typeof body.joinToken === "string" ? body.joinToken.trim() : "";
+    const strict = process.env.STREAM_SPECTATOR_REQUIRE_JOIN_TOKEN === "1";
+    const internalOk = await hasTrustedAppUser(request);
+
+    if (strict && !internalOk && !joinTokenRaw) {
+      return NextResponse.json(
+        {
+          message: "Для выдачи токена наблюдателя нужна подписанная ссылка или сессия HR.",
+          code: "spectator.join_token_required"
+        },
+        { status: 403 }
+      );
+    }
+
+    if (joinTokenRaw) {
+      const ok = await verifySpectatorJoinTokenToMeeting(backendUrl, joinTokenRaw, meetingId);
+      if (!ok) {
+        return NextResponse.json(
+          {
+            message: "Ссылка наблюдателя не соответствует этой встрече или недействительна.",
+            code: "spectator.join_token_invalid"
+          },
+          { status: 403 }
+        );
+      }
     }
   }
 

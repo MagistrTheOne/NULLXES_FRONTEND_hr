@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 
 import type { JoinLinkRole } from "@/lib/api";
+import { resolveBackendGatewayBaseUrl } from "@/lib/backend-gateway-env";
 
 type ResolveSuccess = {
   status: "ok";
@@ -14,7 +15,7 @@ type ResolveSuccess = {
 type ResolveExpired = { status: "expired"; expiredAt?: number };
 type ResolveRevoked = { status: "revoked" };
 type ResolveInvalid = { status: "invalid"; reason?: string };
-type ResolveUnavailable = { status: "unavailable" };
+type ResolveUnavailable = { status: "unavailable"; reason?: "missing_backend" };
 
 type ResolveResult =
   | ResolveSuccess
@@ -24,7 +25,10 @@ type ResolveResult =
   | ResolveUnavailable;
 
 async function resolveToken(role: JoinLinkRole, token: string): Promise<ResolveResult> {
-  const backendUrl = (process.env.BACKEND_GATEWAY_URL ?? "http://localhost:8080").replace(/\/+$/, "");
+  const backendUrl = resolveBackendGatewayBaseUrl();
+  if (!backendUrl) {
+    return { status: "unavailable", reason: "missing_backend" };
+  }
   let response: Response | null;
   try {
     response = await fetch(`${backendUrl}/join/${role}/${encodeURIComponent(token)}`, {
@@ -88,6 +92,9 @@ export async function JoinResolver({ role, token }: JoinResolverProps) {
     if (role === "candidate") {
       params.set("entry", "candidate");
     }
+    if (role === "spectator") {
+      params.set("joinToken", token);
+    }
     const target = role === "candidate" ? `/?${params.toString()}` : `/spectator?${params.toString()}`;
     redirect(target);
   }
@@ -145,6 +152,16 @@ function describeError(
         body: "Похоже, ссылку случайно изменили. Откройте её ещё раз из исходного письма или попросите HR выслать заново."
       };
     case "unavailable":
+      if (result.reason === "missing_backend") {
+        return {
+          title: "Ошибка конфигурации сервера",
+          body: "Не задан BACKEND_GATEWAY_URL. Обратитесь к администратору (Vercel / production)."
+        };
+      }
+      return {
+        title: "Сервис временно недоступен",
+        body: "Не удалось проверить ссылку. Попробуйте обновить страницу через минуту."
+      };
     default:
       return {
         title: "Сервис временно недоступен",
