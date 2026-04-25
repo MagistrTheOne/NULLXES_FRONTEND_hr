@@ -16,6 +16,8 @@ type TokenRequestBody = {
   participantId?: string;
   /** Подписанная ссылка наблюдателя; связывает meeting с interview (GET /join/spectator + runtime). */
   joinToken?: string;
+  /** Одноразовый signed observer ticket (issue/consume on backend). */
+  observerTicket?: string;
 };
 
 type MeetingLookupResponse = {
@@ -25,6 +27,11 @@ type MeetingLookupResponse = {
 };
 
 const ACTIVE_MEETING_STATUSES = new Set(["starting", "in_meeting"]);
+
+type SpectatorConsumedTicket = {
+  meetingId?: unknown;
+  jobAiId?: unknown;
+};
 
 function sanitizeIdentifier(value: string, fallback: string): string {
   const normalized = value
@@ -88,10 +95,54 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const body = (await request.json().catch(() => ({}))) as TokenRequestBody;
   const role = body.role ?? "candidate";
   const rawMeetingId = body.meetingId?.trim();
-  if (!rawMeetingId) {
+  if (!rawMeetingId && role !== "spectator") {
     return NextResponse.json({ message: "meetingId is required for Stream token issuance." }, { status: 400 });
   }
-  const meetingId = sanitizeIdentifier(rawMeetingId, "meeting");
+  let meetingId = sanitizeIdentifier(rawMeetingId ?? "", "meeting");
+  let spectatorAuthorizedByTicket = false;
+  const observerTicketRaw = typeof body.observerTicket === "string" ? body.observerTicket.trim() : "";
+
+  if (role === "spectator" && observerTicketRaw) {
+    const consumeRes = await fetch(`${backendUrl}/join/spectator/session-ticket/consume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ observerTicket: observerTicketRaw })
+    }).catch(() => null);
+
+    if (!consumeRes) {
+      return NextResponse.json(
+        { message: "Observer ticket service unavailable", code: "spectator.ticket_unavailable" },
+        { status: 503 }
+      );
+    }
+    if (!consumeRes.ok) {
+      const payload = (await consumeRes.json().catch(() => ({}))) as { error?: string };
+      const code = payload.error ?? "spectator.ticket_invalid";
+      const status = consumeRes.status === 409 ? 409 : consumeRes.status === 410 ? 410 : 403;
+      return NextResponse.json(
+        { message: "Observer ticket is invalid, expired, or already used.", code },
+        { status }
+      );
+    }
+
+    const consumed = (await consumeRes.json().catch(() => ({}))) as SpectatorConsumedTicket;
+    const ticketMeetingIdRaw = typeof consumed.meetingId === "string" ? consumed.meetingId : "";
+    const ticketMeetingId = sanitizeIdentifier(ticketMeetingIdRaw, "");
+    if (!ticketMeetingId) {
+      return NextResponse.json(
+        { message: "Observer ticket payload is malformed.", code: "spectator.ticket_malformed" },
+        { status: 403 }
+      );
+    }
+    meetingId = ticketMeetingId;
+    spectatorAuthorizedByTicket = true;
+  }
+
+  if (!meetingId) {
+    return NextResponse.json({ message: "meetingId is required for Stream token issuance." }, { status: 400 });
+  }
+
   const userId = sanitizeIdentifier(body.userId ?? `${role}-${meetingId}`, `${role}-user`);
   const userName = (body.userName ?? (role === "candidate" ? "Candidate" : "Spectator")).trim() || "Participant";
   const callId = sanitizeIdentifier(body.callId ?? meetingId, meetingId);
@@ -189,7 +240,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // this check can be slow and unnecessarily blocks observer Stream token issuance.
     const internalOk = strict ? await hasTrustedAppUser(request) : false;
 
-    if (strict && !internalOk && !joinTokenRaw) {
+    if (!spectatorAuthorizedByTicket && strict && !internalOk && !joinTokenRaw) {
       return NextResponse.json(
         {
           message: "Для выдачи токена наблюдателя нужна подписанная ссылка или сессия HR.",
@@ -199,7 +250,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    if (joinTokenRaw) {
+    if (!spectatorAuthorizedByTicket && joinTokenRaw) {
       const ok = await verifySpectatorJoinTokenToMeeting(backendUrl, joinTokenRaw, meetingId);
       if (!ok) {
         return NextResponse.json(

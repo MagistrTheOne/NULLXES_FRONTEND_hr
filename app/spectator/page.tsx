@@ -115,6 +115,11 @@ function SpectatorBody() {
     const t = typeof raw === "string" ? raw.trim() : "";
     return t.length > 0 ? t : null;
   }, [searchParams]);
+  const spectatorObserverTicket = useMemo(() => {
+    const raw = searchParams.get("observerTicket");
+    const t = typeof raw === "string" ? raw.trim() : "";
+    return t.length > 0 ? t : null;
+  }, [searchParams]);
   const [detail, setDetail] = useState<InterviewDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -403,6 +408,7 @@ function SpectatorBody() {
           allowVisibilityToggle={false}
           allowTalkToggle
           spectatorJoinToken={spectatorJoinToken}
+          spectatorObserverTicket={spectatorObserverTicket}
           onTalkModeChange={(nextTalkMode) => {
             if (!jobAiId) {
               return;

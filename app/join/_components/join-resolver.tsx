@@ -94,6 +94,24 @@ export async function JoinResolver({ role, token }: JoinResolverProps) {
     }
     if (role === "spectator") {
       params.set("joinToken", token);
+      const backendUrl = resolveBackendGatewayBaseUrl();
+      if (backendUrl) {
+        const ticketResponse = await fetch(
+          `${backendUrl}/join/spectator/${encodeURIComponent(token)}/session-ticket`,
+          {
+            method: "POST",
+            cache: "no-store"
+          }
+        ).catch(() => null);
+        if (ticketResponse?.ok) {
+          const payload = (await ticketResponse.json().catch(() => ({}))) as {
+            observerTicket?: unknown;
+          };
+          if (typeof payload.observerTicket === "string" && payload.observerTicket.trim().length > 0) {
+            params.set("observerTicket", payload.observerTicket.trim());
+          }
+        }
+      }
     }
     const target = role === "candidate" ? `/?${params.toString()}` : `/spectator?${params.toString()}`;
     redirect(target);

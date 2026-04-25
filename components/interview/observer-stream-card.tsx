@@ -142,6 +142,8 @@ type ObserverStreamCardProps = {
   uiState?: SessionUIState;
   /** Подписанная ссылка наблюдателя (query после /join/spectator/...); усиливает выдачу Stream token. */
   spectatorJoinToken?: string | null;
+  /** Одноразовый observer session ticket, выданный backend на join-шаге. */
+  spectatorObserverTicket?: string | null;
 };
 
 export function ObserverStreamCard({
@@ -159,7 +161,8 @@ export function ObserverStreamCard({
   onStatusChange,
   sessionEnded = false,
   uiState,
-  spectatorJoinToken = null
+  spectatorJoinToken = null,
+  spectatorObserverTicket = null
 }: ObserverStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
@@ -306,7 +309,8 @@ export function ObserverStreamCard({
                 meetingId,
                 userId: observerUserId,
                 userName: participantName,
-                ...(spectatorJoinToken ? { joinToken: spectatorJoinToken } : {})
+                ...(spectatorJoinToken ? { joinToken: spectatorJoinToken } : {}),
+                ...(spectatorObserverTicket ? { observerTicket: spectatorObserverTicket } : {})
               })
             });
           } finally {
@@ -395,19 +399,19 @@ export function ObserverStreamCard({
         setBusy(false);
       }
     }
-  }, [ended, meetingId, participantName, spectatorJoinToken]);
+  }, [ended, meetingId, participantName, spectatorJoinToken, spectatorObserverTicket]);
 
   useEffect(() => {
     if (!canConnect || call || busy || error) {
       return;
     }
-    const autoJoinKey = `${meetingId ?? "no-meeting"}:${spectatorJoinToken ?? ""}`;
+    const autoJoinKey = `${meetingId ?? "no-meeting"}:${spectatorJoinToken ?? ""}:${spectatorObserverTicket ?? ""}`;
     if (autoJoinAttemptForRef.current === autoJoinKey) {
       return;
     }
     autoJoinAttemptForRef.current = autoJoinKey;
     void startStream();
-  }, [busy, call, canConnect, error, meetingId, spectatorJoinToken, startStream]);
+  }, [busy, call, canConnect, error, meetingId, spectatorJoinToken, spectatorObserverTicket, startStream]);
 
   useEffect(() => {
     if (canConnect) {
