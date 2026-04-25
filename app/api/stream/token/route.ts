@@ -185,7 +185,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (role === "spectator") {
     const joinTokenRaw = typeof body.joinToken === "string" ? body.joinToken.trim() : "";
     const strict = process.env.STREAM_SPECTATOR_REQUIRE_JOIN_TOKEN === "1";
-    const internalOk = await hasTrustedAppUser(request);
+    // Avoid extra auth/session DB roundtrip when strict mode is off:
+    // this check can be slow and unnecessarily blocks observer Stream token issuance.
+    const internalOk = strict ? await hasTrustedAppUser(request) : false;
 
     if (strict && !internalOk && !joinTokenRaw) {
       return NextResponse.json(

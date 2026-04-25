@@ -184,7 +184,7 @@ export function ObserverStreamCard({
     if (!meetingId || !enabled) {
       return "waiting_meeting";
     }
-    if (busy || (canConnect && !call)) {
+    if (busy) {
       return "joining";
     }
     if (call && hasParticipants === false) {
@@ -440,7 +440,7 @@ export function ObserverStreamCard({
     [disconnectStream]
   );
 
-  const showJoinLoader = (busy || (canConnect && !call && !ended)) && visible;
+  const showJoinLoader = busy && visible;
 
   return (
     <StreamParticipantShell
