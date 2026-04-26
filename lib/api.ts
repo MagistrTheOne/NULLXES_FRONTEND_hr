@@ -301,21 +301,27 @@ async function requestJson<T>(path: string, init?: RequestJsonOptions): Promise<
   }
 
   const raw = await response.text();
+  const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+  const looksLikeJson = contentType.includes("application/json") || contentType.includes("+json");
+  const snippet = raw.trim().slice(0, 180);
   let payload: JsonRecord = {};
   if (raw) {
     try {
       payload = JSON.parse(raw) as JsonRecord;
     } catch {
+      // Defensive mode: gateway/upstream can return HTML (e.g. 502 page) or plain text.
+      // Preserve a short snippet in message so caller diagnostics are actionable.
+      const diagnosticMessage = snippet.length > 0 ? `Invalid JSON payload: ${snippet}` : "Invalid JSON payload";
       if (!response.ok) {
         throw new ApiRequestError({
-          message: `Request failed (${response.status})`,
+          message: `Request failed (${response.status})${looksLikeJson ? "" : ` · ${diagnosticMessage}`}`,
           code: "http",
           status: response.status,
           retriable: response.status >= 500
         });
       }
       throw new ApiRequestError({
-        message: "Invalid JSON response from gateway",
+        message: looksLikeJson ? "Invalid JSON response from gateway" : diagnosticMessage,
         code: "invalid_json",
         retriable: false
       });
