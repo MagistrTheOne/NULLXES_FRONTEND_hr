@@ -178,6 +178,8 @@ function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLa
 type ObserverStreamCardProps = {
   participantName: string;
   meetingId: string | null;
+  streamCallId?: string | null;
+  streamCallType?: string | null;
   enabled: boolean;
   visible: boolean;
   talkMode: ObserverTalkMode;
@@ -205,6 +207,8 @@ type ObserverStreamCardProps = {
 export function ObserverStreamCard({
   participantName,
   meetingId,
+  streamCallId = null,
+  streamCallType = null,
   enabled,
   visible,
   talkMode,
@@ -240,7 +244,13 @@ export function ObserverStreamCard({
   const connectEpochRef = useRef(0);
 
   const ended = Boolean(sessionEnded) || uiState === "completed";
-  const canConnect = enabled && visible && Boolean(meetingId) && !ended;
+  const canConnect =
+    enabled &&
+    visible &&
+    Boolean(meetingId) &&
+    Boolean(streamCallId?.trim()) &&
+    Boolean(streamCallType?.trim()) &&
+    !ended;
   const status: ObserverConnectionStatus = useMemo(() => {
     if (!visible && allowVisibilityToggle) {
       return "idle_hidden";
@@ -285,6 +295,9 @@ export function ObserverStreamCard({
     if (!meetingId || !enabled) {
       return waitingReason ?? "Интервью еще не запущено. Подключение доступно после активации сессии кандидата.";
     }
+    if (!streamCallId || !streamCallType) {
+      return waitingReason ?? "Ждём конфигурацию Stream call от runtime.";
+    }
     if (busy) {
       return "Подключаем наблюдателя к активной сессии...";
     }
@@ -292,7 +305,7 @@ export function ObserverStreamCard({
       return "Подключение не удалось. Повторите попытку.";
     }
     return "Наблюдатель подключен к активной сессии.";
-  }, [busy, enabled, ended, error, meetingId, waitingReason]);
+  }, [busy, enabled, ended, error, meetingId, streamCallId, streamCallType, waitingReason]);
 
   useEffect(() => {
     onStatusChange?.(status);
@@ -463,6 +476,8 @@ export function ObserverStreamCard({
               body: JSON.stringify({
                 role: "spectator",
                 meetingId,
+                callId: streamCallId,
+                callType: streamCallType,
                 userId: observerUserId,
                 userName: participantName,
                 ...(spectatorJoinToken ? { joinToken: spectatorJoinToken } : {}),
@@ -568,6 +583,8 @@ export function ObserverStreamCard({
   }, [
     ended,
     ensureSelfPreview,
+    streamCallId,
+    streamCallType,
     meetingId,
     participantName,
     refreshObserverTicket,
@@ -579,13 +596,13 @@ export function ObserverStreamCard({
     if (!canConnect || call || busy || error) {
       return;
     }
-    const autoJoinKey = `${meetingId ?? "no-meeting"}:${spectatorJoinToken ?? ""}:${spectatorObserverTicket ?? ""}`;
+    const autoJoinKey = `${meetingId ?? "no-meeting"}:${streamCallType ?? "no-type"}:${streamCallId ?? "no-call"}:${spectatorJoinToken ?? ""}:${spectatorObserverTicket ?? ""}`;
     if (autoJoinAttemptForRef.current === autoJoinKey) {
       return;
     }
     autoJoinAttemptForRef.current = autoJoinKey;
     void startStream();
-  }, [busy, call, canConnect, error, meetingId, spectatorJoinToken, spectatorObserverTicket, startStream]);
+  }, [busy, call, canConnect, error, meetingId, spectatorJoinToken, spectatorObserverTicket, startStream, streamCallId, streamCallType]);
 
   useEffect(() => {
     if (canConnect) {

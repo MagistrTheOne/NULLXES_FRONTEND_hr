@@ -288,7 +288,12 @@ function SpectatorBody() {
   const companyName = detail?.projection.companyName ?? "";
   const projectionActive = ACTIVE_MEETING_STATUSES.has(String(detail?.projection.nullxesStatus ?? ""));
   const runtimeActive = ACTIVE_MEETING_STATUSES.has(String(runtimeSnapshot?.meeting.status ?? ""));
-  const canConnect = Boolean(effectiveMeetingId) && (projectionActive || runtimeActive);
+  const runtimeStreamCallId =
+    typeof runtimeSnapshot?.media?.streamCallId === "string" ? runtimeSnapshot.media.streamCallId.trim() : "";
+  const runtimeStreamCallType =
+    typeof runtimeSnapshot?.media?.streamCallType === "string" ? runtimeSnapshot.media.streamCallType.trim() : "";
+  const hasRuntimeCallConfig = runtimeStreamCallId.length > 0 && runtimeStreamCallType.length > 0;
+  const canConnect = Boolean(effectiveMeetingId) && (projectionActive || runtimeActive) && hasRuntimeCallConfig;
   const spectatorWaitingReason = useMemo(() => {
     if (!effectiveMeetingId) {
       return "Ожидаем назначение meetingId от runtime. Интервью ещё не перешло в активную фазу.";
@@ -299,8 +304,11 @@ function SpectatorBody() {
     if (!runtimeSnapshot) {
       return "Сессия активируется, ждём runtime snapshot.";
     }
+    if (!hasRuntimeCallConfig) {
+      return "meeting активен, но runtime ещё не отдал streamCallId/streamCallType.";
+    }
     return null;
-  }, [effectiveMeetingId, projectionActive, runtimeActive, runtimeSnapshot]);
+  }, [effectiveMeetingId, hasRuntimeCallConfig, projectionActive, runtimeActive, runtimeSnapshot]);
 
   const sseAttemptRef = useRef(0);
   const sseSlowModeRef = useRef(false);
@@ -514,6 +522,8 @@ function SpectatorBody() {
               title="Сессия (режим наблюдения)"
               participantName={candidateName || "Наблюдатель"}
               meetingId={effectiveMeetingId}
+              streamCallId={runtimeStreamCallId || null}
+              streamCallType={runtimeStreamCallType || null}
               enabled={canConnect}
               visible
               talkMode={observerControl.talk}
