@@ -229,6 +229,7 @@ export function ObserverStreamCard({
   const [selfPreviewStream, setSelfPreviewStream] = useState<MediaStream | null>(null);
   const [selfCameraEnabled, setSelfCameraEnabled] = useState(true);
   const [selfMicEnabled, setSelfMicEnabled] = useState(true);
+  const [selfPreviewError, setSelfPreviewError] = useState<string | null>(null);
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
   const selfPreviewVideoRef = useRef<HTMLVideoElement | null>(null);
   const autoJoinAttemptForRef = useRef<string | null>(null);
@@ -337,6 +338,7 @@ export function ObserverStreamCard({
       return;
     }
     try {
+      setSelfPreviewError(null);
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       stream.getVideoTracks().forEach((track) => {
         track.enabled = selfCameraEnabled;
@@ -345,10 +347,26 @@ export function ObserverStreamCard({
         track.enabled = selfMicEnabled;
       });
       setSelfPreviewStream(stream);
-    } catch {
+    } catch (error) {
       // Self-preview is optional in observer mode; do not block session.
+      const message = error instanceof Error ? error.message : "";
+      if (message.toLowerCase().includes("notallowed")) {
+        setSelfPreviewError("Нет доступа к камере/микрофону. Разрешите доступ в браузере.");
+      } else if (message.toLowerCase().includes("notfound")) {
+        setSelfPreviewError("Камера или микрофон не найдены.");
+      } else {
+        setSelfPreviewError("Self-preview недоступен. Можно продолжать наблюдение без локального видео.");
+      }
     }
   }, [selfCameraEnabled, selfMicEnabled, selfPreviewStream, showSelfPreview]);
+
+  useEffect(() => {
+    if (showSelfPreview) {
+      return;
+    }
+    cleanupSelfPreview();
+    setSelfPreviewError(null);
+  }, [cleanupSelfPreview, showSelfPreview]);
 
   useEffect(() => {
     const element = selfPreviewVideoRef.current;
@@ -714,7 +732,22 @@ export function ObserverStreamCard({
                   {selfMicEnabled ? <Mic className="mr-1 h-3.5 w-3.5" /> : <MicOff className="mr-1 h-3.5 w-3.5" />}
                   {selfMicEnabled ? "Микрофон: вкл" : "Микрофон: выкл"}
                 </Button>
+                {selfPreviewError ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="pointer-events-auto h-8 rounded-full px-3 text-[11px]"
+                    onClick={() => void ensureSelfPreview()}
+                  >
+                    Повторить доступ
+                  </Button>
+                ) : null}
               </div>
+              {selfPreviewError ? (
+                <p className="mt-2 rounded-lg bg-rose-100/90 px-2 py-1 text-[11px] leading-snug text-rose-700">
+                  {selfPreviewError}
+                </p>
+              ) : null}
             </div>
           ) : null}
         </div>
