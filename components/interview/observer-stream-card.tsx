@@ -10,7 +10,7 @@ import {
   StreamVideoClient,
   useCallStateHooks
 } from "@stream-io/video-react-sdk";
-import { Loader2 } from "lucide-react";
+import { Loader2, Mic, MicOff, Video, VideoOff } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
@@ -84,9 +84,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 type ObserverCallBodyProps = {
   localUserId: string;
   onParticipantsDetected?: (hasParticipants: boolean) => void;
+  sessionMirrorLayout?: boolean;
 };
 
-function ObserverCallBody({ localUserId, onParticipantsDetected }: ObserverCallBodyProps) {
+function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLayout = false }: ObserverCallBodyProps) {
   const { useCallCallingState, useParticipants } = useCallStateHooks();
   const state = useCallCallingState();
   const participants = useParticipants();
@@ -129,13 +130,47 @@ function ObserverCallBody({ localUserId, onParticipantsDetected }: ObserverCallB
     return <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание участников</div>;
   }
 
+  if (!sessionMirrorLayout) {
+    return (
+      <div className="grid h-full w-full grid-cols-1 gap-2 p-2 sm:grid-cols-2">
+        {orderedParticipants.map((participant) => (
+          <div key={participant.sessionId} className="overflow-hidden rounded-lg border border-white/20 bg-slate-900/50">
+            <ParticipantView participant={participant} trackType="videoTrack" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const candidate = orderedParticipants[0] ?? null;
+  const avatar = orderedParticipants[1] ?? null;
+  const extra = orderedParticipants.slice(2, 4);
+
   return (
-    <div className="grid h-full w-full grid-cols-1 gap-2 p-2 sm:grid-cols-2">
-      {orderedParticipants.map((participant) => (
-        <div key={participant.sessionId} className="overflow-hidden rounded-lg border border-white/20 bg-slate-900/50">
-          <ParticipantView participant={participant} trackType="videoTrack" />
+    <div className="grid h-full w-full grid-cols-1 gap-2 p-2 lg:grid-cols-3">
+      <div className="overflow-hidden rounded-lg border border-white/20 bg-slate-900/50 lg:col-span-2">
+        {candidate ? (
+          <ParticipantView participant={candidate} trackType="videoTrack" />
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-slate-300">Ожидание кандидата</div>
+        )}
+      </div>
+      <div className="grid gap-2 lg:grid-rows-2">
+        <div className="overflow-hidden rounded-lg border border-white/20 bg-slate-900/50">
+          {avatar ? (
+            <ParticipantView participant={avatar} trackType="videoTrack" />
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-slate-300">Ожидание HR аватара</div>
+          )}
         </div>
-      ))}
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+          {extra.map((participant) => (
+            <div key={participant.sessionId} className="overflow-hidden rounded-lg border border-white/20 bg-slate-900/50">
+              <ParticipantView participant={participant} trackType="videoTrack" />
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -159,6 +194,10 @@ type ObserverStreamCardProps = {
   spectatorJoinToken?: string | null;
   /** Одноразовый observer session ticket, выданный backend на join-шаге. */
   spectatorObserverTicket?: string | null;
+  /** Компоновка в стиле "полотно сессии": кандидат слева, аватар справа. */
+  sessionMirrorLayout?: boolean;
+  /** Мини self-view наблюдателя (локальная камера/микрофон) поверх потока. */
+  showSelfPreview?: boolean;
 };
 
 export function ObserverStreamCard({
@@ -177,7 +216,9 @@ export function ObserverStreamCard({
   sessionEnded = false,
   uiState,
   spectatorJoinToken = null,
-  spectatorObserverTicket = null
+  spectatorObserverTicket = null,
+  sessionMirrorLayout = false,
+  showSelfPreview = false
 }: ObserverStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
@@ -185,7 +226,11 @@ export function ObserverStreamCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasParticipants, setHasParticipants] = useState<boolean | null>(null);
+  const [selfPreviewStream, setSelfPreviewStream] = useState<MediaStream | null>(null);
+  const [selfCameraEnabled, setSelfCameraEnabled] = useState(true);
+  const [selfMicEnabled, setSelfMicEnabled] = useState(true);
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
+  const selfPreviewVideoRef = useRef<HTMLVideoElement | null>(null);
   const autoJoinAttemptForRef = useRef<string | null>(null);
   const sessionSuffixRef = useRef<string>(Math.random().toString(36).slice(2, 8));
   const connectEpochRef = useRef(0);
@@ -280,6 +325,55 @@ export function ObserverStreamCard({
     setLocalUserId(null);
   }, [call, client]);
 
+  const cleanupSelfPreview = useCallback(() => {
+    setSelfPreviewStream((current) => {
+      current?.getTracks().forEach((track) => track.stop());
+      return null;
+    });
+  }, []);
+
+  const ensureSelfPreview = useCallback(async () => {
+    if (!showSelfPreview || selfPreviewStream) {
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      stream.getVideoTracks().forEach((track) => {
+        track.enabled = selfCameraEnabled;
+      });
+      stream.getAudioTracks().forEach((track) => {
+        track.enabled = selfMicEnabled;
+      });
+      setSelfPreviewStream(stream);
+    } catch {
+      // Self-preview is optional in observer mode; do not block session.
+    }
+  }, [selfCameraEnabled, selfMicEnabled, selfPreviewStream, showSelfPreview]);
+
+  useEffect(() => {
+    const element = selfPreviewVideoRef.current;
+    if (!element || !selfPreviewStream) {
+      return;
+    }
+    element.srcObject = selfPreviewStream;
+    void element.play().catch(() => undefined);
+    return () => {
+      element.srcObject = null;
+    };
+  }, [selfPreviewStream]);
+
+  useEffect(() => {
+    if (!selfPreviewStream) {
+      return;
+    }
+    selfPreviewStream.getVideoTracks().forEach((track) => {
+      track.enabled = selfCameraEnabled;
+    });
+    selfPreviewStream.getAudioTracks().forEach((track) => {
+      track.enabled = selfMicEnabled;
+    });
+  }, [selfCameraEnabled, selfMicEnabled, selfPreviewStream]);
+
   const refreshObserverTicket = useCallback(async (): Promise<string | null> => {
     const joinToken = spectatorJoinToken?.trim();
     if (!joinToken) {
@@ -306,8 +400,9 @@ export function ObserverStreamCard({
   useEffect(() => {
     if (ended) {
       void disconnectStream();
+      cleanupSelfPreview();
     }
-  }, [disconnectStream, ended]);
+  }, [cleanupSelfPreview, disconnectStream, ended]);
 
   const startStream = useCallback(async () => {
     if (ended) {
@@ -405,6 +500,7 @@ export function ObserverStreamCard({
           setCall(streamCall);
           setLocalUserId(payload.user.id);
           setHasParticipants(null);
+          void ensureSelfPreview();
           return;
         } catch (err) {
           lastError = err instanceof Error ? err : new Error("Failed to start observer stream");
@@ -450,6 +546,7 @@ export function ObserverStreamCard({
     }
   }, [
     ended,
+    ensureSelfPreview,
     meetingId,
     participantName,
     refreshObserverTicket,
@@ -496,8 +593,9 @@ export function ObserverStreamCard({
   useEffect(
     () => () => {
       void disconnectStream();
+      cleanupSelfPreview();
     },
-    [disconnectStream]
+    [cleanupSelfPreview, disconnectStream]
   );
 
   const showJoinLoader = busy && visible;
@@ -570,14 +668,55 @@ export function ObserverStreamCard({
           <p className="text-xs text-slate-600">Включите видео, чтобы видеть кандидата и агента</p>
         </div>
       ) : client && call && localUserId ? (
-        <div className={cn("h-full w-full", ended && "opacity-80")}>
+        <div className={cn("relative h-full w-full", ended && "opacity-80")}>
           <StreamVideo client={client}>
             <StreamTheme>
               <StreamCall call={call}>
-                <ObserverCallBody localUserId={localUserId} onParticipantsDetected={setHasParticipants} />
+                <ObserverCallBody
+                  localUserId={localUserId}
+                  onParticipantsDetected={setHasParticipants}
+                  sessionMirrorLayout={sessionMirrorLayout}
+                />
               </StreamCall>
             </StreamTheme>
           </StreamVideo>
+          {showSelfPreview ? (
+            <div className="pointer-events-none absolute right-3 top-3 z-20 w-44 rounded-xl border border-white/40 bg-slate-900/75 p-2 shadow-lg backdrop-blur">
+              <div className="overflow-hidden rounded-lg bg-black">
+                {selfPreviewStream && selfCameraEnabled ? (
+                  <video ref={selfPreviewVideoRef} className="h-24 w-full object-cover" muted playsInline autoPlay />
+                ) : (
+                  <div className="flex h-24 w-full items-center justify-center text-xs text-slate-300">
+                    Камера выключена
+                  </div>
+                )}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  type="button"
+                  variant={selfCameraEnabled ? "default" : "secondary"}
+                  className="pointer-events-auto h-9 rounded-full px-3 text-xs"
+                  disabled={!selfPreviewStream}
+                  onClick={() => setSelfCameraEnabled((prev) => !prev)}
+                  title={selfCameraEnabled ? "Выключить камеру" : "Включить камеру"}
+                >
+                  {selfCameraEnabled ? <Video className="mr-1 h-3.5 w-3.5" /> : <VideoOff className="mr-1 h-3.5 w-3.5" />}
+                  {selfCameraEnabled ? "Камера: вкл" : "Камера: выкл"}
+                </Button>
+                <Button
+                  type="button"
+                  variant={selfMicEnabled ? "default" : "secondary"}
+                  className="pointer-events-auto h-9 rounded-full px-3 text-xs"
+                  disabled={!selfPreviewStream}
+                  onClick={() => setSelfMicEnabled((prev) => !prev)}
+                  title={selfMicEnabled ? "Выключить микрофон" : "Включить микрофон"}
+                >
+                  {selfMicEnabled ? <Mic className="mr-1 h-3.5 w-3.5" /> : <MicOff className="mr-1 h-3.5 w-3.5" />}
+                  {selfMicEnabled ? "Микрофон: вкл" : "Микрофон: выкл"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
