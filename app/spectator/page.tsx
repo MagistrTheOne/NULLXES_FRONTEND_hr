@@ -289,6 +289,18 @@ function SpectatorBody() {
   const projectionActive = ACTIVE_MEETING_STATUSES.has(String(detail?.projection.nullxesStatus ?? ""));
   const runtimeActive = ACTIVE_MEETING_STATUSES.has(String(runtimeSnapshot?.meeting.status ?? ""));
   const canConnect = Boolean(effectiveMeetingId) && (projectionActive || runtimeActive);
+  const spectatorWaitingReason = useMemo(() => {
+    if (!effectiveMeetingId) {
+      return "Ожидаем назначение meetingId от runtime. Интервью ещё не перешло в активную фазу.";
+    }
+    if (!projectionActive && !runtimeActive) {
+      return "meeting найден, но статус ещё не активен. Ждём, пока кандидат/HR поднимут живую сессию.";
+    }
+    if (!runtimeSnapshot) {
+      return "Сессия активируется, ждём runtime snapshot.";
+    }
+    return null;
+  }, [effectiveMeetingId, projectionActive, runtimeActive, runtimeSnapshot]);
 
   const sseAttemptRef = useRef(0);
   const sseSlowModeRef = useRef(false);
@@ -510,6 +522,7 @@ function SpectatorBody() {
               allowTalkToggle={false}
               sessionMirrorLayout
               showSelfPreview
+              waitingReason={spectatorWaitingReason}
               spectatorJoinToken={spectatorJoinToken}
               spectatorObserverTicket={spectatorObserverTicket}
               onTalkModeChange={(nextTalkMode) => {

@@ -198,6 +198,8 @@ type ObserverStreamCardProps = {
   sessionMirrorLayout?: boolean;
   /** Мини self-view наблюдателя (локальная камера/микрофон) поверх потока. */
   showSelfPreview?: boolean;
+  /** Точный статус ожидания из родительского orchestration-слоя spectator page. */
+  waitingReason?: string | null;
 };
 
 export function ObserverStreamCard({
@@ -218,7 +220,8 @@ export function ObserverStreamCard({
   spectatorJoinToken = null,
   spectatorObserverTicket = null,
   sessionMirrorLayout = false,
-  showSelfPreview = false
+  showSelfPreview = false,
+  waitingReason = null
 }: ObserverStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
@@ -280,7 +283,7 @@ export function ObserverStreamCard({
       return "Сессия завершена. Повторное подключение недоступно.";
     }
     if (!meetingId || !enabled) {
-      return "Интервью еще не запущено. Подключение доступно после активации сессии кандидата.";
+      return waitingReason ?? "Интервью еще не запущено. Подключение доступно после активации сессии кандидата.";
     }
     if (busy) {
       return "Подключаем наблюдателя к активной сессии...";
@@ -289,7 +292,7 @@ export function ObserverStreamCard({
       return "Подключение не удалось. Повторите попытку.";
     }
     return "Наблюдатель подключен к активной сессии.";
-  }, [busy, enabled, ended, error, meetingId]);
+  }, [busy, enabled, ended, error, meetingId, waitingReason]);
 
   useEffect(() => {
     onStatusChange?.(status);
