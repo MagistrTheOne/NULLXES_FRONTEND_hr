@@ -19,7 +19,6 @@ import { normalizeInterviewListRows } from "@/lib/normalize-interview-list-row";
 import { sortInterviewListRowsNewestFirst } from "@/lib/sort-interview-list-rows";
 import {
   getObserverControlState,
-  resolveObserverTalkState,
   resolveObserverVisibilityState,
   setObserverControlState,
   subscribeObserverControlState,
@@ -326,7 +325,6 @@ export function InterviewShell() {
     return selectedInterviewDetail.interview.id === selectedInterviewId ? selectedInterviewDetail : null;
   }, [selectedInterviewDetail, selectedInterviewId]);
   const observerVisible = observerControl.visibility === "visible";
-  const observerTalkMode = observerControl.talk;
 
   const recoveredMeetingId =
     meetingId ?? selectedRow?.nullxesMeetingId ?? selectedInterviewDetailMatched?.projection.nullxesMeetingId ?? null;
@@ -769,9 +767,9 @@ export function InterviewShell() {
     if (!selectedInterviewId) {
       return;
     }
-    if (!observerVisible && observerControl.talk !== "off") {
+    if (observerControl.talk !== "off" || !observerVisible) {
       setObserverControlState(selectedInterviewId, {
-        visibility: "hidden",
+        visibility: observerVisible ? "visible" : "hidden",
         talk: "off",
         updatedAt: new Date().toISOString()
       });
@@ -779,9 +777,8 @@ export function InterviewShell() {
   }, [observerControl.talk, observerVisible, selectedInterviewId]);
 
   useEffect(() => {
-    const talkActive = phase === "connected" && observerVisible && observerTalkMode === "on";
-    void setObserverTalkIsolation(talkActive);
-  }, [observerTalkMode, observerVisible, phase, setObserverTalkIsolation]);
+    void setObserverTalkIsolation(false);
+  }, [setObserverTalkIsolation]);
 
   useEffect(() => {
     if (!recoveredRuntimeActive || meetingId || sessionId || !recoveredMeetingId || !recoveredSessionId) {
@@ -1256,10 +1253,10 @@ export function InterviewShell() {
             meetingId={recoveredMeetingId}
             enabled={streamSurfaceEnabled}
             visible={observerVisible}
-            talkMode={observerTalkMode}
+            talkMode="off"
             mutePlayback
             allowVisibilityToggle
-            allowTalkToggle
+            allowTalkToggle={false}
             sessionEnded={completedInterviewLocked}
             uiState={sessionUiState}
             onVisibleChange={(nextVisible) => {
@@ -1273,14 +1270,13 @@ export function InterviewShell() {
                 updatedAt: new Date().toISOString()
               });
             }}
-            onTalkModeChange={(nextTalkMode) => {
+            onTalkModeChange={() => {
               if (!selectedInterviewId) {
                 return;
               }
-              const nextState = resolveObserverTalkState(observerControl, nextTalkMode);
               setObserverControlState(selectedInterviewId, {
-                visibility: nextState.visibility,
-                talk: nextState.talk,
+                visibility: observerVisible ? "visible" : "hidden",
+                talk: "off",
                 updatedAt: new Date().toISOString()
               });
             }}
