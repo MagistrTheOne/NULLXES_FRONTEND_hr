@@ -6,7 +6,7 @@ export type AudioPreflightResult =
   | { ok: false; code: "permission_denied" | "device_unavailable" | "unknown"; message: string };
 
 export type MediaDevicesCheckResult =
-  | { ok: true; stream: MediaStream }
+  | { ok: true; stream: MediaStream; hasVideo: boolean; hasAudio: boolean; warning?: string }
   | { ok: false; code: "permission_denied" | "device_unavailable" | "unknown"; message: string };
 
 /**
@@ -14,42 +14,64 @@ export type MediaDevicesCheckResult =
  * Вызывающий обязан остановить треки, когда превью больше не нужно.
  */
 export async function acquireLocalMediaPreviewStream(): Promise<MediaDevicesCheckResult> {
+  const audioConstraints: MediaTrackConstraints = {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: 1,
+    sampleRate: 48000
+  };
+  const videoConstraints: MediaTrackConstraints = {
+    facingMode: "user",
+    width: { ideal: 640 },
+    height: { ideal: 480 }
+  };
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1,
-        sampleRate: 48000
-      },
-      video: {
-        facingMode: "user",
-        width: { ideal: 640 },
-        height: { ideal: 480 }
-      }
+      audio: audioConstraints,
+      video: videoConstraints
     });
-    return { ok: true, stream };
+    return { ok: true, stream, hasAudio: true, hasVideo: stream.getVideoTracks().length > 0 };
   } catch (error) {
-    if (error instanceof DOMException && error.name === "NotAllowedError") {
+    // Camera may be absent/blocked while microphone is still available.
+    // Fallback to audio-only so candidate can continue without hard stop.
+    try {
+      const audioOnlyStream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints,
+        video: false
+      });
+      return {
+        ok: true,
+        stream: audioOnlyStream,
+        hasAudio: audioOnlyStream.getAudioTracks().length > 0,
+        hasVideo: false,
+        warning: "Камера недоступна. Продолжим с микрофоном без видео."
+      };
+    } catch (audioOnlyError) {
+      if (audioOnlyError instanceof DOMException && audioOnlyError.name === "NotAllowedError") {
+        return {
+          ok: false,
+          code: "permission_denied",
+          message: "Нет доступа к камере или микрофону. Разрешите доступ в браузере и повторите."
+        };
+      }
+      if (
+        audioOnlyError instanceof DOMException &&
+        (audioOnlyError.name === "NotFoundError" || audioOnlyError.name === "NotReadableError")
+      ) {
+        return {
+          ok: false,
+          code: "device_unavailable",
+          message: "Камера или микрофон недоступны. Проверьте устройства и повторите."
+        };
+      }
+      void error;
       return {
         ok: false,
-        code: "permission_denied",
-        message: "Нет доступа к камере или микрофону. Разрешите доступ в браузере и повторите."
+        code: "unknown",
+        message: "Не удалось проверить камеру и микрофон."
       };
     }
-    if (error instanceof DOMException && (error.name === "NotFoundError" || error.name === "NotReadableError")) {
-      return {
-        ok: false,
-        code: "device_unavailable",
-        message: "Камера или микрофон недоступны. Проверьте устройства и повторите."
-      };
-    }
-    return {
-      ok: false,
-      code: "unknown",
-      message: "Не удалось проверить камеру и микрофон."
-    };
   }
 }
 

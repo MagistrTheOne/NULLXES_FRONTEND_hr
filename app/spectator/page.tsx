@@ -38,6 +38,7 @@ const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
 
 const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
 const ACTIVE_MEETING_STATUSES = new Set(["starting", "in_meeting"]);
+const SPECTATOR_SSE_MAX_RETRIES = 5;
 
 function pickActiveMeetingForInterview(jobAiId: number, meetings: MeetingListItem[]): string | null {
   const matched = meetings
@@ -263,6 +264,12 @@ function SpectatorBody() {
           return;
         }
         sseAttemptRef.current += 1;
+        if (sseAttemptRef.current > SPECTATOR_SSE_MAX_RETRIES) {
+          setTechnicalError((prev) =>
+            prev ?? "runtime_stream_unavailable: SSE отключён после повторных ошибок, используем polling."
+          );
+          return;
+        }
         const exp = Math.min(sseAttemptRef.current - 1, 5);
         const delayMs = Math.min(30_000, 1000 * 2 ** exp);
         reconnectTimer = setTimeout(connect, delayMs);

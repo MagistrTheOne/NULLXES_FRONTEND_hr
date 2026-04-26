@@ -245,6 +245,7 @@ export function CandidateStreamCard({
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
   const [mediaCheckBusy, setMediaCheckBusy] = useState(false);
   const [mediaCheckPassedOnce, setMediaCheckPassedOnce] = useState(false);
+  const [mediaCheckWarning, setMediaCheckWarning] = useState<string | null>(null);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   // Фильтр: какие ошибки мы НЕ показываем кандидату красной плашкой.
   // Технические транспорт-ошибки (timeout / network / stream-io) ничего
@@ -363,6 +364,7 @@ export function CandidateStreamCard({
     }
     setMediaCheckBusy(true);
     setError(null);
+    setMediaCheckWarning(null);
     try {
       const result = await acquireLocalMediaPreviewStream();
       if (!result.ok) {
@@ -371,6 +373,9 @@ export function CandidateStreamCard({
       }
       setMediaCheckPassedOnce(true);
       setPreviewStream(result.stream);
+      if (result.warning) {
+        setMediaCheckWarning(result.warning);
+      }
     } finally {
       setMediaCheckBusy(false);
     }
@@ -721,6 +726,9 @@ export function CandidateStreamCard({
                       ? "Нажмите «Подключиться», чтобы начать"
                       : "Ожидание старта собеседования"}
               </p>
+              {mediaCheckWarning ? (
+                <p className="max-w-[320px] rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{mediaCheckWarning}</p>
+              ) : null}
             </>
           )}
         </div>
