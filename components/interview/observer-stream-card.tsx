@@ -499,10 +499,10 @@ export function ObserverStreamCard({
           streamCall = streamClient.call(payload.callType, payload.callId);
           await streamCall.camera.disable().catch(() => undefined);
           await streamCall.microphone.disable().catch(() => undefined);
-          // Allow observer to create the call to avoid race conditions
-          // when spectator joins slightly earlier than candidate/HR.
           await withTimeout(
-            streamCall.join({ create: true, video: false }),
+            // Observer is read-only and must never create ghost calls.
+            // Join only existing call created by candidate/HR flow.
+            streamCall.join({ create: false, video: false }),
             OBSERVER_JOIN_TIMEOUT_MS,
             "Observer stream join timeout"
           );

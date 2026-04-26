@@ -207,7 +207,11 @@ function SpectatorBody() {
         if (cancelled || seq !== loadSeqRef.current) {
           return;
         }
-        const projectedMeetingId = normalizeMeetingId(next?.projection?.nullxesMeetingId);
+        const projectionStatus = String(next?.projection?.nullxesStatus ?? "");
+        const projectedMeetingId =
+          ACTIVE_MEETING_STATUSES.has(projectionStatus)
+            ? normalizeMeetingId(next?.projection?.nullxesMeetingId)
+            : null;
         const runtimeMeetingId = normalizeMeetingId(fetchedRuntimeSnapshot?.meetingId);
         const fallbackMeetingId =
           meetingsSnapshot && Array.isArray(meetingsSnapshot.meetings)
@@ -282,7 +286,9 @@ function SpectatorBody() {
     .join(" ")
     .trim();
   const companyName = detail?.projection.companyName ?? "";
-  const canConnect = Boolean(effectiveMeetingId);
+  const projectionActive = ACTIVE_MEETING_STATUSES.has(String(detail?.projection.nullxesStatus ?? ""));
+  const runtimeActive = ACTIVE_MEETING_STATUSES.has(String(runtimeSnapshot?.meeting.status ?? ""));
+  const canConnect = Boolean(effectiveMeetingId) && (projectionActive || runtimeActive);
 
   const sseAttemptRef = useRef(0);
   const sseSlowModeRef = useRef(false);
