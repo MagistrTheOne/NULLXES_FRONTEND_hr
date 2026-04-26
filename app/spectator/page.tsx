@@ -39,6 +39,21 @@ const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
 const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
 const ACTIVE_MEETING_STATUSES = new Set(["starting", "in_meeting"]);
 const SPECTATOR_SSE_MAX_RETRIES = 5;
+const SPECTATOR_SSE_SLOW_RETRY_MS = 45_000;
+
+type MeetingSource = "none" | "projection" | "meetings_snapshot" | "runtime_snapshot" | "sse_snapshot";
+type MeetingResolution = {
+  id: string | null;
+  source: MeetingSource;
+  updatedAt: number;
+};
+const MEETING_SOURCE_PRIORITY: Record<MeetingSource, number> = {
+  none: 0,
+  meetings_snapshot: 1,
+  projection: 2,
+  sse_snapshot: 3,
+  runtime_snapshot: 4
+};
 
 function pickActiveMeetingForInterview(jobAiId: number, meetings: MeetingListItem[]): string | null {
   const matched = meetings
@@ -55,6 +70,14 @@ function pickActiveMeetingForInterview(jobAiId: number, meetings: MeetingListIte
 
 function stripHtmlTags(input: string): string {
   return input.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function normalizeMeetingId(raw: unknown): string | null {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function normalizeSpectatorLoadError(error: unknown): { userMessage: string; technical: string } {
@@ -128,18 +151,50 @@ function SpectatorBody() {
   const [observerStatus, setObserverStatus] = useState<ObserverConnectionStatus>("waiting_meeting");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [technicalError, setTechnicalError] = useState<string | null>(null);
-  const [activeMeetingIdFallback, setActiveMeetingIdFallback] = useState<string | null>(null);
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<RuntimeSnapshot | null>(null);
+  const [meetingResolution, setMeetingResolution] = useState<MeetingResolution>({
+    id: null,
+    source: "none",
+    updatedAt: 0
+  });
+  const loadSeqRef = useRef(0);
+
+  const applyMeetingCandidate = useMemo(
+    () =>
+      (source: MeetingSource, rawId: unknown) => {
+        const candidateId = normalizeMeetingId(rawId);
+        if (!candidateId) {
+          return;
+        }
+        setMeetingResolution((prev) => {
+          if (!prev.id) {
+            return { id: candidateId, source, updatedAt: Date.now() };
+          }
+          if (prev.id === candidateId) {
+            return prev.source === source ? prev : { ...prev, source };
+          }
+          const nextPriority = MEETING_SOURCE_PRIORITY[source];
+          const prevPriority = MEETING_SOURCE_PRIORITY[prev.source];
+          if (nextPriority < prevPriority) {
+            return prev;
+          }
+          return { id: candidateId, source, updatedAt: Date.now() };
+        });
+      },
+    []
+  );
 
   useEffect(() => {
     if (!jobAiId) {
       setDetail(null);
       setError("Некорректный jobAiId");
       setTechnicalError(null);
+      setMeetingResolution({ id: null, source: "none", updatedAt: Date.now() });
       return;
     }
     let cancelled = false;
     const load = async () => {
+      const seq = ++loadSeqRef.current;
       if (!cancelled) {
         setLoading(true);
       }
@@ -149,29 +204,22 @@ function SpectatorBody() {
           listMeetingsSnapshot().catch(() => null),
           getRuntimeSnapshotByInterview(jobAiId).catch(() => null)
         ]);
-        const projectedMeetingId = next?.projection?.nullxesMeetingId ?? null;
-        const runtimeMeetingId = fetchedRuntimeSnapshot?.meetingId ?? null;
+        if (cancelled || seq !== loadSeqRef.current) {
+          return;
+        }
+        const projectedMeetingId = normalizeMeetingId(next?.projection?.nullxesMeetingId);
+        const runtimeMeetingId = normalizeMeetingId(fetchedRuntimeSnapshot?.meetingId);
         const fallbackMeetingId =
           meetingsSnapshot && Array.isArray(meetingsSnapshot.meetings)
             ? pickActiveMeetingForInterview(jobAiId, meetingsSnapshot.meetings)
             : null;
-        const authoritativeFallback =
-          runtimeMeetingId && runtimeMeetingId !== projectedMeetingId
-            ? runtimeMeetingId
-            : runtimeMeetingId
-              ? null
-              : projectedMeetingId && fallbackMeetingId && projectedMeetingId !== fallbackMeetingId
-                ? fallbackMeetingId
-                : projectedMeetingId
-                  ? null
-                  : fallbackMeetingId;
-        if (!cancelled) {
-          setDetail(next);
-          setRuntimeSnapshot(fetchedRuntimeSnapshot);
-          setActiveMeetingIdFallback(authoritativeFallback);
-          setError(null);
-          setTechnicalError(null);
-        }
+        applyMeetingCandidate("projection", projectedMeetingId);
+        applyMeetingCandidate("meetings_snapshot", fallbackMeetingId);
+        applyMeetingCandidate("runtime_snapshot", runtimeMeetingId);
+        setDetail(next);
+        setRuntimeSnapshot(fetchedRuntimeSnapshot);
+        setError(null);
+        setTechnicalError(null);
       } catch (err) {
         if (!cancelled) {
           const normalized = normalizeSpectatorLoadError(err);
@@ -185,16 +233,28 @@ function SpectatorBody() {
       }
     };
 
-    void load();
-    const interval = setInterval(() => {
-      void load();
-    }, 8000);
+    let nextPollTimer: ReturnType<typeof setTimeout> | null = null;
+    const pollLoop = async () => {
+      if (cancelled) {
+        return;
+      }
+      await load();
+      if (cancelled) {
+        return;
+      }
+      nextPollTimer = setTimeout(() => {
+        void pollLoop();
+      }, 8000);
+    };
+    void pollLoop();
 
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      if (nextPollTimer) {
+        clearTimeout(nextPollTimer);
+      }
     };
-  }, [jobAiId]);
+  }, [applyMeetingCandidate, jobAiId]);
 
   useEffect(() => {
     if (!jobAiId) {
@@ -216,8 +276,7 @@ function SpectatorBody() {
     });
   }, [jobAiId]);
 
-  const meetingId = detail?.projection.nullxesMeetingId ?? null;
-  const effectiveMeetingId = activeMeetingIdFallback ?? meetingId;
+  const effectiveMeetingId = meetingResolution.id;
   const candidateName = [detail?.projection.candidateFirstName, detail?.projection.candidateLastName]
     .filter(Boolean)
     .join(" ")
@@ -226,6 +285,7 @@ function SpectatorBody() {
   const canConnect = Boolean(effectiveMeetingId);
 
   const sseAttemptRef = useRef(0);
+  const sseSlowModeRef = useRef(false);
 
   useEffect(() => {
     if (!effectiveMeetingId) {
@@ -246,14 +306,13 @@ function SpectatorBody() {
       source = es;
       es.addEventListener("open", () => {
         sseAttemptRef.current = 0;
+        sseSlowModeRef.current = false;
       });
       es.addEventListener("snapshot", (event) => {
         try {
           const snapshot = JSON.parse((event as MessageEvent).data) as RuntimeSnapshot;
           setRuntimeSnapshot(snapshot);
-          if (snapshot.meetingId !== meetingId) {
-            setActiveMeetingIdFallback(snapshot.meetingId);
-          }
+          applyMeetingCandidate("sse_snapshot", snapshot.meetingId);
         } catch {
           // Ignore malformed SSE frames; polling fallback still runs.
         }
@@ -266,12 +325,14 @@ function SpectatorBody() {
         sseAttemptRef.current += 1;
         if (sseAttemptRef.current > SPECTATOR_SSE_MAX_RETRIES) {
           setTechnicalError((prev) =>
-            prev ?? "runtime_stream_unavailable: SSE отключён после повторных ошибок, используем polling."
+            prev ?? "runtime_stream_unavailable: SSE нестабилен, переходим в медленный reconnect."
           );
-          return;
+          sseSlowModeRef.current = true;
         }
         const exp = Math.min(sseAttemptRef.current - 1, 5);
-        const delayMs = Math.min(30_000, 1000 * 2 ** exp);
+        const delayMs = sseSlowModeRef.current
+          ? SPECTATOR_SSE_SLOW_RETRY_MS
+          : Math.min(30_000, 1000 * 2 ** exp);
         reconnectTimer = setTimeout(connect, delayMs);
       };
     };
@@ -285,7 +346,7 @@ function SpectatorBody() {
       }
       source?.close();
     };
-  }, [effectiveMeetingId, meetingId]);
+  }, [applyMeetingCandidate, effectiveMeetingId]);
 
   // Глобальный статус интервью (унифицирован с HR mapPhaseToStatus).
   const interviewStatus = useMemo(
@@ -383,6 +444,10 @@ function SpectatorBody() {
                   <p>
                     Внутренний идентификатор ·{" "}
                     <span className="font-mono text-[11px] text-slate-700">{effectiveMeetingId ?? "Появится после запуска"}</span>
+                  </p>
+                  <p>
+                    Meeting source ·{" "}
+                    <span className="font-mono text-[11px] text-slate-700">{meetingResolution.source}</span>
                   </p>
                   <p>
                     Видеопоток ·{" "}
