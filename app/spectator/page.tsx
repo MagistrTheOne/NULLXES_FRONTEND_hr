@@ -288,12 +288,13 @@ function SpectatorBody() {
   const companyName = detail?.projection.companyName ?? "";
   const projectionActive = ACTIVE_MEETING_STATUSES.has(String(detail?.projection.nullxesStatus ?? ""));
   const runtimeActive = ACTIVE_MEETING_STATUSES.has(String(runtimeSnapshot?.meeting.status ?? ""));
-  const runtimeStreamCallId =
+  const runtimeStreamCallIdRaw =
     typeof runtimeSnapshot?.media?.streamCallId === "string" ? runtimeSnapshot.media.streamCallId.trim() : "";
-  const runtimeStreamCallType =
+  const runtimeStreamCallTypeRaw =
     typeof runtimeSnapshot?.media?.streamCallType === "string" ? runtimeSnapshot.media.streamCallType.trim() : "";
-  const hasRuntimeCallConfig = runtimeStreamCallId.length > 0 && runtimeStreamCallType.length > 0;
-  const canConnect = Boolean(effectiveMeetingId) && (projectionActive || runtimeActive) && hasRuntimeCallConfig;
+  const resolvedStreamCallId = runtimeStreamCallIdRaw || effectiveMeetingId || "";
+  const resolvedStreamCallType = runtimeStreamCallTypeRaw || "default";
+  const canConnect = Boolean(effectiveMeetingId) && (projectionActive || runtimeActive);
   const spectatorWaitingReason = useMemo(() => {
     if (!effectiveMeetingId) {
       return "Ожидаем назначение meetingId от runtime. Интервью ещё не перешло в активную фазу.";
@@ -304,11 +305,8 @@ function SpectatorBody() {
     if (!runtimeSnapshot) {
       return "Сессия активируется, ждём runtime snapshot.";
     }
-    if (!hasRuntimeCallConfig) {
-      return "meeting активен, но runtime ещё не отдал streamCallId/streamCallType.";
-    }
     return null;
-  }, [effectiveMeetingId, hasRuntimeCallConfig, projectionActive, runtimeActive, runtimeSnapshot]);
+  }, [effectiveMeetingId, projectionActive, runtimeActive, runtimeSnapshot]);
 
   const sseAttemptRef = useRef(0);
   const sseSlowModeRef = useRef(false);
@@ -522,8 +520,8 @@ function SpectatorBody() {
               title="Сессия (режим наблюдения)"
               participantName={candidateName || "Наблюдатель"}
               meetingId={effectiveMeetingId}
-              streamCallId={runtimeStreamCallId || null}
-              streamCallType={runtimeStreamCallType || null}
+              streamCallId={resolvedStreamCallId || null}
+              streamCallType={resolvedStreamCallType || null}
               enabled={canConnect}
               visible
               talkMode={observerControl.talk}
