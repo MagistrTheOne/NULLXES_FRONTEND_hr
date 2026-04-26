@@ -4,8 +4,11 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { ObserverStreamCard, type ObserverConnectionStatus } from "@/components/interview/observer-stream-card";
+import { AvatarStreamCard } from "@/components/interview/avatar-stream-card";
 import { InterviewStatusBadge } from "@/components/interview/interview-status-badge";
+import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -123,6 +126,43 @@ function mapObserverStatusToVideoState(status: ObserverConnectionStatus): VideoC
     default:
       return "idle";
   }
+}
+
+function CandidateReadonlyMirrorCard({
+  candidateName,
+  waitingReason
+}: {
+  candidateName: string;
+  waitingReason?: string | null;
+}) {
+  return (
+    <StreamParticipantShell
+      title="Кандидат"
+      description="Режим наблюдения: управление отключено"
+      footer={
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+            <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">
+              {candidateName || "Кандидат"}
+            </p>
+            <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+              <span className="mr-1 text-slate-500" aria-hidden>
+                ●
+              </span>
+              Read-only
+            </Badge>
+          </div>
+        </>
+      }
+    >
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+        <p className="text-sm font-medium text-slate-700">Ожидание видеопотока кандидата</p>
+        <p className="max-w-[320px] text-xs text-slate-600">
+          {waitingReason ?? "Как только активная сессия будет доступна, поток появится автоматически."}
+        </p>
+      </div>
+    </StreamParticipantShell>
+  );
 }
 
 function SpectatorBody() {
@@ -294,7 +334,7 @@ function SpectatorBody() {
     typeof runtimeSnapshot?.media?.streamCallType === "string" ? runtimeSnapshot.media.streamCallType.trim() : "";
   const resolvedStreamCallId = runtimeStreamCallIdRaw || effectiveMeetingId || "";
   const resolvedStreamCallType = runtimeStreamCallTypeRaw || "default";
-  const canConnect = Boolean(effectiveMeetingId) && (projectionActive || runtimeActive);
+  const canConnect = Boolean(effectiveMeetingId);
   const spectatorWaitingReason = useMemo(() => {
     if (!effectiveMeetingId) {
       return "Ожидаем назначение meetingId от runtime. Интервью ещё не перешло в активную фазу.";
@@ -513,12 +553,34 @@ function SpectatorBody() {
           </CardContent>
         </Card>
 
-        {/* === Session canvas (matches target: see session + own camera) === */}
-        <main className="grid grid-cols-1 gap-8">
-          <div className="flex min-h-0 min-w-0 flex-col">
+        {/* === 3-column observer layout (candidate + avatar + observer) === */}
+        <main className="grid grid-cols-1 gap-8 lg:grid-cols-3 lg:items-stretch lg:gap-6">
+          <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
+            <CandidateReadonlyMirrorCard
+              candidateName={candidateName || "Кандидат"}
+              waitingReason={spectatorWaitingReason}
+            />
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
+            <AvatarStreamCard
+              participantName="HR ассистент"
+              enabled={canConnect}
+              avatarReady={runtimeSnapshot?.avatar?.avatarReady ?? false}
+              telemetryUnavailable={!runtimeSnapshot?.avatar}
+              meetingId={effectiveMeetingId}
+              showStreamToolbar={false}
+              showStatusBadge
+              showPauseAI={false}
+              showStopAI={false}
+              sessionEnded={false}
+              uiState={canConnect ? "active" : "lobby"}
+              emphasizePrimary
+            />
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
             <ObserverStreamCard
-              title="Сессия (режим наблюдения)"
-              participantName={candidateName || "Наблюдатель"}
+              title="Наблюдатель"
+              participantName="Наблюдатель"
               meetingId={effectiveMeetingId}
               streamCallId={resolvedStreamCallId || null}
               streamCallType={resolvedStreamCallType || null}
@@ -528,7 +590,6 @@ function SpectatorBody() {
               mutePlayback={false}
               allowVisibilityToggle={false}
               allowTalkToggle={false}
-              sessionMirrorLayout
               showSelfPreview
               waitingReason={spectatorWaitingReason}
               spectatorJoinToken={spectatorJoinToken}
