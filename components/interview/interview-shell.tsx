@@ -1000,6 +1000,7 @@ export function InterviewShell() {
           failDisabled={phase === "idle" || busy}
           showDebugActions={SHOW_INTERNAL_DEBUG_UI}
           candidateMode={isCandidateFlow}
+          technicalNotice={!isCandidateFlow ? prioritizedSessionBanner : null}
         />
 
         </>
@@ -1096,7 +1097,7 @@ export function InterviewShell() {
             Не удалось загрузить детали собеседования. Повторите попытку. ({detailError})
           </p>
         ) : null}
-        {prioritizedSessionBanner ? (
+        {isCandidateFlow && prioritizedSessionBanner ? (
           <p
             className={`rounded-xl border px-4 py-2 text-sm shadow-sm ${prioritizedSessionBanner.className}`}
             role="status"

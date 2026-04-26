@@ -43,6 +43,15 @@ type MeetingHeaderProps = {
    * наоборот, чтобы оператор не путался какая кнопка главная.
    */
   interviewActive?: boolean;
+  /**
+   * Дополнительное системное уведомление для HR. Рендерится в секции
+   * «Технические детали», чтобы не перегружать верхнюю часть экрана.
+   */
+  technicalNotice?: {
+    body: string;
+    className?: string;
+    tone?: "completed" | "blocked" | "lobby";
+  } | null;
 };
 
 function formatRelativeMeetingTime(meetingAt: string | undefined): string | null {
@@ -79,7 +88,8 @@ export function MeetingHeader({
   failDisabled = true,
   showDebugActions = false,
   candidateMode = false,
-  interviewActive = false
+  interviewActive = false,
+  technicalNotice = null
 }: MeetingHeaderProps) {
   const [entryUrlInput, setEntryUrlInput] = useState(prototypeEntryUrl ?? "");
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -300,6 +310,17 @@ export function MeetingHeader({
                   {showDebugActions && rawStatusLabel ? (
                     <p className="sm:col-span-2">
                       Внутренняя фаза · <span className="font-mono text-[11px] text-slate-700">{rawStatusLabel}</span>
+                    </p>
+                  ) : null}
+                  {technicalNotice ? (
+                    <p
+                      className={cn(
+                        "sm:col-span-2 rounded-lg border px-3 py-2 text-xs text-slate-700",
+                        technicalNotice.className ?? "border-slate-200 bg-slate-50"
+                      )}
+                      data-session-banner={technicalNotice.tone}
+                    >
+                      {technicalNotice.body}
                     </p>
                   ) : null}
                 </div>
