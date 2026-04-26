@@ -421,6 +421,15 @@ function SpectatorBody() {
               </Button>
               <Button
                 type="button"
+                variant="ghost"
+                onClick={() => {
+                  router.push("/");
+                }}
+              >
+                Назад в основное меню
+              </Button>
+              <Button
+                type="button"
                 variant="outline"
                 onClick={() => {
                   if (typeof window === "undefined") return;
