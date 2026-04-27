@@ -163,8 +163,8 @@ export function InterviewShell() {
     transcripts,
     interviewCandidatePresent,
     reportInterviewCandidatePresent,
-    sessionVoicePreset,
-    setSessionVoicePreset
+    sessionElevenLabsVoiceId,
+    setSessionElevenLabsVoiceId
   } = useInterviewSession({ isCandidateFlow });
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const candidateRuntimeBootstrapRef = useRef(false);
@@ -1023,10 +1023,14 @@ export function InterviewShell() {
             !meetingId ||
             (!isCandidateFlow && !interviewCandidatePresent)
           }
-          sessionVoicePreset={sessionVoicePreset}
-          onSessionVoicePresetChange={setSessionVoicePreset}
-          voicePresetControlsEnabled={
-            phase === "connected" && Boolean(meetingId) && !isCandidateFlow && !completedInterviewLocked
+          savedElevenLabsVoiceId={sessionElevenLabsVoiceId}
+          onSaveElevenLabsVoiceId={setSessionElevenLabsVoiceId}
+          elevenLabsVoiceRowEnabled={
+            process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT === "1" &&
+            phase === "connected" &&
+            Boolean(meetingId) &&
+            !isCandidateFlow &&
+            !completedInterviewLocked
           }
           onFail={markFailed}
           startDisabled={

@@ -26,7 +26,7 @@ export function stopAgentElevenLabsPlayback(): void {
  */
 export async function playAgentUtteranceWithElevenLabs(
   text: string,
-  voiceKey: string,
+  voiceId: string | undefined,
   options?: { signal?: AbortSignal }
 ): Promise<void> {
   const trimmed = text.trim();
@@ -36,11 +36,17 @@ export async function playAgentUtteranceWithElevenLabs(
 
   stopAgentElevenLabsPlayback();
 
+  const vid = voiceId?.trim();
+  const body: { text: string; voiceId?: string } = { text: trimmed.slice(0, 8000) };
+  if (vid && vid.length >= 8) {
+    body.voiceId = vid;
+  }
+
   const res = await fetch("/api/tts/elevenlabs/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({ text: trimmed.slice(0, 8000), voiceKey }),
+    body: JSON.stringify(body),
     signal: options?.signal
   });
 

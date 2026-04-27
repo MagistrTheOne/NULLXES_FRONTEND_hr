@@ -1,27 +1,148 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from "@/components/ui/select";
 import { extractJobAiIdFromEntryUrl } from "@/lib/candidate-entry-url";
 import { cn } from "@/lib/utils";
 import type { InterviewStatusView } from "@/lib/interview-status";
 import { InterviewStatusBadge } from "./interview-status-badge";
-import {
-  MIRA_VOICE_PRESET_LABELS,
-  MIRA_VOICE_PRESET_ORDER,
-  isMiraVoicePresetId,
-  type MiraVoicePresetId
-} from "@/lib/interview-voice-presets";
+
+type ElevenLabsVoiceRowProps = {
+  savedVoiceId: string;
+  onSave: (voiceId: string) => void;
+};
+
+function isLikelyElevenLabsVoiceId(value: string): boolean {
+  const v = value.trim();
+  return v.length >= 8 && /^[a-zA-Z0-9_-]+$/.test(v);
+}
+
+function ElevenLabsVoiceRow({ savedVoiceId, onSave }: ElevenLabsVoiceRowProps) {
+  const [draft, setDraft] = useState(savedVoiceId);
+  const [voices, setVoices] = useState<Array<{ voiceId: string; name: string }>>([]);
+  const [listStatus, setListStatus] = useState<"idle" | "loading" | "error" | "ok">("idle");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const datalistId = "elevenlabs-voice-datalist-meeting-header";
+
+  const loadVoices = async () => {
+    setListStatus("loading");
+    try {
+      const r = await fetch("/api/tts/elevenlabs/voices");
+      const data = (await r.json()) as { voices?: Array<{ voiceId: string; name?: string }>; error?: string };
+      if (!r.ok) {
+        setListStatus("error");
+        toast.error("Не удалось загрузить голоса", { description: data.error ?? r.statusText });
+        return;
+      }
+      const vs = Array.isArray(data.voices) ? data.voices : [];
+      setVoices(vs.map((v) => ({ voiceId: v.voiceId, name: (v.name ?? v.voiceId).slice(0, 72) })));
+      setListStatus("ok");
+    } catch {
+      setListStatus("error");
+      toast.error("Сеть или ElevenLabs недоступны");
+    }
+  };
+
+  useEffect(() => {
+    setDraft(savedVoiceId);
+  }, [savedVoiceId]);
+
+  useEffect(() => {
+    void loadVoices();
+  }, []);
+
+  const dirty = draft.trim() !== savedVoiceId.trim();
+  const canSave = isLikelyElevenLabsVoiceId(draft);
+
+  return (
+    <div className="flex w-full min-w-0 flex-col gap-2 rounded-lg border border-slate-200/90 bg-white/50 p-3 shadow-sm sm:max-w-[min(100%,24rem)]">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-medium text-slate-700">Голос ElevenLabs</span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-[11px]"
+          disabled={listStatus === "loading"}
+          onClick={() => void loadVoices()}
+        >
+          {listStatus === "loading" ? "Загрузка…" : "Обновить список"}
+        </Button>
+      </div>
+      <Input
+        ref={inputRef}
+        list={datalistId}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        spellCheck={false}
+        autoComplete="off"
+        placeholder="voice_id из Voice Library"
+        className="h-9 font-mono text-[11px] leading-tight"
+      />
+      <datalist id={datalistId}>
+        {voices.map((v) => (
+          <option key={v.voiceId} value={v.voiceId} label={v.name} />
+        ))}
+      </datalist>
+      <p className="text-[10px] leading-snug text-slate-500">
+        Реальный <span className="font-mono">voice_id</span> уходит в{" "}
+        <span className="font-mono">/api/tts/elevenlabs/stream</span> (модель{" "}
+        <span className="font-mono">eleven_flash_v2_5</span>). Без id на клиенте используется{" "}
+        <span className="font-mono">ELEVENLABS_DEFAULT_VOICE_ID</span> на сервере.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          className="h-8"
+          disabled={!dirty || !canSave}
+          onClick={() => {
+            onSave(draft.trim());
+            toast.success("Голос сохранён", { description: "Применится со следующей реплики ассистента." });
+          }}
+        >
+          Сохранить
+        </Button>
+        {dirty ? (
+          <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => setDraft(savedVoiceId)}>
+            Отмена
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8"
+            onClick={() => {
+              inputRef.current?.focus();
+              inputRef.current?.select();
+            }}
+          >
+            Изменить
+          </Button>
+        )}
+        <a
+          href="https://elevenlabs.io/app/voice-library"
+          target="_blank"
+          rel="noreferrer"
+          className="ml-auto text-[11px] font-medium text-sky-700 underline-offset-2 hover:underline"
+        >
+          Voice Library →
+        </a>
+      </div>
+      {savedVoiceId.trim() ? (
+        <p className="truncate font-mono text-[10px] text-slate-600" title={savedVoiceId.trim()}>
+          Активно: {savedVoiceId.trim()}
+        </p>
+      ) : (
+        <p className="text-[10px] text-amber-800">Клиентский id пуст — будет серверный дефолт.</p>
+      )}
+    </div>
+  );
+}
 
 type MeetingHeaderProps = {
   /** Презентационный статус интервью (label + tone + icon). */
@@ -65,10 +186,11 @@ type MeetingHeaderProps = {
     className?: string;
     tone?: "completed" | "blocked" | "lobby";
   } | null;
-  /** ElevenLabs TTS preset for this session (HR). Switches only between agent turns — UI enforces no mid-utterance swap. */
-  sessionVoicePreset?: MiraVoicePresetId;
-  onSessionVoicePresetChange?: (next: MiraVoicePresetId) => void;
-  voicePresetControlsEnabled?: boolean;
+  /** ElevenLabs `voice_id` for overlay TTS (HR). Empty string → server `ELEVENLABS_DEFAULT_VOICE_ID`. */
+  savedElevenLabsVoiceId?: string;
+  onSaveElevenLabsVoiceId?: (voiceId: string) => void;
+  /** Показывать блок выбора голоса справа от «Технические детали». */
+  elevenLabsVoiceRowEnabled?: boolean;
 };
 
 function formatRelativeMeetingTime(meetingAt: string | undefined): string | null {
@@ -107,13 +229,12 @@ export function MeetingHeader({
   candidateMode = false,
   interviewActive = false,
   technicalNotice = null,
-  sessionVoicePreset = "mira_core",
-  onSessionVoicePresetChange,
-  voicePresetControlsEnabled = false
+  savedElevenLabsVoiceId = "",
+  onSaveElevenLabsVoiceId,
+  elevenLabsVoiceRowEnabled = false
 }: MeetingHeaderProps) {
   const [entryUrlInput, setEntryUrlInput] = useState(prototypeEntryUrl ?? "");
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [voiceOpen, setVoiceOpen] = useState(false);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -312,82 +433,48 @@ export function MeetingHeader({
             </div>
           )}
 
-          {candidateMode ? null : voicePresetControlsEnabled && onSessionVoicePresetChange ? (
-            <Collapsible open={voiceOpen} onOpenChange={setVoiceOpen} className="border-t border-slate-300/40 pt-3">
-              <CollapsibleTrigger className="inline-flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-xs font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground sm:w-auto">
-                Выбрать голос
-                <ChevronDown className={`size-4 transition-transform ${voiceOpen ? "rotate-180" : ""}`} />
-              </CollapsibleTrigger>
-              <CollapsibleContent className="pt-3">
-                <p className="mb-2 text-xs text-slate-500">
-                  Пресет ElevenLabs для следующего ответа ассистента. Голос фиксируется на время ответа и меняется только между репликами.
-                  {process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT !== "1" ? (
-                    <span className="mt-1 block text-amber-800">
-                      Чтобы озвучка шла через ElevenLabs, в сборке нужен{" "}
-                      <span className="font-mono">NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT=1</span> и на сервере —{" "}
-                      <span className="font-mono">ELEVENLABS_API_KEY</span> (шлюз не меняется).
-                    </span>
-                  ) : null}
-                </p>
-                <Select
-                  modal={false}
-                  value={sessionVoicePreset}
-                  onValueChange={(next) => {
-                    if (typeof next === "string" && isMiraVoicePresetId(next)) {
-                      onSessionVoicePresetChange(next);
-                    }
-                  }}
-                >
-                  <SelectTrigger size="sm" className="h-9 w-full min-w-0 max-w-md">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MIRA_VOICE_PRESET_ORDER.map((id) => (
-                      <SelectItem key={id} value={id}>
-                        {MIRA_VOICE_PRESET_LABELS[id]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </CollapsibleContent>
-            </Collapsible>
-          ) : null}
-
           {candidateMode ? null : (
-            <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
-              <CollapsibleTrigger className="inline-flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-xs font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground sm:w-auto">
-                Технические детали
-                <ChevronDown className={`size-4 transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
-              </CollapsibleTrigger>
-              <CollapsibleContent className="pt-3">
-                <div className="grid grid-cols-1 gap-x-10 gap-y-2 text-slate-500 sm:grid-cols-2">
-                  <p>
-                    Внутренний идентификатор ·{" "}
-                    <span className="font-mono text-[11px] text-slate-700">{meetingId ?? "Появится после запуска"}</span>
-                  </p>
-                  <p>
-                    ID реалтайм-сессии ·{" "}
-                    <span className="font-mono text-[11px] text-slate-700">{sessionId ?? "Появится после запуска"}</span>
-                  </p>
-                  {showDebugActions && rawStatusLabel ? (
-                    <p className="sm:col-span-2">
-                      Внутренняя фаза · <span className="font-mono text-[11px] text-slate-700">{rawStatusLabel}</span>
-                    </p>
-                  ) : null}
-                  {technicalNotice ? (
-                    <p
-                      className={cn(
-                        "sm:col-span-2 rounded-lg border px-3 py-2 text-xs text-slate-700",
-                        technicalNotice.className ?? "border-slate-200 bg-slate-50"
-                      )}
-                      data-session-banner={technicalNotice.tone}
-                    >
-                      {technicalNotice.body}
-                    </p>
-                  ) : null}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
+            <div className="flex flex-col gap-3 border-t border-slate-300/40 pt-4 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+              <div className="min-w-0 shrink-0">
+                <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
+                  <CollapsibleTrigger className="inline-flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-xs font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground sm:w-auto">
+                    Технические детали
+                    <ChevronDown className={`size-4 transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="pt-3">
+                    <div className="grid grid-cols-1 gap-x-10 gap-y-2 text-slate-500 sm:grid-cols-2">
+                      <p>
+                        Внутренний идентификатор ·{" "}
+                        <span className="font-mono text-[11px] text-slate-700">{meetingId ?? "Появится после запуска"}</span>
+                      </p>
+                      <p>
+                        ID реалтайм-сессии ·{" "}
+                        <span className="font-mono text-[11px] text-slate-700">{sessionId ?? "Появится после запуска"}</span>
+                      </p>
+                      {showDebugActions && rawStatusLabel ? (
+                        <p className="sm:col-span-2">
+                          Внутренняя фаза · <span className="font-mono text-[11px] text-slate-700">{rawStatusLabel}</span>
+                        </p>
+                      ) : null}
+                      {technicalNotice ? (
+                        <p
+                          className={cn(
+                            "sm:col-span-2 rounded-lg border px-3 py-2 text-xs text-slate-700",
+                            technicalNotice.className ?? "border-slate-200 bg-slate-50"
+                          )}
+                          data-session-banner={technicalNotice.tone}
+                        >
+                          {technicalNotice.body}
+                        </p>
+                      ) : null}
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              </div>
+              {elevenLabsVoiceRowEnabled && onSaveElevenLabsVoiceId ? (
+                <ElevenLabsVoiceRow savedVoiceId={savedElevenLabsVoiceId} onSave={onSaveElevenLabsVoiceId} />
+              ) : null}
+            </div>
           )}
         </CardContent>
       </Card>

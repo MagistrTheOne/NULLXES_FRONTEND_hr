@@ -1,16 +1,28 @@
 import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { resolveElevenLabsVoiceId, type MiraVoicePresetId } from "@/lib/interview-voice-presets";
 
 const bodySchema = z.object({
   text: z.string().min(1).max(8000),
-  voiceKey: z.enum(["mira_core", "mira_soft", "mira_strict"]).optional()
+  /** ElevenLabs voice id from Voice Library / dashboard (e.g. JBFqnCBsd6RMkjVDRZzb). */
+  voiceId: z.string().min(8).max(128).optional()
 });
 
+function resolveVoiceId(requestVoiceId: string | undefined): string | null {
+  const fromBody = requestVoiceId?.trim();
+  if (fromBody && /^[a-zA-Z0-9_-]+$/.test(fromBody)) {
+    return fromBody;
+  }
+  const fromEnv = process.env.ELEVENLABS_DEFAULT_VOICE_ID?.trim();
+  if (fromEnv && /^[a-zA-Z0-9_-]+$/.test(fromEnv)) {
+    return fromEnv;
+  }
+  return null;
+}
+
 /**
- * Proxies ElevenLabs streaming TTS (model eleven_flash_v2_5) so the API key
- * stays server-side. Client sends text + optional voice preset; audio/mpeg streams back.
+ * Proxies ElevenLabs streaming TTS (model eleven_flash_v2_5). Client sends `voiceId`
+ * (real ElevenLabs id); optional server fallback `ELEVENLABS_DEFAULT_VOICE_ID`.
  */
 export async function POST(req: NextRequest) {
   const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
@@ -30,8 +42,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
 
-  const preset: MiraVoicePresetId = parsed.data.voiceKey ?? "mira_core";
-  const voiceId = resolveElevenLabsVoiceId(preset);
+  const voiceId = resolveVoiceId(parsed.data.voiceId);
+  if (!voiceId) {
+    return NextResponse.json(
+      { error: "voice_id_required", message: "Pass voiceId or set ELEVENLABS_DEFAULT_VOICE_ID on the server." },
+      { status: 400 }
+    );
+  }
 
   const client = new ElevenLabsClient({ apiKey });
 

@@ -29,8 +29,10 @@ import {
   type OpenAiServerEvent,
   type WebRtcConnectionState
 } from "@/lib/webrtc-client";
-import type { MiraVoicePresetId } from "@/lib/interview-voice-presets";
 import { playAgentUtteranceWithElevenLabs, stopAgentElevenLabsPlayback } from "@/lib/agent-elevenlabs-playback";
+
+const DEFAULT_SESSION_ELEVENLABS_VOICE_ID =
+  typeof process !== "undefined" ? String(process.env.NEXT_PUBLIC_ELEVENLABS_DEFAULT_VOICE_ID ?? "").trim() : "";
 
 export type InterviewPhase = "idle" | "starting" | "connected" | "stopping" | "failed";
 export type InterviewStartResult = {
@@ -387,13 +389,13 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     interviewCandidatePresentRef.current = present;
     setInterviewCandidatePresent(present);
   }, []);
-  const [sessionVoicePreset, setSessionVoicePreset] = useState<MiraVoicePresetId>("mira_core");
-  const sessionVoicePresetRef = useRef<MiraVoicePresetId>("mira_core");
+  const [sessionElevenLabsVoiceId, setSessionElevenLabsVoiceId] = useState(() => DEFAULT_SESSION_ELEVENLABS_VOICE_ID);
+  const sessionElevenLabsVoiceIdRef = useRef(DEFAULT_SESSION_ELEVENLABS_VOICE_ID);
   const elevenLabsUtteranceAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    sessionVoicePresetRef.current = sessionVoicePreset;
-  }, [sessionVoicePreset]);
+    sessionElevenLabsVoiceIdRef.current = sessionElevenLabsVoiceId;
+  }, [sessionElevenLabsVoiceId]);
 
   const rtcRef = useRef<WebRtcInterviewClient | null>(null);
   const reconnectAttemptForSessionRef = useRef<string | null>(null);
@@ -585,7 +587,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         const trimmed = transcript.trim();
         if (trimmed.length > 0) {
           const signal = elevenLabsUtteranceAbortRef.current?.signal;
-          void playAgentUtteranceWithElevenLabs(trimmed, sessionVoicePresetRef.current, { signal }).catch((err) => {
+          void playAgentUtteranceWithElevenLabs(trimmed, sessionElevenLabsVoiceIdRef.current || undefined, {
+            signal
+          }).catch((err) => {
             if (err instanceof DOMException && err.name === "AbortError") {
               return;
             }
@@ -1485,7 +1489,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       setFlowPhase("completed");
       setAgentState("idle");
       setLatestCaptions({});
-      setSessionVoicePreset("mira_core");
+      setSessionElevenLabsVoiceId(DEFAULT_SESSION_ELEVENLABS_VOICE_ID);
       setPhase("idle");
       return true;
     } catch (err) {
@@ -1576,8 +1580,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     stop,
     interviewCandidatePresent,
     reportInterviewCandidatePresent,
-    sessionVoicePreset,
-    setSessionVoicePreset,
+    sessionElevenLabsVoiceId,
+    setSessionElevenLabsVoiceId,
     markFailed,
     pauseAgent,
     resumeAgent,
