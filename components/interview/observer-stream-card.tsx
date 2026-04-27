@@ -585,7 +585,8 @@ export function ObserverStreamCard({
     }
     try {
       setSelfPreviewError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      // Observer is view-only: never capture microphone for self-preview (leak risk).
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       stream.getVideoTracks().forEach((track) => {
         track.enabled = selfCameraEnabled;
       });

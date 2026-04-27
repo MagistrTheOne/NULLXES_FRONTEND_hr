@@ -160,9 +160,12 @@ export function InterviewShell() {
     agentState,
     questionsAsked,
     latestCaptions,
-    transcripts
-  } =
-    useInterviewSession();
+    transcripts,
+    interviewCandidatePresent,
+    reportInterviewCandidatePresent,
+    sessionVoicePreset,
+    setSessionVoicePreset
+  } = useInterviewSession({ isCandidateFlow });
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const candidateRuntimeBootstrapRef = useRef(false);
   const [origin, setOrigin] = useState("");
@@ -342,6 +345,12 @@ export function InterviewShell() {
     phase === "connected" && !completedInterviewLocked && Boolean(recoveredMeetingId && recoveredSessionId);
   const hasInterviewSelection = Boolean(selectedRow || selectedInterviewDetailMatched);
 
+  useEffect(() => {
+    if (!streamSurfaceEnabled) {
+      reportInterviewCandidatePresent(false);
+    }
+  }, [reportInterviewCandidatePresent, streamSurfaceEnabled]);
+
   // Auto-stop the meeting once the countdown hits zero. Fires exactly once per
   // session via autoEndFiredRef even if React re-renders us between the
   // expired tick and the stop()/state-reset call below.
@@ -361,7 +370,11 @@ export function InterviewShell() {
         ...(durationMs ? { durationMs } : {})
       }).catch(() => undefined);
     }
-    void stop(typeof jid === "number" ? { interviewId: jid } : undefined);
+    void stop(
+      typeof jid === "number"
+        ? { interviewId: jid, skipInterviewCandidateStopGuard: true }
+        : { skipInterviewCandidateStopGuard: true }
+    );
   }, [
     joinedAtMs,
     meetingId,
@@ -846,9 +859,22 @@ export function InterviewShell() {
   );
 
   /** Open exit confirmation dialog in the requested mode. */
-  const openExitDialog = useCallback((mode: ExitConfirmationMode) => {
-    setExitDialog({ open: true, mode, busy: false });
-  }, []);
+  const openExitDialog = useCallback(
+    (mode: ExitConfirmationMode) => {
+      if (
+        mode === "end" &&
+        !isCandidateFlow &&
+        phase === "connected" &&
+        meetingId &&
+        !interviewCandidatePresent
+      ) {
+        toast.error("Невозможно завершить сессию без кандидата");
+        return;
+      }
+      setExitDialog({ open: true, mode, busy: false });
+    },
+    [interviewCandidatePresent, isCandidateFlow, meetingId, phase]
+  );
 
   /**
    * Resolve confirmation: end = full stopMeeting; leave = best-effort
@@ -860,7 +886,11 @@ export function InterviewShell() {
     try {
       if (exitDialog.mode === "end") {
         const jid = selectedInterviewId ?? selectedRow?.jobAiId;
-        await stop(typeof jid === "number" ? { interviewId: jid } : undefined);
+        const stopped = await stop(typeof jid === "number" ? { interviewId: jid } : undefined);
+        if (!stopped) {
+          setExitDialog((prev) => ({ ...prev, busy: false }));
+          return;
+        }
       } else if (recoveredMeetingId) {
         try {
           await releaseCandidateAdmission(recoveredMeetingId, {
@@ -987,7 +1017,16 @@ export function InterviewShell() {
           }}
           onStopSession={() => openExitDialog("end")}
           stopSessionDisabled={
-            busy || completedInterviewLocked || phase !== "connected" || !meetingId
+            busy ||
+            completedInterviewLocked ||
+            phase !== "connected" ||
+            !meetingId ||
+            (!isCandidateFlow && !interviewCandidatePresent)
+          }
+          sessionVoicePreset={sessionVoicePreset}
+          onSessionVoicePresetChange={setSessionVoicePreset}
+          voicePresetControlsEnabled={
+            phase === "connected" && Boolean(meetingId) && !isCandidateFlow && !completedInterviewLocked
           }
           onFail={markFailed}
           startDisabled={
@@ -1205,6 +1244,8 @@ export function InterviewShell() {
             sessionEnded={completedInterviewLocked}
             uiState={sessionUiState}
             onQualityChange={reportCandidateConnectionQuality}
+            isCandidateFlow={isCandidateFlow}
+            onInterviewCandidatePresenceChange={reportInterviewCandidatePresent}
           />
           </div>
           <div
@@ -1230,7 +1271,7 @@ export function InterviewShell() {
             pauseResumeCopy={isCandidateFlow ? "stop_bot" : "pause"}
             // Полный stop сессии — только HR; кандидат: «Стоп бота» = пауза ответов HR аватара.
             showStopAI={!isCandidateFlow && phase === "connected" && Boolean(recoveredMeetingId) && !completedInterviewLocked}
-            stopAIDisabled={busy}
+            stopAIDisabled={busy || (!isCandidateFlow && !interviewCandidatePresent)}
             onStopAI={() => {
               const jid = selectedInterviewId ?? selectedRow?.jobAiId;
               void stop(typeof jid === "number" ? { interviewId: jid } : undefined);

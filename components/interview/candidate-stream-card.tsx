@@ -192,6 +192,53 @@ function CandidateCallBody({
   );
 }
 
+function participantStreamUserId(p: { userId?: string; user?: { id?: string } }): string {
+  if (typeof p.userId === "string" && p.userId.length > 0) {
+    return p.userId;
+  }
+  const id = p.user && typeof p.user.id === "string" ? p.user.id : "";
+  return id;
+}
+
+/**
+ * HR dashboard joins Stream as a local `candidate-*` placeholder; real candidate
+ * presence is a **remote** `candidate-*`. Candidate-flow uses the local candidate id.
+ */
+function InterviewCandidatePresenceReporter({
+  isCandidateFlow,
+  onChange
+}: {
+  isCandidateFlow: boolean;
+  onChange: (present: boolean) => void;
+}) {
+  const { useParticipants, useCallCallingState } = useCallStateHooks();
+  const participants = useParticipants();
+  const callingState = useCallCallingState();
+
+  const present =
+    callingState === CallingState.JOINED &&
+    (participants.some(
+      (p) => !p.isLocalParticipant && participantStreamUserId(p).startsWith("candidate-")
+    ) ||
+      (isCandidateFlow &&
+        participants.some(
+          (p) => p.isLocalParticipant && participantStreamUserId(p).startsWith("candidate-")
+        )));
+
+  useEffect(() => {
+    onChange(present);
+  }, [onChange, present]);
+
+  useEffect(
+    () => () => {
+      onChange(false);
+    },
+    [onChange]
+  );
+
+  return null;
+}
+
 type CandidateStreamCardProps = {
   meetingId: string | null;
   sessionId: string | null;
@@ -215,6 +262,13 @@ type CandidateStreamCardProps = {
   uiState?: SessionUIState;
   /** Bubble live connection quality up to the shell (banner + toast hooks). */
   onQualityChange?: (reading: ConnectionQualityReading) => void;
+  /** Candidate entry URL flow (`?entry=candidate`) — local Stream user counts as interview candidate. */
+  isCandidateFlow?: boolean;
+  /**
+   * Fires when a **real** remote candidate joins the Stream room (HR) or when
+   * the candidate-flow user is joined as `candidate-*` (self).
+   */
+  onInterviewCandidatePresenceChange?: (present: boolean) => void;
   /**
    * Кандидат: сначала одна кнопка проверки камеры+микрофона (вкл/выкл превью),
    * затем ручное «Подключиться» к Stream; авто-join видео отключён.
@@ -236,7 +290,9 @@ export function CandidateStreamCard({
   showControls = true,
   sessionEnded = false,
   uiState,
-  onQualityChange
+  onQualityChange,
+  isCandidateFlow = false,
+  onInterviewCandidatePresenceChange
 }: CandidateStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
@@ -684,6 +740,12 @@ export function CandidateStreamCard({
           <StreamVideo client={client}>
             <StreamTheme>
               <StreamCall call={call}>
+                {onInterviewCandidatePresenceChange ? (
+                  <InterviewCandidatePresenceReporter
+                    isCandidateFlow={isCandidateFlow}
+                    onChange={onInterviewCandidatePresenceChange}
+                  />
+                ) : null}
                 <CandidateCallBody
                   call={call}
                   showControls={showControls && !interactiveDisabled}

@@ -5,10 +5,23 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "@/components/ui/select";
 import { extractJobAiIdFromEntryUrl } from "@/lib/candidate-entry-url";
 import { cn } from "@/lib/utils";
 import type { InterviewStatusView } from "@/lib/interview-status";
 import { InterviewStatusBadge } from "./interview-status-badge";
+import {
+  MIRA_VOICE_PRESET_LABELS,
+  MIRA_VOICE_PRESET_ORDER,
+  isMiraVoicePresetId,
+  type MiraVoicePresetId
+} from "@/lib/interview-voice-presets";
 
 type MeetingHeaderProps = {
   /** Презентационный статус интервью (label + tone + icon). */
@@ -52,6 +65,10 @@ type MeetingHeaderProps = {
     className?: string;
     tone?: "completed" | "blocked" | "lobby";
   } | null;
+  /** ElevenLabs TTS preset for this session (HR). Switches only between agent turns — UI enforces no mid-utterance swap. */
+  sessionVoicePreset?: MiraVoicePresetId;
+  onSessionVoicePresetChange?: (next: MiraVoicePresetId) => void;
+  voicePresetControlsEnabled?: boolean;
 };
 
 function formatRelativeMeetingTime(meetingAt: string | undefined): string | null {
@@ -89,10 +106,14 @@ export function MeetingHeader({
   showDebugActions = false,
   candidateMode = false,
   interviewActive = false,
-  technicalNotice = null
+  technicalNotice = null,
+  sessionVoicePreset = "mira_core",
+  onSessionVoicePresetChange,
+  voicePresetControlsEnabled = false
 }: MeetingHeaderProps) {
   const [entryUrlInput, setEntryUrlInput] = useState(prototypeEntryUrl ?? "");
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [voiceOpen, setVoiceOpen] = useState(false);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -290,6 +311,47 @@ export function MeetingHeader({
               ) : null}
             </div>
           )}
+
+          {candidateMode ? null : voicePresetControlsEnabled && onSessionVoicePresetChange ? (
+            <Collapsible open={voiceOpen} onOpenChange={setVoiceOpen} className="border-t border-slate-300/40 pt-3">
+              <CollapsibleTrigger className="inline-flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-xs font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground sm:w-auto">
+                Выбрать голос
+                <ChevronDown className={`size-4 transition-transform ${voiceOpen ? "rotate-180" : ""}`} />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-3">
+                <p className="mb-2 text-xs text-slate-500">
+                  Пресет ElevenLabs для следующего ответа ассистента. Голос фиксируется на время ответа и меняется только между репликами.
+                  {process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT !== "1" ? (
+                    <span className="mt-1 block text-amber-800">
+                      Чтобы озвучка шла через ElevenLabs, в сборке нужен{" "}
+                      <span className="font-mono">NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT=1</span> и на сервере —{" "}
+                      <span className="font-mono">ELEVENLABS_API_KEY</span> (шлюз не меняется).
+                    </span>
+                  ) : null}
+                </p>
+                <Select
+                  modal={false}
+                  value={sessionVoicePreset}
+                  onValueChange={(next) => {
+                    if (typeof next === "string" && isMiraVoicePresetId(next)) {
+                      onSessionVoicePresetChange(next);
+                    }
+                  }}
+                >
+                  <SelectTrigger size="sm" className="h-9 w-full min-w-0 max-w-md">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MIRA_VOICE_PRESET_ORDER.map((id) => (
+                      <SelectItem key={id} value={id}>
+                        {MIRA_VOICE_PRESET_LABELS[id]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </CollapsibleContent>
+            </Collapsible>
+          ) : null}
 
           {candidateMode ? null : (
             <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>

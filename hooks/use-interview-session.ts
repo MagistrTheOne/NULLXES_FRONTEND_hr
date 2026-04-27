@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   ApiRequestError,
   closeRealtimeSession,
@@ -28,6 +29,8 @@ import {
   type OpenAiServerEvent,
   type WebRtcConnectionState
 } from "@/lib/webrtc-client";
+import type { MiraVoicePresetId } from "@/lib/interview-voice-presets";
+import { playAgentUtteranceWithElevenLabs, stopAgentElevenLabsPlayback } from "@/lib/agent-elevenlabs-playback";
 
 export type InterviewPhase = "idle" | "starting" | "connected" | "stopping" | "failed";
 export type InterviewStartResult = {
@@ -100,6 +103,15 @@ function readString(source: unknown, key: string): string | undefined {
   if (!source || typeof source !== "object") return undefined;
   const value = (source as Record<string, unknown>)[key];
   return typeof value === "string" ? value : undefined;
+}
+
+/** When true, agent speech uses ElevenLabs (text-only OpenAI responses + local playback). */
+function elevenLabsAgentReplacesOpenAiAudio(): boolean {
+  return process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT === "1";
+}
+
+function openAiAgentResponseModalities(): ("audio" | "text")[] {
+  return elevenLabsAgentReplacesOpenAiAudio() ? ["text"] : ["audio", "text"];
 }
 
 function isIgnorableStatusTransitionError(error: unknown): boolean {
@@ -295,7 +307,7 @@ async function postIntroResponseToRtc(
   await rtc.postEvent({
     type: "response.create",
     response: {
-      modalities: ["audio", "text"],
+      modalities: openAiAgentResponseModalities(),
       instructions: [
         ...baseInstructions,
         "",
@@ -331,7 +343,14 @@ async function transitionJobAiToCompleted(interviewId: number): Promise<void> {
   }
 }
 
-export function useInterviewSession() {
+export type InterviewSessionStopOptions = {
+  interviewId?: number;
+  /** Timer-driven / operational shutdown: bypass «кандидат в Stream» guard. */
+  skipInterviewCandidateStopGuard?: boolean;
+};
+
+export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
+  const isCandidateFlow = options?.isCandidateFlow ?? false;
   const [phase, setPhase] = useState<InterviewPhase>("idle");
   const [meetingId, setMeetingId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -362,6 +381,19 @@ export function useInterviewSession() {
    * Kept as a ref-shaped array, not a Map, because transcript order is meaningful.
    */
   const [transcripts, setTranscripts] = useState<TranscriptTurn[]>([]);
+  const interviewCandidatePresentRef = useRef(false);
+  const [interviewCandidatePresent, setInterviewCandidatePresent] = useState(false);
+  const reportInterviewCandidatePresent = useCallback((present: boolean) => {
+    interviewCandidatePresentRef.current = present;
+    setInterviewCandidatePresent(present);
+  }, []);
+  const [sessionVoicePreset, setSessionVoicePreset] = useState<MiraVoicePresetId>("mira_core");
+  const sessionVoicePresetRef = useRef<MiraVoicePresetId>("mira_core");
+  const elevenLabsUtteranceAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    sessionVoicePresetRef.current = sessionVoicePreset;
+  }, [sessionVoicePreset]);
 
   const rtcRef = useRef<WebRtcInterviewClient | null>(null);
   const reconnectAttemptForSessionRef = useRef<string | null>(null);
@@ -510,48 +542,104 @@ export function useInterviewSession() {
       lastResponseIdRef.current = respId;
       setAgentState("thinking");
       setFlowPhase((prev) => (prev === "lobby" ? "intro" : prev));
-      return;
-    }
-
-    if (type === "response.output_audio.delta" || type === "response.audio.delta") {
-      setAgentState((prev) => (prev === "thinking" ? "speaking" : prev === "idle" ? "speaking" : prev));
-      return;
-    }
-
-    if (
-      type === "response.output_audio_transcript.delta" ||
-      type === "response.audio_transcript.delta"
-    ) {
-      const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
-      const delta = readString(payload, "delta") ?? "";
-      if (delta) {
-        const current = agentTranscriptBufferRef.current.get(itemId) ?? "";
-        agentTranscriptBufferRef.current.set(itemId, current + delta);
-        scheduleCaptionUpdate("agent", current + delta);
+      if (elevenLabsAgentReplacesOpenAiAudio()) {
+        elevenLabsUtteranceAbortRef.current?.abort();
+        elevenLabsUtteranceAbortRef.current = new AbortController();
       }
       return;
     }
 
-    if (
-      type === "response.output_audio_transcript.done" ||
-      type === "response.audio_transcript.done"
-    ) {
-      const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
-      const transcript =
-        readString(payload, "transcript") ?? agentTranscriptBufferRef.current.get(itemId) ?? "";
-      if (transcript.trim().length > 0) {
-        const turn: TranscriptTurn = {
-          role: "agent",
-          text: transcript,
-          ts: Date.now(),
-          itemId
-        };
-        transcriptsRef.current.push(turn);
-        setTranscripts((prev) => [...prev, turn]);
-        scheduleCaptionUpdate("agent", transcript);
+    if (elevenLabsAgentReplacesOpenAiAudio()) {
+      if (type === "response.output_text.delta" || type === "response.text.delta") {
+        const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
+        const delta = readString(payload, "delta") ?? "";
+        if (delta) {
+          const current = agentTranscriptBufferRef.current.get(itemId) ?? "";
+          agentTranscriptBufferRef.current.set(itemId, current + delta);
+          scheduleCaptionUpdate("agent", current + delta);
+        }
+        setAgentState((prev) => (prev === "thinking" ? "speaking" : prev === "idle" ? "speaking" : prev));
+        return;
       }
-      agentTranscriptBufferRef.current.delete(itemId);
-      return;
+
+      if (type === "response.output_text.done" || type === "response.text.done") {
+        const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
+        const transcript =
+          readString(payload, "text") ??
+          readString(payload, "transcript") ??
+          agentTranscriptBufferRef.current.get(itemId) ??
+          "";
+        if (transcript.trim().length > 0) {
+          const turn: TranscriptTurn = {
+            role: "agent",
+            text: transcript,
+            ts: Date.now(),
+            itemId
+          };
+          transcriptsRef.current.push(turn);
+          setTranscripts((prev) => [...prev, turn]);
+          scheduleCaptionUpdate("agent", transcript);
+        }
+        agentTranscriptBufferRef.current.delete(itemId);
+
+        const trimmed = transcript.trim();
+        if (trimmed.length > 0) {
+          const signal = elevenLabsUtteranceAbortRef.current?.signal;
+          void playAgentUtteranceWithElevenLabs(trimmed, sessionVoicePresetRef.current, { signal }).catch((err) => {
+            if (err instanceof DOMException && err.name === "AbortError") {
+              return;
+            }
+            if (err instanceof Error && err.name === "AbortError") {
+              return;
+            }
+            console.warn("[elevenlabs-agent-tts] playback error", err);
+          });
+        }
+        return;
+      }
+    }
+
+    if (!elevenLabsAgentReplacesOpenAiAudio()) {
+      if (type === "response.output_audio.delta" || type === "response.audio.delta") {
+        setAgentState((prev) => (prev === "thinking" ? "speaking" : prev === "idle" ? "speaking" : prev));
+        return;
+      }
+
+      if (
+        type === "response.output_audio_transcript.delta" ||
+        type === "response.audio_transcript.delta"
+      ) {
+        const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
+        const delta = readString(payload, "delta") ?? "";
+        if (delta) {
+          const current = agentTranscriptBufferRef.current.get(itemId) ?? "";
+          agentTranscriptBufferRef.current.set(itemId, current + delta);
+          scheduleCaptionUpdate("agent", current + delta);
+        }
+        return;
+      }
+
+      if (
+        type === "response.output_audio_transcript.done" ||
+        type === "response.audio_transcript.done"
+      ) {
+        const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
+        const transcript =
+          readString(payload, "transcript") ?? agentTranscriptBufferRef.current.get(itemId) ?? "";
+        if (transcript.trim().length > 0) {
+          const turn: TranscriptTurn = {
+            role: "agent",
+            text: transcript,
+            ts: Date.now(),
+            itemId
+          };
+          transcriptsRef.current.push(turn);
+          setTranscripts((prev) => [...prev, turn]);
+          scheduleCaptionUpdate("agent", transcript);
+        }
+        agentTranscriptBufferRef.current.delete(itemId);
+        return;
+      }
     }
 
     if (type === "conversation.item.input_audio_transcription.completed") {
@@ -647,6 +735,8 @@ export function useInterviewSession() {
         pendingCancelRef.current = null;
       }
       setAgentState("listening");
+      elevenLabsUtteranceAbortRef.current?.abort();
+      stopAgentElevenLabsPlayback();
       return;
     }
 
@@ -738,6 +828,8 @@ export function useInterviewSession() {
     } catch {
       // Ignore no-op cancel failures: pause state remains local.
     }
+    elevenLabsUtteranceAbortRef.current?.abort();
+    stopAgentElevenLabsPlayback();
     try {
       await rtc.postEvent({
         type: "session.update",
@@ -790,7 +882,7 @@ export function useInterviewSession() {
       await rtc.postEvent({
         type: "response.create",
         response: {
-          modalities: ["text", "audio"],
+          modalities: openAiAgentResponseModalities(),
           instructions: "Продолжи интервью с текущего места и задай следующий уместный вопрос."
         }
       });
@@ -1250,9 +1342,17 @@ export function useInterviewSession() {
     }
   }, [effectivePromptSettings, ensureClient, flushSessionUpdatedWaiters, getSessionUpdatedVersion, meetingId, phase, sessionId, waitForSessionUpdatedAck]);
 
-  const stop = useCallback(async (options?: { interviewId?: number }) => {
+  const stop = useCallback(async (options?: InterviewSessionStopOptions): Promise<boolean> => {
     if (!meetingId) {
-      return;
+      return false;
+    }
+    if (
+      !options?.skipInterviewCandidateStopGuard &&
+      !isCandidateFlow &&
+      !interviewCandidatePresentRef.current
+    ) {
+      toast.error("Невозможно завершить сессию без кандидата");
+      return false;
     }
 
     setPhase("stopping");
@@ -1360,6 +1460,9 @@ export function useInterviewSession() {
           }
         }
       }
+      elevenLabsUtteranceAbortRef.current?.abort();
+      elevenLabsUtteranceAbortRef.current = null;
+      stopAgentElevenLabsPlayback();
       rtc?.close();
       if (activeSessionId) {
         await closeRealtimeSession(activeSessionId).catch(() => undefined);
@@ -1382,7 +1485,9 @@ export function useInterviewSession() {
       setFlowPhase("completed");
       setAgentState("idle");
       setLatestCaptions({});
+      setSessionVoicePreset("mira_core");
       setPhase("idle");
+      return true;
     } catch (err) {
       if (cancelAckTimeoutRef.current) {
         clearTimeout(cancelAckTimeoutRef.current);
@@ -1390,8 +1495,9 @@ export function useInterviewSession() {
       }
       setPhase("failed");
       setError(err instanceof Error ? err.message : "Failed to stop session");
+      return false;
     }
-  }, [activeInterviewId, emitFrontendTelemetry, flushSessionUpdatedWaiters, meetingId, sessionId]);
+  }, [activeInterviewId, emitFrontendTelemetry, flushSessionUpdatedWaiters, isCandidateFlow, meetingId, sessionId]);
 
   const markFailed = useCallback(async () => {
     if (!meetingId) {
@@ -1468,6 +1574,10 @@ export function useInterviewSession() {
     transcripts,
     start,
     stop,
+    interviewCandidatePresent,
+    reportInterviewCandidatePresent,
+    sessionVoicePreset,
+    setSessionVoicePreset,
     markFailed,
     pauseAgent,
     resumeAgent,
