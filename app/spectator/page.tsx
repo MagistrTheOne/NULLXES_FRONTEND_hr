@@ -523,8 +523,9 @@ function SpectatorBody() {
         <main className="grid grid-cols-1 gap-8">
           <div className="flex min-h-0 min-w-0 flex-col">
             <ObserverStreamCard
-              title="Сессия (режим наблюдения)"
-              participantName={candidateName || "Наблюдатель"}
+              title="Наблюдатель"
+              participantName="Наблюдатель"
+              candidateDisplayName={candidateName || "Кандидат"}
               meetingId={effectiveMeetingId}
               streamCallId={resolvedStreamCallId || null}
               streamCallType={resolvedStreamCallType || null}
@@ -534,7 +535,7 @@ function SpectatorBody() {
               mutePlayback={false}
               allowVisibilityToggle={false}
               allowTalkToggle={false}
-              sessionMirrorLayout
+              spectatorDashboardLayout
               showSelfPreview
               waitingReason={spectatorWaitingReason}
               spectatorJoinToken={spectatorJoinToken}

@@ -91,6 +91,176 @@ type ObserverCallBodyProps = {
   sessionMirrorLayout?: boolean;
 };
 
+/** Две колонки как у кандидата: кандидат | HR (внутри одного StreamCall). */
+type ObserverSplitDashboardProps = {
+  localUserId: string;
+  candidateDisplayName: string;
+  onParticipantsDetected?: (hasParticipants: boolean) => void;
+};
+
+function ObserverSplitDashboard({ localUserId, candidateDisplayName, onParticipantsDetected }: ObserverSplitDashboardProps) {
+  const { useCallCallingState, useParticipants } = useCallStateHooks();
+  const state = useCallCallingState();
+  const participants = useParticipants();
+
+  const remoteCount = useMemo(
+    () => participants.filter((p) => p.userId !== localUserId).length,
+    [localUserId, participants]
+  );
+
+  useEffect(() => {
+    onParticipantsDetected?.(remoteCount > 0);
+  }, [onParticipantsDetected, remoteCount]);
+
+  const { candidateParticipant, agentParticipant } = useMemo(() => {
+    const candidate =
+      participants.find((participant) => participant.userId?.startsWith("candidate-")) ?? null;
+    const agent =
+      participants.find(
+        (participant) =>
+          participant.userId?.startsWith("agent-") || participant.userId?.startsWith("agent_")
+      ) ?? null;
+    return { candidateParticipant: candidate, agentParticipant: agent };
+  }, [participants]);
+
+  const leftBadge = candidateParticipant ? "В эфире" : state === CallingState.JOINING ? "Подключение…" : "Ожидание";
+  const rightBadge = agentParticipant ? "В эфире" : state === CallingState.JOINING ? "Подключение…" : "Ожидание";
+
+  if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
+    return (
+      <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 p-1 lg:grid-cols-2 lg:gap-6">
+        <StreamParticipantShell
+          title="Кандидат"
+          footer={
+            <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+              <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{candidateDisplayName}</p>
+              <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+                <span className="mr-1 text-slate-500" aria-hidden>
+                  ●
+                </span>
+                Поток не подключён
+              </Badge>
+            </div>
+          }
+        >
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+            <p className="text-sm text-slate-600">Подключение наблюдателя…</p>
+          </div>
+        </StreamParticipantShell>
+        <StreamParticipantShell
+          title="HR аватар"
+          footer={
+            <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+              <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">HR ассистент</p>
+              <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+                <span className="mr-1 text-slate-500" aria-hidden>
+                  ●
+                </span>
+                Поток не подключён
+              </Badge>
+            </div>
+          }
+        >
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+            <p className="text-sm text-slate-600">Подключение наблюдателя…</p>
+          </div>
+        </StreamParticipantShell>
+      </div>
+    );
+  }
+
+  if (remoteCount === 0) {
+    return (
+      <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 p-1 lg:grid-cols-2 lg:gap-6">
+        <StreamParticipantShell
+          title="Кандидат"
+          footer={
+            <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+              <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{candidateDisplayName}</p>
+              <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+                <span className="mr-1 text-amber-600" aria-hidden>
+                  ●
+                </span>
+                Ожидание участников
+              </Badge>
+            </div>
+          }
+        >
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-sm text-slate-600">
+            Ожидание кандидата
+          </div>
+        </StreamParticipantShell>
+        <StreamParticipantShell
+          title="HR аватар"
+          footer={
+            <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+              <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">HR ассистент</p>
+              <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+                <span className="mr-1 text-amber-600" aria-hidden>
+                  ●
+                </span>
+                Ожидание участников
+              </Badge>
+            </div>
+          }
+        >
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-sm text-slate-600">
+            Ожидание HR аватара
+          </div>
+        </StreamParticipantShell>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 p-1 lg:grid-cols-2 lg:gap-6">
+      <StreamParticipantShell
+        title="Кандидат"
+        footer={
+          <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+            <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{candidateDisplayName}</p>
+            <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+              <span
+                className={cn("mr-1", candidateParticipant ? "text-emerald-600" : "text-slate-400")}
+                aria-hidden
+              >
+                ●
+              </span>
+              {leftBadge}
+            </Badge>
+          </div>
+        }
+      >
+        {candidateParticipant ? (
+          <ParticipantView participant={candidateParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание кандидата</div>
+        )}
+      </StreamParticipantShell>
+      <StreamParticipantShell
+        title="HR аватар"
+        footer={
+          <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+            <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">HR ассистент</p>
+            <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+              <span className={cn("mr-1", agentParticipant ? "text-emerald-600" : "text-slate-400")} aria-hidden>
+                ●
+              </span>
+              {rightBadge}
+            </Badge>
+          </div>
+        }
+      >
+        {agentParticipant ? (
+          <ParticipantView participant={agentParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание HR аватара</div>
+        )}
+      </StreamParticipantShell>
+    </div>
+  );
+}
+
 function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLayout = false }: ObserverCallBodyProps) {
   const { useCallCallingState, useParticipants } = useCallStateHooks();
   const state = useCallCallingState();
@@ -208,6 +378,13 @@ type ObserverStreamCardProps = {
   showSelfPreview?: boolean;
   /** Точный статус ожидания из родительского orchestration-слоя spectator page. */
   waitingReason?: string | null;
+  /**
+   * Раскладка страницы наблюдателя: две колонки «Кандидат | HR аватар» как у кандидата,
+   * общая панель управления и PiP «наблюдатель». Для HR-колонки в interview-shell не включать.
+   */
+  spectatorDashboardLayout?: boolean;
+  /** Подпись под колонкой «Кандидат» (имя из JobAI). */
+  candidateDisplayName?: string | null;
 };
 
 export function ObserverStreamCard({
@@ -232,7 +409,9 @@ export function ObserverStreamCard({
   spectatorViewerKey = null,
   sessionMirrorLayout = false,
   showSelfPreview = false,
-  waitingReason = null
+  waitingReason = null,
+  spectatorDashboardLayout = false,
+  candidateDisplayName = null
 }: ObserverStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
@@ -247,6 +426,7 @@ export function ObserverStreamCard({
   const [playbackMuted, setPlaybackMuted] = useState(mutePlayback);
   const [focusCandidateOnly, setFocusCandidateOnly] = useState(false);
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
+  const splitPlaybackRootRef = useRef<HTMLDivElement | null>(null);
   const selfPreviewVideoRef = useRef<HTMLVideoElement | null>(null);
   const autoJoinAttemptForRef = useRef<string | null>(null);
   const connectEpochRef = useRef(0);
@@ -285,7 +465,7 @@ export function ObserverStreamCard({
       return "joined";
     }
     return "waiting_meeting";
-  }, [allowVisibilityToggle, busy, call, canConnect, enabled, error, hasParticipants, meetingId, visible]);
+  }, [allowVisibilityToggle, busy, call, enabled, error, hasParticipants, meetingId, visible]);
 
   /**
    * Маппинг внутреннего ObserverConnectionStatus в локальный VideoConnectionState
@@ -321,14 +501,17 @@ export function ObserverStreamCard({
     if (error) {
       return "Подключение не удалось. Повторите попытку.";
     }
-    if (connectionPhase === "connected") {
+    if (call && connectionPhase === "connected") {
       if (status === "no_participants") {
         return "Подключено. Ждём участников сессии (кандидат/HR).";
       }
       return "Наблюдатель подключен к активной сессии.";
     }
-    return "Наблюдатель подключен к активной сессии.";
-  }, [busy, connectionPhase, enabled, ended, error, meetingId, status, streamCallId, streamCallType, waitingReason]);
+    if (call) {
+      return "Подключение к звонку…";
+    }
+    return waitingReason ?? "Ожидание запуска. Подключение выполнится автоматически, когда сессия будет доступна.";
+  }, [busy, call, connectionPhase, enabled, ended, error, meetingId, status, streamCallId, streamCallType, waitingReason]);
 
   const statusBadgeLabel = useMemo(() => {
     if (ended) return "Завершено";
@@ -349,7 +532,7 @@ export function ObserverStreamCard({
   }, [mutePlayback]);
 
   useEffect(() => {
-    const root = streamViewportRef.current;
+    const root = spectatorDashboardLayout ? splitPlaybackRootRef.current : streamViewportRef.current;
     if (!root) {
       return;
     }
@@ -364,7 +547,7 @@ export function ObserverStreamCard({
     const observer = new MutationObserver(() => syncMedia());
     observer.observe(root, { childList: true, subtree: true });
     return () => observer.disconnect();
-  }, [call, playbackMuted]);
+  }, [call, playbackMuted, spectatorDashboardLayout]);
 
   const disconnectStream = useCallback(async () => {
     connectEpochRef.current += 1;
@@ -769,7 +952,7 @@ export function ObserverStreamCard({
   const showJoinLoader = busy && visible;
   const showSingleFeedMode = focusCandidateOnly && status !== "no_participants";
   const toggleFullscreen = useCallback(() => {
-    const root = streamViewportRef.current;
+    const root = spectatorDashboardLayout ? splitPlaybackRootRef.current : streamViewportRef.current;
     if (!root || typeof document === "undefined") {
       return;
     }
@@ -778,68 +961,62 @@ export function ObserverStreamCard({
       return;
     }
     void root.requestFullscreen?.().catch(() => undefined);
-  }, []);
+  }, [spectatorDashboardLayout]);
 
-  return (
-    <StreamParticipantShell
-      title={title}
-      videoRef={streamViewportRef}
-      videoClassName={cn(
-        (!visible || !client || !call) && "bg-slate-300/70",
-        ended && "pointer-events-none opacity-70"
-      )}
-      footer={
-        <>
-          <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
-            <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{participantName}</p>
-            <div className="flex items-center gap-2">
-              <InterviewStatusBadge status={videoStatusView} />
-              <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
-                <span className="mr-1 text-emerald-600" aria-hidden>
-                  ●
-                </span>
-                {statusBadgeLabel}
-              </Badge>
-            </div>
-          </div>
-          {allowTalkToggle && visible ? (
-            <MicIndicator active={talkMode === "on" && Boolean(call)} />
-          ) : null}
-          <div className="flex min-h-10 flex-wrap gap-2">
-            {allowVisibilityToggle ? (
-              <Button
-                type="button"
-                variant="secondary"
-                className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2 disabled:opacity-50"
-                disabled={ended}
-                onClick={() => onVisibleChange?.(!visible)}
-              >
-                {visible ? "Скрыть видео" : "Показать видео"}
-              </Button>
-            ) : null}
-            {allowTalkToggle ? (
-              <Button
-                type="button"
-                variant={talkMode === "on" ? "destructive" : "outline"}
-                className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2 disabled:opacity-50"
-                disabled={!call || ended}
-                onClick={() => onTalkModeChange?.(talkMode === "on" ? "off" : "on")}
-              >
-                {talkMode === "on" ? "Выключить микрофон" : "Включить микрофон"}
-              </Button>
-            ) : null}
-            {call ? (
+  const resolvedCandidateDisplayName = (candidateDisplayName?.trim() || "Кандидат").trim();
+
+  const observerToolbar = (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+        <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{participantName}</p>
+        <div className="flex items-center gap-2">
+          <InterviewStatusBadge status={videoStatusView} />
+          <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+            <span className="mr-1 text-emerald-600" aria-hidden>
+              ●
+            </span>
+            {statusBadgeLabel}
+          </Badge>
+        </div>
+      </div>
+      {allowTalkToggle && visible ? <MicIndicator active={talkMode === "on" && Boolean(call)} /> : null}
+      <div className="flex min-h-10 flex-wrap gap-2">
+        {allowVisibilityToggle ? (
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2 disabled:opacity-50"
+            disabled={ended}
+            onClick={() => onVisibleChange?.(!visible)}
+          >
+            {visible ? "Скрыть видео" : "Показать видео"}
+          </Button>
+        ) : null}
+        {allowTalkToggle ? (
+          <Button
+            type="button"
+            variant={talkMode === "on" ? "destructive" : "outline"}
+            className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2 disabled:opacity-50"
+            disabled={!call || ended}
+            onClick={() => onTalkModeChange?.(talkMode === "on" ? "off" : "on")}
+          >
+            {talkMode === "on" ? "Выключить микрофон" : "Включить микрофон"}
+          </Button>
+        ) : null}
+        {call ? (
+          <>
+            <Button
+              type="button"
+              variant={playbackMuted ? "secondary" : "outline"}
+              className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+              onClick={() => setPlaybackMuted((prev) => !prev)}
+              title={playbackMuted ? "Включить звук воспроизведения" : "Выключить звук воспроизведения"}
+            >
+              {playbackMuted ? <VolumeX className="mr-2 h-4 w-4" /> : <Volume2 className="mr-2 h-4 w-4" />}
+              {playbackMuted ? "Звук: выкл" : "Звук: вкл"}
+            </Button>
+            {!spectatorDashboardLayout ? (
               <>
-                <Button
-                  type="button"
-                  variant={playbackMuted ? "secondary" : "outline"}
-                  className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-                  onClick={() => setPlaybackMuted((prev) => !prev)}
-                  title={playbackMuted ? "Включить звук воспроизведения" : "Выключить звук воспроизведения"}
-                >
-                  {playbackMuted ? <VolumeX className="mr-2 h-4 w-4" /> : <Volume2 className="mr-2 h-4 w-4" />}
-                  {playbackMuted ? "Звук: выкл" : "Звук: вкл"}
-                </Button>
                 <Button
                   type="button"
                   variant={showSingleFeedMode ? "secondary" : "outline"}
@@ -861,42 +1038,226 @@ export function ObserverStreamCard({
                   Fullscreen
                 </Button>
               </>
-            ) : null}
-            {!call && canConnect ? (
-              <Button
-                type="button"
-                className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-                onClick={() => void startStream()}
-                disabled={busy || ended}
-                title={
-                  ended
-                    ? "Сессия завершена"
-                    : busy
-                      ? "Выполняется подключение"
-                      : "Подключить наблюдателя к активной сессии"
-                }
-              >
-                Подключиться
-              </Button>
-            ) : null}
-            {call ? (
+            ) : (
               <Button
                 type="button"
                 variant="outline"
                 className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-                onClick={() => {
-                  void disconnectStream().then(() => {
-                    autoJoinAttemptForRef.current = null;
-                  });
-                }}
-                disabled={busy || ended}
+                onClick={toggleFullscreen}
+                title="Полноэкранный режим (кандидат + HR)"
               >
-                Reconnect
+                <Maximize2 className="mr-2 h-4 w-4" />
+                Fullscreen
               </Button>
-            ) : null}
-          </div>
-        </>
-      }
+            )}
+          </>
+        ) : null}
+        {!call && canConnect ? (
+          <Button
+            type="button"
+            className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+            onClick={() => void startStream()}
+            disabled={busy || ended}
+            title={
+              ended
+                ? "Сессия завершена"
+                : busy
+                  ? "Выполняется подключение"
+                  : "Подключить наблюдателя к активной сессии"
+            }
+          >
+            Подключиться
+          </Button>
+        ) : null}
+        {call ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+            onClick={() => {
+              void disconnectStream().then(() => {
+                autoJoinAttemptForRef.current = null;
+              });
+            }}
+            disabled={busy || ended}
+          >
+            Reconnect
+          </Button>
+        ) : null}
+      </div>
+    </>
+  );
+
+  const selfPreviewPip = showSelfPreview ? (
+    <div
+      className={cn(
+        "pointer-events-none z-20 w-44 rounded-xl border border-white/40 bg-slate-900/75 p-2 shadow-lg backdrop-blur",
+        spectatorDashboardLayout ? "absolute bottom-3 right-3" : "absolute right-3 top-3"
+      )}
+    >
+      <p className="pointer-events-none mb-1 text-center text-[10px] font-medium uppercase tracking-wide text-slate-400">
+        Наблюдатель
+      </p>
+      <div className="overflow-hidden rounded-lg bg-black">
+        {selfPreviewStream && selfCameraEnabled ? (
+          <video ref={selfPreviewVideoRef} className="h-24 w-full object-cover" muted playsInline autoPlay />
+        ) : (
+          <div className="flex h-24 w-full items-center justify-center text-xs text-slate-300">Камера выключена</div>
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+        <Button
+          type="button"
+          variant={selfCameraEnabled ? "default" : "secondary"}
+          className="pointer-events-auto h-9 rounded-full px-3 text-xs"
+          disabled={!selfPreviewStream}
+          onClick={() => setSelfCameraEnabled((prev) => !prev)}
+          title={selfCameraEnabled ? "Выключить камеру" : "Включить камеру"}
+        >
+          {selfCameraEnabled ? <Video className="mr-1 h-3.5 w-3.5" /> : <VideoOff className="mr-1 h-3.5 w-3.5" />}
+          {selfCameraEnabled ? "Камера: вкл" : "Камера: выкл"}
+        </Button>
+        <Button
+          type="button"
+          variant={selfMicEnabled ? "default" : "secondary"}
+          className="pointer-events-auto h-9 rounded-full px-3 text-xs"
+          disabled={!selfPreviewStream}
+          onClick={() => setSelfMicEnabled((prev) => !prev)}
+          title={selfMicEnabled ? "Выключить микрофон" : "Включить микрофон"}
+        >
+          {selfMicEnabled ? <Mic className="mr-1 h-3.5 w-3.5" /> : <MicOff className="mr-1 h-3.5 w-3.5" />}
+          {selfMicEnabled ? "Микрофон: вкл" : "Микрофон: выкл"}
+        </Button>
+        {selfPreviewError ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="pointer-events-auto h-8 rounded-full px-3 text-[11px]"
+            onClick={() => void ensureSelfPreview()}
+          >
+            Повторить доступ
+          </Button>
+        ) : null}
+      </div>
+      {selfPreviewError ? (
+        <p className="mt-2 rounded-lg bg-rose-100/90 px-2 py-1 text-[11px] leading-snug text-rose-700">{selfPreviewError}</p>
+      ) : null}
+    </div>
+  ) : null;
+
+  if (spectatorDashboardLayout) {
+    return (
+      <div className="flex w-full min-w-0 flex-col gap-3">
+        <div className="text-center">
+          <h2 className="text-xl font-medium leading-tight text-slate-600 sm:text-2xl">Наблюдатель</h2>
+          <p className="mt-1 text-xs text-slate-500 sm:text-sm">
+            Тот же вид, что у кандидата: кандидат и HR. Управление сессией HR недоступно.
+          </p>
+        </div>
+
+        <div
+          ref={splitPlaybackRootRef}
+          className={cn(
+            "relative w-full min-w-0 rounded-2xl border border-white/40 bg-[#d9dee7]/40 p-2 shadow-sm",
+            ended && "pointer-events-none opacity-70"
+          )}
+        >
+          {busy && visible ? (
+            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[#dfe4ec]/80 backdrop-blur-[1px]">
+              <Loader2 className="h-8 w-8 animate-spin text-slate-600" aria-hidden />
+            </div>
+          ) : null}
+
+          {!visible && allowVisibilityToggle ? (
+            <div className="flex min-h-[200px] flex-col items-center justify-center gap-2 px-4 py-12 text-center">
+              <p className="text-sm font-medium text-slate-700">{videoStatusView.label}</p>
+              <p className="text-xs text-slate-600">Включите видео, чтобы видеть кандидата и агента</p>
+            </div>
+          ) : client && call && localUserId ? (
+            <div className="relative min-h-[420px] w-full lg:min-h-[440px]">
+              <StreamVideo client={client}>
+                <StreamTheme>
+                  <StreamCall call={call}>
+                    <ObserverSplitDashboard
+                      localUserId={localUserId}
+                      candidateDisplayName={resolvedCandidateDisplayName}
+                      onParticipantsDetected={setHasParticipants}
+                    />
+                  </StreamCall>
+                </StreamTheme>
+              </StreamVideo>
+              {selfPreviewPip}
+            </div>
+          ) : (
+            <div className="relative grid min-h-[320px] w-full grid-cols-1 gap-4 p-1 sm:min-h-[380px] lg:grid-cols-2 lg:min-h-[420px]">
+              <StreamParticipantShell
+                title="Кандидат"
+                videoClassName={cn(!call && "bg-slate-300/70", ended && "pointer-events-none opacity-70")}
+                footer={
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+                    <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">
+                      {resolvedCandidateDisplayName}
+                    </p>
+                    <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+                      <span className="mr-1 text-slate-500" aria-hidden>
+                        ●
+                      </span>
+                      {statusBadgeLabel}
+                    </Badge>
+                  </div>
+                }
+              >
+                <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+                  {showJoinLoader ? <Loader2 className="h-7 w-7 shrink-0 animate-spin text-slate-600" aria-hidden /> : null}
+                  <VideoOff className="h-8 w-8 shrink-0 text-slate-600" strokeWidth={1.75} aria-hidden />
+                  <p className="text-sm font-medium text-slate-700">{videoStatusView.label}</p>
+                  <p className="max-w-[240px] text-xs text-slate-600">{statusHint}</p>
+                </div>
+              </StreamParticipantShell>
+              <StreamParticipantShell
+                title="HR аватар"
+                videoClassName={cn(!call && "bg-slate-300/70", ended && "pointer-events-none opacity-70")}
+                footer={
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+                    <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">HR ассистент</p>
+                    <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+                      <span className="mr-1 text-slate-500" aria-hidden>
+                        ●
+                      </span>
+                      {statusBadgeLabel}
+                    </Badge>
+                  </div>
+                }
+              >
+                <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+                  {showJoinLoader ? <Loader2 className="h-7 w-7 shrink-0 animate-spin text-slate-600" aria-hidden /> : null}
+                  <VideoOff className="h-8 w-8 shrink-0 text-slate-600" strokeWidth={1.75} aria-hidden />
+                  <p className="text-sm font-medium text-slate-700">{videoStatusView.label}</p>
+                  <p className="max-w-[240px] text-xs text-slate-600">{statusHint}</p>
+                </div>
+              </StreamParticipantShell>
+              {selfPreviewPip}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-2xl border-0 bg-[#d9dee7] p-3 shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]">
+          {observerToolbar}
+        </div>
+        {error ? <p className="w-full rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+      </div>
+    );
+  }
+
+  return (
+    <StreamParticipantShell
+      title={title}
+      videoRef={streamViewportRef}
+      videoClassName={cn(
+        (!visible || !client || !call) && "bg-slate-300/70",
+        ended && "pointer-events-none opacity-70"
+      )}
+      footer={observerToolbar}
       error={error ? <p className="w-full rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
     >
       {!visible && allowVisibilityToggle ? (
@@ -917,58 +1278,7 @@ export function ObserverStreamCard({
               </StreamCall>
             </StreamTheme>
           </StreamVideo>
-          {showSelfPreview ? (
-            <div className="pointer-events-none absolute right-3 top-3 z-20 w-44 rounded-xl border border-white/40 bg-slate-900/75 p-2 shadow-lg backdrop-blur">
-              <div className="overflow-hidden rounded-lg bg-black">
-                {selfPreviewStream && selfCameraEnabled ? (
-                  <video ref={selfPreviewVideoRef} className="h-24 w-full object-cover" muted playsInline autoPlay />
-                ) : (
-                  <div className="flex h-24 w-full items-center justify-center text-xs text-slate-300">
-                    Камера выключена
-                  </div>
-                )}
-              </div>
-              <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-                <Button
-                  type="button"
-                  variant={selfCameraEnabled ? "default" : "secondary"}
-                  className="pointer-events-auto h-9 rounded-full px-3 text-xs"
-                  disabled={!selfPreviewStream}
-                  onClick={() => setSelfCameraEnabled((prev) => !prev)}
-                  title={selfCameraEnabled ? "Выключить камеру" : "Включить камеру"}
-                >
-                  {selfCameraEnabled ? <Video className="mr-1 h-3.5 w-3.5" /> : <VideoOff className="mr-1 h-3.5 w-3.5" />}
-                  {selfCameraEnabled ? "Камера: вкл" : "Камера: выкл"}
-                </Button>
-                <Button
-                  type="button"
-                  variant={selfMicEnabled ? "default" : "secondary"}
-                  className="pointer-events-auto h-9 rounded-full px-3 text-xs"
-                  disabled={!selfPreviewStream}
-                  onClick={() => setSelfMicEnabled((prev) => !prev)}
-                  title={selfMicEnabled ? "Выключить микрофон" : "Включить микрофон"}
-                >
-                  {selfMicEnabled ? <Mic className="mr-1 h-3.5 w-3.5" /> : <MicOff className="mr-1 h-3.5 w-3.5" />}
-                  {selfMicEnabled ? "Микрофон: вкл" : "Микрофон: выкл"}
-                </Button>
-                {selfPreviewError ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="pointer-events-auto h-8 rounded-full px-3 text-[11px]"
-                    onClick={() => void ensureSelfPreview()}
-                  >
-                    Повторить доступ
-                  </Button>
-                ) : null}
-              </div>
-              {selfPreviewError ? (
-                <p className="mt-2 rounded-lg bg-rose-100/90 px-2 py-1 text-[11px] leading-snug text-rose-700">
-                  {selfPreviewError}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
+          {selfPreviewPip}
         </div>
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
