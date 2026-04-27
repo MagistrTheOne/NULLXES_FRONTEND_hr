@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CallControls, CallingState, ParticipantView, StreamCall, StreamTheme, StreamVideo, StreamVideoClient, useCallStateHooks } from "@stream-io/video-react-sdk";
+import { createClient } from "@anam-ai/js-sdk";
 import Image from "next/image";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -62,6 +63,48 @@ type StreamTokenResponse = {
   callId: string;
   callType: string;
 };
+
+type HrAvatarFallbackConfig = {
+  enabled?: unknown;
+  shareUrl?: unknown;
+  audioPassthroughEnabled?: unknown;
+};
+
+function floatToPcm16Base64(input: Float32Array): string {
+  const pcm = new Int16Array(input.length);
+  for (let i = 0; i < input.length; i += 1) {
+    const s = Math.max(-1, Math.min(1, input[i] ?? 0));
+    pcm[i] = s < 0 ? Math.round(s * 0x8000) : Math.round(s * 0x7fff);
+  }
+  const bytes = new Uint8Array(pcm.buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i] ?? 0);
+  }
+  return btoa(binary);
+}
+
+function downsampleTo16k(input: Float32Array, sampleRate: number): Float32Array {
+  if (sampleRate <= 16000) {
+    return input;
+  }
+  const ratio = sampleRate / 16000;
+  const targetLength = Math.max(1, Math.floor(input.length / ratio));
+  const output = new Float32Array(targetLength);
+  let pos = 0;
+  for (let i = 0; i < targetLength; i += 1) {
+    const nextPos = Math.min(input.length, Math.round((i + 1) * ratio));
+    let sum = 0;
+    let count = 0;
+    for (let j = pos; j < nextPos; j += 1) {
+      sum += input[j] ?? 0;
+      count += 1;
+    }
+    output[i] = count > 0 ? sum / count : 0;
+    pos = nextPos;
+  }
+  return output;
+}
 
 type AvatarCallBodyProps = {
   /** Stream SDK toolbar (mic/camera/layout/video mode). Off for HR avatar by default. */
@@ -144,6 +187,8 @@ type AvatarStreamCardProps = {
    * через compact). Кнопки паузы/стопа задаются отдельно через showPauseAI / showStopAI.
    */
   mobilePip?: boolean;
+  /** OpenAI realtime audio stream used to drive visual-only avatar lip-sync fallback. */
+  agentAudioStream?: MediaStream | null;
 };
 
 export function AvatarStreamCard({
@@ -166,6 +211,7 @@ export function AvatarStreamCard({
   uiState,
   emphasizePrimary = true,
   mobilePip = false,
+  agentAudioStream = null
 }: AvatarStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
@@ -173,6 +219,28 @@ export function AvatarStreamCard({
   const [busy, setBusy] = useState(false);
   const [fallbackEnabled, setFallbackEnabled] = useState(false);
   const [fallbackShareUrl, setFallbackShareUrl] = useState<string | null>(null);
+  const [audioPassthroughEnabled, setAudioPassthroughEnabled] = useState(false);
+  const [anamReady, setAnamReady] = useState(false);
+  const anamVideoRef = useRef<HTMLVideoElement | null>(null);
+  const anamVideoElementId = useMemo(
+    () => `hr-avatar-anam-${(meetingId ?? "unknown").replace(/[^a-z0-9_-]/gi, "-")}`,
+    [meetingId]
+  );
+  const anamClientRef = useRef<{
+    stopStreaming?: () => void;
+    createAgentAudioInputStream?: (cfg: { encoding: "pcm_s16le"; sampleRate: number; channels: number }) => {
+      sendAudioChunk: (chunk: string) => void;
+      endSequence?: () => void;
+    };
+    interruptPersona?: () => void;
+  } | null>(null);
+  const anamAudioInputRef = useRef<{
+    sendAudioChunk: (chunk: string) => void;
+    endSequence?: () => void;
+  } | null>(null);
+  const anamAudioCtxRef = useRef<AudioContext | null>(null);
+  const anamAudioNodeRef = useRef<ScriptProcessorNode | null>(null);
+  const anamMediaSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const ended = Boolean(sessionEnded) || uiState === "completed";
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
   const autoJoinAttemptForRef = useRef<string | null>(null);
@@ -195,7 +263,8 @@ export function AvatarStreamCard({
       const payload = (await response.json().catch(() => ({}))) as {
         enabled?: unknown;
         shareUrl?: unknown;
-      };
+        audioPassthroughEnabled?: unknown;
+      } & HrAvatarFallbackConfig;
       if (cancelled) {
         return;
       }
@@ -203,12 +272,104 @@ export function AvatarStreamCard({
       const shareUrl = typeof payload.shareUrl === "string" ? payload.shareUrl.trim() : "";
       setFallbackEnabled(enabled && shareUrl.length > 0);
       setFallbackShareUrl(enabled && shareUrl.length > 0 ? shareUrl : null);
+      setAudioPassthroughEnabled(payload.audioPassthroughEnabled === true);
     };
     void loadFallbackConfig();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!fallbackEnabled || !audioPassthroughEnabled || !enabled || !meetingId || ended) {
+      setAnamReady(false);
+      return;
+    }
+    let cancelled = false;
+    const initAnam = async () => {
+      const tokenRes = await fetch("/api/hr-avatar/session-token", {
+        method: "POST",
+        credentials: "include"
+      }).catch(() => null);
+      if (!tokenRes?.ok) {
+        return;
+      }
+      const tokenPayload = (await tokenRes.json().catch(() => ({}))) as { sessionToken?: unknown };
+      const sessionToken =
+        typeof tokenPayload.sessionToken === "string" ? tokenPayload.sessionToken.trim() : "";
+      if (!sessionToken || cancelled || !anamVideoRef.current) {
+        return;
+      }
+      try {
+        const client = createClient(sessionToken, { disableInputAudio: true }) as unknown as {
+          streamToVideoElement: (videoElementId: string, userProvidedAudioStream?: MediaStream) => Promise<void>;
+          createAgentAudioInputStream: (cfg: {
+            encoding: "pcm_s16le";
+            sampleRate: number;
+            channels: number;
+          }) => { sendAudioChunk: (chunk: string) => void; endSequence?: () => void };
+          stopStreaming?: () => void;
+          interruptPersona?: () => void;
+        };
+        await client.streamToVideoElement(anamVideoElementId);
+        if (cancelled) {
+          client.stopStreaming?.();
+          return;
+        }
+        anamClientRef.current = client;
+        anamAudioInputRef.current = client.createAgentAudioInputStream({
+          encoding: "pcm_s16le",
+          sampleRate: 16000,
+          channels: 1
+        });
+        setAnamReady(true);
+      } catch {
+        setAnamReady(false);
+      }
+    };
+    void initAnam();
+    return () => {
+      cancelled = true;
+      anamAudioInputRef.current?.endSequence?.();
+      anamClientRef.current?.stopStreaming?.();
+      anamAudioInputRef.current = null;
+      anamClientRef.current = null;
+      setAnamReady(false);
+    };
+  }, [anamVideoElementId, audioPassthroughEnabled, enabled, ended, fallbackEnabled, meetingId]);
+
+  useEffect(() => {
+    if (!anamReady || !agentAudioStream || !anamAudioInputRef.current) {
+      return;
+    }
+    const audioCtx = new AudioContext();
+    const source = audioCtx.createMediaStreamSource(agentAudioStream);
+    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    processor.onaudioprocess = (event) => {
+      const input = event.inputBuffer.getChannelData(0);
+      const downsampled = downsampleTo16k(input, audioCtx.sampleRate);
+      const chunkB64 = floatToPcm16Base64(downsampled);
+      anamAudioInputRef.current?.sendAudioChunk(chunkB64);
+    };
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+    anamAudioCtxRef.current = audioCtx;
+    anamMediaSourceRef.current = source;
+    anamAudioNodeRef.current = processor;
+    return () => {
+      try {
+        processor.disconnect();
+        source.disconnect();
+      } catch {
+        // noop
+      }
+      void audioCtx.close().catch(() => undefined);
+      anamAudioNodeRef.current = null;
+      anamMediaSourceRef.current = null;
+      anamAudioCtxRef.current = null;
+      anamAudioInputRef.current?.endSequence?.();
+    };
+  }, [agentAudioStream, anamReady]);
 
   useEffect(() => {
     const root = streamViewportRef.current;
@@ -447,8 +608,27 @@ export function AvatarStreamCard({
         // совпадает с финальным видео-аватаром и избавляет кандидата
         // от пустой серой заглушки.
         <div className="relative h-full w-full">
-          {fallbackEnabled && fallbackShareUrl && enabled && meetingId ? (
-            <AvatarFallbackEmbed shareUrl={fallbackShareUrl} />
+          {fallbackEnabled && enabled && meetingId ? (
+            audioPassthroughEnabled ? (
+              anamReady ? (
+                <video
+                  id={anamVideoElementId}
+                  ref={anamVideoRef}
+                  className="h-full w-full object-cover object-center"
+                  playsInline
+                  autoPlay
+                  muted
+                />
+              ) : fallbackShareUrl ? (
+                <AvatarFallbackEmbed shareUrl={fallbackShareUrl} />
+              ) : (
+                <AvatarPlaceholder emphasize={emphasizePrimary} />
+              )
+            ) : fallbackShareUrl ? (
+              <AvatarFallbackEmbed shareUrl={fallbackShareUrl} />
+            ) : (
+              <AvatarPlaceholder emphasize={emphasizePrimary} />
+            )
           ) : (
             <AvatarPlaceholder emphasize={emphasizePrimary} />
           )}
