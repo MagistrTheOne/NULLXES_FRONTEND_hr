@@ -11,6 +11,7 @@
     "auth:generate": "auth generate --yes --config ./lib/auth.ts"
   },
   "dependencies": {
+    "@anam-ai/js-sdk": "^4.13.0",
     "@base-ui/react": "^1.4.0",
     "@neondatabase/serverless": "^1.1.0",
     "@stream-io/node-sdk": "^0.7.52",

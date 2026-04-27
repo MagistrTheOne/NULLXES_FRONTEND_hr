@@ -1224,6 +1224,7 @@ export function InterviewShell() {
             avatarReady={avatarReady}
             telemetryUnavailable={degradationState.telemetryUnavailable}
             meetingId={recoveredMeetingId}
+            agentAudioStream={remoteAudioStream}
             showStreamToolbar={false}
             showStatusBadge
             showPauseAI={phase === "connected" && Boolean(recoveredMeetingId) && !completedInterviewLocked}
