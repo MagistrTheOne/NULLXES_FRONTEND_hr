@@ -10,9 +10,10 @@ import {
   StreamVideoClient,
   useCallStateHooks
 } from "@stream-io/video-react-sdk";
-import { Loader2, Mic, MicOff, Video, VideoOff } from "lucide-react";
+import { Loader2, Maximize2, Mic, MicOff, RotateCcw, Video, VideoOff, Volume2, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
 import { InterviewStatusBadge } from "@/components/interview/interview-status-badge";
 import { MicIndicator } from "@/components/interview/mic-indicator";
@@ -243,6 +244,8 @@ export function ObserverStreamCard({
   const [selfCameraEnabled, setSelfCameraEnabled] = useState(true);
   const [selfMicEnabled, setSelfMicEnabled] = useState(true);
   const [selfPreviewError, setSelfPreviewError] = useState<string | null>(null);
+  const [playbackMuted, setPlaybackMuted] = useState(mutePlayback);
+  const [focusCandidateOnly, setFocusCandidateOnly] = useState(false);
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
   const selfPreviewVideoRef = useRef<HTMLVideoElement | null>(null);
   const autoJoinAttemptForRef = useRef<string | null>(null);
@@ -319,14 +322,31 @@ export function ObserverStreamCard({
       return "Подключение не удалось. Повторите попытку.";
     }
     if (connectionPhase === "connected") {
+      if (status === "no_participants") {
+        return "Подключено. Ждём участников сессии (кандидат/HR).";
+      }
       return "Наблюдатель подключен к активной сессии.";
     }
     return "Наблюдатель подключен к активной сессии.";
-  }, [busy, connectionPhase, enabled, ended, error, meetingId, streamCallId, streamCallType, waitingReason]);
+  }, [busy, connectionPhase, enabled, ended, error, meetingId, status, streamCallId, streamCallType, waitingReason]);
+
+  const statusBadgeLabel = useMemo(() => {
+    if (ended) return "Завершено";
+    if (error) return "Ошибка видео";
+    if (busy || connectionPhase === "reconnecting") return "Подключаемся…";
+    if (status === "no_participants") return "Подключено, ждём";
+    if (call) return "В эфире";
+    if (!enabled || !meetingId) return "Ожидание запуска";
+    return "Не в эфире";
+  }, [busy, call, connectionPhase, enabled, ended, error, meetingId, status]);
 
   useEffect(() => {
     onStatusChange?.(status);
   }, [onStatusChange, status]);
+
+  useEffect(() => {
+    setPlaybackMuted(mutePlayback);
+  }, [mutePlayback]);
 
   useEffect(() => {
     const root = streamViewportRef.current;
@@ -336,15 +356,15 @@ export function ObserverStreamCard({
     const syncMedia = () => {
       root.querySelectorAll("audio, video").forEach((element) => {
         const media = element as HTMLMediaElement;
-        media.muted = mutePlayback;
-        media.volume = mutePlayback ? 0 : 1;
+        media.muted = playbackMuted;
+        media.volume = playbackMuted ? 0 : 1;
       });
     };
     syncMedia();
     const observer = new MutationObserver(() => syncMedia());
     observer.observe(root, { childList: true, subtree: true });
     return () => observer.disconnect();
-  }, [call, mutePlayback]);
+  }, [call, playbackMuted]);
 
   const disconnectStream = useCallback(async () => {
     connectEpochRef.current += 1;
@@ -747,6 +767,18 @@ export function ObserverStreamCard({
   );
 
   const showJoinLoader = busy && visible;
+  const showSingleFeedMode = focusCandidateOnly && status !== "no_participants";
+  const toggleFullscreen = useCallback(() => {
+    const root = streamViewportRef.current;
+    if (!root || typeof document === "undefined") {
+      return;
+    }
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+      return;
+    }
+    void root.requestFullscreen?.().catch(() => undefined);
+  }, []);
 
   return (
     <StreamParticipantShell
@@ -760,7 +792,15 @@ export function ObserverStreamCard({
         <>
           <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
             <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{participantName}</p>
-            <InterviewStatusBadge status={videoStatusView} />
+            <div className="flex items-center gap-2">
+              <InterviewStatusBadge status={videoStatusView} />
+              <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+                <span className="mr-1 text-emerald-600" aria-hidden>
+                  ●
+                </span>
+                {statusBadgeLabel}
+              </Badge>
+            </div>
           </div>
           {allowTalkToggle && visible ? (
             <MicIndicator active={talkMode === "on" && Boolean(call)} />
@@ -788,6 +828,40 @@ export function ObserverStreamCard({
                 {talkMode === "on" ? "Выключить микрофон" : "Включить микрофон"}
               </Button>
             ) : null}
+            {call ? (
+              <>
+                <Button
+                  type="button"
+                  variant={playbackMuted ? "secondary" : "outline"}
+                  className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+                  onClick={() => setPlaybackMuted((prev) => !prev)}
+                  title={playbackMuted ? "Включить звук воспроизведения" : "Выключить звук воспроизведения"}
+                >
+                  {playbackMuted ? <VolumeX className="mr-2 h-4 w-4" /> : <Volume2 className="mr-2 h-4 w-4" />}
+                  {playbackMuted ? "Звук: выкл" : "Звук: вкл"}
+                </Button>
+                <Button
+                  type="button"
+                  variant={showSingleFeedMode ? "secondary" : "outline"}
+                  className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+                  onClick={() => setFocusCandidateOnly((prev) => !prev)}
+                  title="Переключить раскладку участников"
+                >
+                  {showSingleFeedMode ? <RotateCcw className="mr-2 h-4 w-4" /> : <Maximize2 className="mr-2 h-4 w-4" />}
+                  {showSingleFeedMode ? "Показать всех" : "Фокус на кандидате"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+                  onClick={toggleFullscreen}
+                  title="Открыть полноэкранный режим"
+                >
+                  <Maximize2 className="mr-2 h-4 w-4" />
+                  Fullscreen
+                </Button>
+              </>
+            ) : null}
             {!call && canConnect ? (
               <Button
                 type="button"
@@ -803,6 +877,21 @@ export function ObserverStreamCard({
                 }
               >
                 Подключиться
+              </Button>
+            ) : null}
+            {call ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+                onClick={() => {
+                  void disconnectStream().then(() => {
+                    autoJoinAttemptForRef.current = null;
+                  });
+                }}
+                disabled={busy || ended}
+              >
+                Reconnect
               </Button>
             ) : null}
           </div>
@@ -823,7 +912,7 @@ export function ObserverStreamCard({
                 <ObserverCallBody
                   localUserId={localUserId}
                   onParticipantsDetected={setHasParticipants}
-                  sessionMirrorLayout={sessionMirrorLayout}
+                  sessionMirrorLayout={showSingleFeedMode ? false : sessionMirrorLayout}
                 />
               </StreamCall>
             </StreamTheme>
