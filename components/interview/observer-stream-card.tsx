@@ -300,18 +300,44 @@ function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLa
     return <div className="flex h-full items-center justify-center text-sm text-slate-600">Подключение наблюдателя…</div>;
   }
 
-  if (orderedParticipants.length === 0) {
-    return <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание участников</div>;
-  }
-
   if (!sessionMirrorLayout) {
+    const candidateParticipant =
+      participants.find((participant) => participant.userId?.startsWith("candidate-")) ?? null;
+    const agentParticipant =
+      participants.find(
+        (participant) =>
+          participant.userId?.startsWith("agent-") || participant.userId?.startsWith("agent_")
+      ) ?? null;
     return (
-      <div className="grid h-full w-full grid-cols-1 gap-2 p-2 sm:grid-cols-2">
-        {orderedParticipants.map((participant) => (
-          <div key={participant.sessionId} className="overflow-hidden rounded-lg border border-white/20 bg-slate-900/50">
-            <ParticipantView participant={participant} trackType="videoTrack" />
-          </div>
-        ))}
+      <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 p-1 sm:grid-cols-2 sm:gap-4">
+        <StreamParticipantShell
+          title="Кандидат"
+          footer={
+            <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+              <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">Кандидат</p>
+            </div>
+          }
+        >
+          {candidateParticipant ? (
+            <ParticipantView participant={candidateParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание кандидата</div>
+          )}
+        </StreamParticipantShell>
+        <StreamParticipantShell
+          title="HR аватар"
+          footer={
+            <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+              <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">HR ассистент</p>
+            </div>
+          }
+        >
+          {agentParticipant ? (
+            <ParticipantView participant={agentParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание HR аватара</div>
+          )}
+        </StreamParticipantShell>
       </div>
     );
   }
