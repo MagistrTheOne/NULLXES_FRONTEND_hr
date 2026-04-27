@@ -1,29 +1,27 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FilterX, Loader2, Mic2, RotateCw, Square, Volume2, X } from "lucide-react";
+import { ChevronDown, Copy, FilterX, Loader2, Mic2, RotateCw, Square, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  useComboboxAnchor
+} from "@/components/ui/combobox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 type VoiceRow = { voiceId: string; name: string; labels?: Record<string, string> };
 
-/**
- * Короткая демо-фраза для предпрослушивания TTS выбранного голоса (тот же прокси, что и в сессии).
- * Русский текст — чтобы превью совпадало с тем, как ассистент звучит для кандидата.
- */
 const VOICE_PREVIEW_SAMPLE_TEXT =
   "Привет! Я цифровой HR JobAI на базе NULLXES. Приятно познакомиться — расскажу о вакансии, компании и дальнейших шагах.";
 
@@ -78,11 +76,14 @@ function labelBadges(labels: Record<string, string> | undefined): { key: string;
   return out.slice(0, 4);
 }
 
-/** Человекочитаемое имя без показа технического voice_id. */
 function friendlyVoiceLabel(row: VoiceRow): string {
   const n = row.name.trim();
   if (n && n !== row.voiceId) return n;
   return "Голос без названия";
+}
+
+function isAbortError(e: unknown): boolean {
+  return e instanceof Error && e.name === "AbortError";
 }
 
 export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }: Props) {
@@ -99,9 +100,14 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const previewGenRef = useRef(0);
   const fetchSeqRef = useRef(0);
+  const voicesCatalogAbortRef = useRef<AbortController | null>(null);
+  const previewTtsAbortRef = useRef<AbortController | null>(null);
+  const comboboxAnchorRef = useComboboxAnchor();
 
   const stopPreview = useCallback(() => {
     previewGenRef.current += 1;
+    previewTtsAbortRef.current?.abort();
+    previewTtsAbortRef.current = null;
     const audio = previewAudioRef.current;
     if (audio) {
       try {
@@ -126,12 +132,15 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
       if (!id) return;
       stopPreview();
       const gen = previewGenRef.current;
+      const ac = new AbortController();
+      previewTtsAbortRef.current = ac;
       setPreviewPhase("loading");
       try {
         const res = await fetch("/api/tts/elevenlabs/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
+          signal: ac.signal,
           body: JSON.stringify({
             text: VOICE_PREVIEW_SAMPLE_TEXT.slice(0, 8000),
             voiceId: id
@@ -186,7 +195,8 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
           return;
         }
         setPreviewPhase("playing");
-      } catch {
+      } catch (e) {
+        if (isAbortError(e)) return;
         if (previewGenRef.current === gen) {
           toast.error("Не удалось воспроизвести демо");
           setPreviewPhase("idle");
@@ -198,6 +208,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
 
   useEffect(() => {
     return () => {
+      voicesCatalogAbortRef.current?.abort();
       stopPreview();
     };
   }, [stopPreview]);
@@ -209,7 +220,10 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
   }, [committedVoiceId, editing]);
 
   const fetchVoices = useCallback(async () => {
+    voicesCatalogAbortRef.current?.abort();
     const seq = ++fetchSeqRef.current;
+    const ac = new AbortController();
+    voicesCatalogAbortRef.current = ac;
     setLoading(true);
     setError(null);
     try {
@@ -220,7 +234,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
       if (filterGender !== "any") params.set("gender", filterGender);
       const qs = params.toString();
       const url = qs.length > 0 ? `/api/elevenlabs/voices?${qs}` : "/api/elevenlabs/voices";
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: ac.signal });
       const data = (await res.json()) as { voices?: VoiceRow[]; error?: string };
       if (seq !== fetchSeqRef.current) return;
       if (!res.ok) {
@@ -229,8 +243,9 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
         return;
       }
       setVoices(Array.isArray(data.voices) ? data.voices : []);
-    } catch {
+    } catch (e) {
       if (seq !== fetchSeqRef.current) return;
+      if (isAbortError(e)) return;
       setError("network");
       setVoices([]);
     } finally {
@@ -251,6 +266,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
   }, [editing, fetchVoices]);
 
   const resetFiltersAndSearch = useCallback(() => {
+    voicesCatalogAbortRef.current?.abort();
     setSearch("");
     setFilterLang("any");
     setFilterGender("any");
@@ -282,6 +298,13 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
     return "Сохранённый голос";
   }, [voices, committedVoiceId]);
 
+  const draftFriendly = useMemo(() => {
+    const id = draftVoiceId.trim();
+    if (!id) return null;
+    const row = selectRows.find((v) => v.voiceId === id);
+    return row ? friendlyVoiceLabel(row) : null;
+  }, [selectRows, draftVoiceId]);
+
   return (
     <TooltipProvider delay={400}>
       <div
@@ -300,7 +323,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                 <Mic2 className="size-3.5" strokeWidth={2} aria-hidden />
               </TooltipTrigger>
               <TooltipContent side="bottom" className="max-w-[240px] text-xs leading-snug">
-                Выберите голос в списке, при необходимости сузьте язык и пол, прослушайте демо и нажмите «Сохранить».
+                Введите запрос в поле ниже или откройте список стрелкой, сузьте язык и пол при необходимости, прослушайте демо и сохраните.
               </TooltipContent>
             </Tooltip>
             <div className="min-w-0 flex-1">
@@ -316,7 +339,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                 </p>
               ) : (
                 <p className="mt-0.5 line-clamp-1 text-[10px] leading-tight text-slate-500">
-                  Список → демо → «Сохранить».
+                  Поиск в одном поле → демо → «Сохранить».
                 </p>
               )}
             </div>
@@ -370,6 +393,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                 className="h-9 min-h-9 rounded-lg px-2.5 text-[11px]"
                 onClick={() => {
                   stopPreview();
+                  voicesCatalogAbortRef.current?.abort();
                   setEditing(false);
                   setDraftVoiceId(committedVoiceId);
                   resetFiltersAndSearch();
@@ -406,42 +430,83 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
           </div>
         ) : (
           <div className="space-y-2">
-            <div className="relative">
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Поиск по имени голоса…"
-                className="h-9 min-h-9 rounded-lg border-slate-200/90 bg-white/95 pr-14 text-xs shadow-inner"
-                aria-label="Поиск по каталогу ElevenLabs"
-              />
-              <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center">
-                <div className="pointer-events-auto flex items-center rounded-md bg-white/90 p-0.5 shadow-sm ring-1 ring-slate-200/50">
-                  {search.trim().length > 0 ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="size-7 rounded-md text-slate-500 hover:text-slate-800"
-                      title="Очистить поиск"
-                      onClick={() => setSearch("")}
-                    >
-                      <X className="size-3.5" aria-hidden />
-                    </Button>
-                  ) : null}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 rounded-md text-slate-500 hover:text-slate-800"
-                    title="Обновить список"
-                    disabled={loading}
-                    onClick={() => void fetchVoices()}
+            <div className="flex gap-1.5">
+              <div ref={comboboxAnchorRef} className="min-w-0 flex-1">
+                <Combobox
+                  value={draftVoiceId.trim() || null}
+                  onValueChange={(v) => {
+                    if (typeof v === "string" && v.length > 0) {
+                      setDraftVoiceId(v);
+                    }
+                  }}
+                  inputValue={search}
+                  onInputValueChange={(v) => setSearch(v)}
+                  filter={null}
+                  autoComplete="none"
+                >
+                  <ComboboxInput
+                    className="w-full min-w-0"
+                    placeholder="Поиск и выбор голоса…"
+                    disabled={error === "no_api_key" || error === "elevenlabs_not_configured"}
+                    showClear
+                  />
+                  <ComboboxContent
+                    anchor={comboboxAnchorRef}
+                    side="bottom"
+                    align="start"
+                    sideOffset={4}
+                    className="max-h-60 min-w-(--anchor-width) rounded-lg text-xs"
                   >
-                    <RotateCw className={cn("size-3.5", loading && "animate-spin")} aria-hidden />
-                  </Button>
-                </div>
+                    <ComboboxList className="max-h-52 p-1">
+                      {selectRows.map((v) => {
+                        const badges = labelBadges(v.labels).slice(0, 2);
+                        const label = friendlyVoiceLabel(v);
+                        return (
+                          <ComboboxItem
+                            key={v.voiceId}
+                            value={v.voiceId}
+                            className="rounded-md py-1.5 pr-8 pl-2 text-xs"
+                          >
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span className="truncate font-medium text-slate-800">{label}</span>
+                              {badges.map((b) => (
+                                <Badge
+                                  key={`${v.voiceId}-${b.key}`}
+                                  variant="outline"
+                                  className="inline-flex h-4 max-w-[4.5rem] shrink-0 truncate px-1 py-0 text-[9px] font-normal"
+                                >
+                                  {b.text}
+                                </Badge>
+                              ))}
+                            </span>
+                          </ComboboxItem>
+                        );
+                      })}
+                    </ComboboxList>
+                    <ComboboxEmpty className="px-2 py-3 text-center text-[11px] text-muted-foreground">
+                      {loading ? "Загрузка…" : "Ничего не нашлось — смягчите фильтры или поиск."}
+                    </ComboboxEmpty>
+                  </ComboboxContent>
+                </Combobox>
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="size-9 shrink-0 rounded-lg"
+                title="Обновить каталог"
+                disabled={loading}
+                onClick={() => void fetchVoices()}
+              >
+                <RotateCw className={cn("size-3.5", loading && "animate-spin")} aria-hidden />
+              </Button>
             </div>
+
+            {draftFriendly && draftVoiceId.trim() ? (
+              <p className="truncate text-[11px] text-slate-600">
+                Выбрано: <span className="font-semibold text-slate-800">{draftFriendly}</span>
+              </p>
+            ) : null}
 
             <div className="flex flex-wrap items-end gap-2">
               <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
@@ -498,7 +563,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
               {loading ? (
                 <span className="inline-flex items-center gap-1.5">
                   <Loader2 className="size-3 animate-spin" aria-hidden />
-                  Загрузка…
+                  Загрузка каталога…
                 </span>
               ) : !error ? (
                 <span>
@@ -519,54 +584,35 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
               </p>
             ) : null}
 
-            <Select
-              value={draftVoiceId.trim() || undefined}
-              onValueChange={(v) => {
-                if (typeof v === "string" && v.length > 0) {
-                  setDraftVoiceId(v);
-                }
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                className="h-9 min-h-9 w-full min-w-0 rounded-lg border-slate-200/90 bg-white/95 text-left text-xs"
-              >
-                <SelectValue placeholder="Выберите голос…" />
-              </SelectTrigger>
-              <SelectContent className="max-h-60 rounded-lg text-xs" align="start" sideOffset={4}>
-                {selectRows.length === 0 && !loading && !error ? (
-                  <p className="px-2.5 py-3 text-center text-[11px] leading-relaxed text-slate-500">
-                    Ничего не нашлось. Сбросьте фильтры или уточните поиск.
+            <Collapsible className="rounded-lg border border-slate-200/70 bg-slate-50/40 px-2 py-1.5">
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 text-left text-[10px] font-medium text-slate-600 hover:text-slate-800 data-[panel-open]:[&>svg]:rotate-180">
+                <span>Для поддержки (технический id)</span>
+                <ChevronDown className="size-3.5 shrink-0 transition-transform" aria-hidden />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-2 data-[ending-style]:hidden">
+                <div className="flex items-start gap-2">
+                  <p className="min-w-0 flex-1 break-all font-mono text-[10px] leading-snug text-slate-700">
+                    {draftVoiceId.trim() || "—"}
                   </p>
-                ) : (
-                  selectRows.map((v) => {
-                    const badges = labelBadges(v.labels).slice(0, 2);
-                    const label = friendlyVoiceLabel(v);
-                    return (
-                      <SelectItem
-                        key={v.voiceId}
-                        value={v.voiceId}
-                        className="py-1.5 pr-7 text-left text-xs"
-                        title={label}
-                      >
-                        <span className="flex min-w-0 max-w-[min(100vw-4rem,20rem)] items-center gap-1.5">
-                          <span className="truncate font-medium text-slate-800">{label}</span>
-                          {badges.map((b) => (
-                            <Badge
-                              key={`${v.voiceId}-${b.key}`}
-                              variant="outline"
-                              className="inline-flex h-4 max-w-[4.5rem] shrink-0 truncate px-1 py-0 text-[9px] font-normal"
-                            >
-                              {b.text}
-                            </Badge>
-                          ))}
-                        </span>
-                      </SelectItem>
-                    );
-                  })
-                )}
-              </SelectContent>
-            </Select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="size-8 shrink-0"
+                    title="Скопировать id"
+                    disabled={!draftVoiceId.trim()}
+                    onClick={() => {
+                      const t = draftVoiceId.trim();
+                      if (!t) return;
+                      void navigator.clipboard.writeText(t);
+                      toast.success("Скопировано");
+                    }}
+                  >
+                    <Copy className="size-3.5" aria-hidden />
+                  </Button>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
 
             <div className="flex gap-1.5">
               <Button
