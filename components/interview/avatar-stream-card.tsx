@@ -38,21 +38,6 @@ function AvatarPlaceholder({ emphasize }: { emphasize?: boolean }) {
   );
 }
 
-function AvatarFallbackEmbed({ shareUrl }: { shareUrl: string }) {
-  return (
-    <div className="relative h-full w-full overflow-hidden bg-slate-200">
-      <iframe
-        src={shareUrl}
-        title="HR ассистент"
-        className="h-full w-full border-0"
-        allow="camera; microphone; autoplay; clipboard-write; encrypted-media; picture-in-picture"
-        referrerPolicy="strict-origin-when-cross-origin"
-      />
-      <div className="pointer-events-none absolute inset-0 ring-1 ring-black/5" />
-    </div>
-  );
-}
-
 type StreamTokenResponse = {
   apiKey: string;
   token: string;
@@ -609,25 +594,18 @@ export function AvatarStreamCard({
         // от пустой серой заглушки.
         <div className="relative h-full w-full">
           {fallbackEnabled && enabled && meetingId ? (
-            audioPassthroughEnabled ? (
-              anamReady ? (
-                <video
-                  id={anamVideoElementId}
-                  ref={anamVideoRef}
-                  className="h-full w-full object-cover object-center"
-                  playsInline
-                  autoPlay
-                  muted
-                />
-              ) : (
-                // Do not fallback to iframe here: lab.anam.ai share links send
-                // `frame-ancestors 'none'`, so embedding is blocked by CSP.
-                // Keep a neutral placeholder until SDK session token mode is ready.
-                <AvatarPlaceholder emphasize={emphasizePrimary} />
-              )
-            ) : fallbackShareUrl ? (
-              <AvatarFallbackEmbed shareUrl={fallbackShareUrl} />
+            audioPassthroughEnabled && anamReady ? (
+              <video
+                id={anamVideoElementId}
+                ref={anamVideoRef}
+                className="h-full w-full object-cover object-center"
+                playsInline
+                autoPlay
+                muted
+              />
             ) : (
+              // Never use share-link iframe in runtime: lab.anam.ai sets
+              // `frame-ancestors 'none'`, so browser blocks embedding.
               <AvatarPlaceholder emphasize={emphasizePrimary} />
             )
           ) : (
