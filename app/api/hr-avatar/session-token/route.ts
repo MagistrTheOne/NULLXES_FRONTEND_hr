@@ -2,13 +2,17 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+// Temporary production fallback while env wiring is being stabilized.
+// Remove once HR_AVATAR_FALLBACK_PERSONA_ID is reliably set in all environments.
+const HARDCODED_PERSONA_ID = "22392fd9-f78f-4a89-9aa5-bc1b922d178e";
+
 type SessionTokenResponse = {
   sessionToken?: string;
 };
 
 export async function POST(): Promise<NextResponse> {
   const apiKey = process.env.HR_AVATAR_FALLBACK_API_KEY?.trim() ?? "";
-  const personaId = process.env.HR_AVATAR_FALLBACK_PERSONA_ID?.trim() ?? "";
+  const personaId = process.env.HR_AVATAR_FALLBACK_PERSONA_ID?.trim() || HARDCODED_PERSONA_ID;
   const avatarId = process.env.HR_AVATAR_FALLBACK_AVATAR_ID?.trim() ?? "";
 
   if (!apiKey) {
