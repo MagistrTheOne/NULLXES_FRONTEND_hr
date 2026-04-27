@@ -13,7 +13,7 @@ export async function GET(): Promise<NextResponse> {
   );
 
   return NextResponse.json({
-    enabled: enabled && safeShareUrl.length > 0,
+    enabled,
     shareUrl: safeShareUrl,
     audioPassthroughEnabled: enabled && passthroughEnabled && hasSessionTokenConfig
   });
