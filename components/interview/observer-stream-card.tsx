@@ -127,7 +127,7 @@ function ObserverSplitDashboard({ localUserId, candidateDisplayName, onParticipa
 
   if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
     return (
-      <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 p-1 lg:grid-cols-2 lg:gap-6">
+      <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 p-1 md:grid-cols-2 md:gap-5 lg:gap-6">
         <StreamParticipantShell
           title="Кандидат"
           footer={
@@ -170,7 +170,7 @@ function ObserverSplitDashboard({ localUserId, candidateDisplayName, onParticipa
 
   if (remoteCount === 0) {
     return (
-      <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 p-1 lg:grid-cols-2 lg:gap-6">
+      <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 p-1 md:grid-cols-2 md:gap-5 lg:gap-6">
         <StreamParticipantShell
           title="Кандидат"
           footer={
@@ -212,7 +212,7 @@ function ObserverSplitDashboard({ localUserId, candidateDisplayName, onParticipa
   }
 
   return (
-    <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 p-1 lg:grid-cols-2 lg:gap-6">
+    <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 p-1 md:grid-cols-2 md:gap-5 lg:gap-6">
       <StreamParticipantShell
         title="Кандидат"
         footer={
@@ -281,7 +281,7 @@ function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLa
       participants.find((participant) => participant.userId?.startsWith("agent_")) ??
       null;
     return (
-      <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 p-1 sm:grid-cols-2 sm:gap-4">
+      <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 p-1 md:grid-cols-2 md:gap-5">
         <StreamParticipantShell
           title="Кандидат"
           footer={
@@ -331,15 +331,15 @@ function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLa
     .slice(0, 2);
 
   return (
-    <div className="grid h-full w-full grid-cols-1 gap-2 p-2 lg:grid-cols-3">
-      <div className="overflow-hidden rounded-lg border border-white/20 bg-slate-900/50 lg:col-span-2">
+    <div className="grid h-full min-h-0 w-full grid-cols-1 gap-2 p-2 md:grid-cols-3 md:gap-3">
+      <div className="overflow-hidden rounded-lg border border-white/20 bg-slate-900/50 md:col-span-2">
         {candidate ? (
           <ParticipantView participant={candidate} trackType="videoTrack" />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-300">Ожидание кандидата</div>
         )}
       </div>
-      <div className="grid gap-2 lg:grid-rows-2">
+      <div className="grid gap-2 md:grid-rows-2">
         <div className="overflow-hidden rounded-lg border border-white/20 bg-slate-900/50">
           {avatar ? (
             <ParticipantView participant={avatar} trackType="videoTrack" />
@@ -347,7 +347,7 @@ function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLa
             <div className="flex h-full items-center justify-center text-sm text-slate-300">Ожидание HR аватара</div>
           )}
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-1">
           {extra.map((participant) => (
             <div key={participant.sessionId} className="overflow-hidden rounded-lg border border-white/20 bg-slate-900/50">
               <ParticipantView participant={participant} trackType="videoTrack" />
@@ -1203,7 +1203,7 @@ export function ObserverStreamCard({
               {selfPreviewPip}
             </div>
           ) : (
-            <div className="relative grid min-h-[320px] w-full grid-cols-1 gap-4 p-1 sm:min-h-[380px] lg:grid-cols-2 lg:min-h-[420px]">
+            <div className="relative grid min-h-[280px] w-full min-w-0 grid-cols-1 gap-4 p-1 sm:min-h-[360px] md:grid-cols-2 md:min-h-[400px] lg:min-h-[420px]">
               <StreamParticipantShell
                 title="Кандидат"
                 videoClassName={cn(!call && "bg-slate-300/70", ended && "pointer-events-none opacity-70")}

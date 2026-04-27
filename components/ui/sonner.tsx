@@ -38,8 +38,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
       }
       toastOptions={{
         classNames: {
-          toast: "cn-toast",
-        },
+          toast: "cn-toast min-w-0 max-w-[min(100vw-1.25rem,22rem)] sm:max-w-md"
+        }
       }}
       {...props}
     />

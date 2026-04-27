@@ -29,10 +29,8 @@ import {
   type OpenAiServerEvent,
   type WebRtcConnectionState
 } from "@/lib/webrtc-client";
+import { getDefaultElevenLabsVoiceId, HR_ELEVENLABS_VOICE_STORAGE_KEY } from "@/lib/interview-voice-presets";
 import { playAgentUtteranceWithElevenLabs, stopAgentElevenLabsPlayback } from "@/lib/agent-elevenlabs-playback";
-
-const DEFAULT_SESSION_ELEVENLABS_VOICE_ID =
-  typeof process !== "undefined" ? String(process.env.NEXT_PUBLIC_ELEVENLABS_DEFAULT_VOICE_ID ?? "").trim() : "";
 
 export type InterviewPhase = "idle" | "starting" | "connected" | "stopping" | "failed";
 export type InterviewStartResult = {
@@ -389,12 +387,42 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     interviewCandidatePresentRef.current = present;
     setInterviewCandidatePresent(present);
   }, []);
-  const [sessionElevenLabsVoiceId, setSessionElevenLabsVoiceId] = useState(() => DEFAULT_SESSION_ELEVENLABS_VOICE_ID);
-  const sessionElevenLabsVoiceIdRef = useRef(DEFAULT_SESSION_ELEVENLABS_VOICE_ID);
+  const [sessionElevenLabsVoiceId, setSessionElevenLabsVoiceId] = useState(() => getDefaultElevenLabsVoiceId());
+  const sessionElevenLabsVoiceIdRef = useRef(sessionElevenLabsVoiceId);
   const elevenLabsUtteranceAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     sessionElevenLabsVoiceIdRef.current = sessionElevenLabsVoiceId;
+  }, [sessionElevenLabsVoiceId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      try {
+        const stored = window.localStorage.getItem(HR_ELEVENLABS_VOICE_STORAGE_KEY)?.trim();
+        if (stored) {
+          sessionElevenLabsVoiceIdRef.current = stored;
+          setSessionElevenLabsVoiceId(stored);
+        }
+      } catch {
+        /* noop */
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    try {
+      const v = sessionElevenLabsVoiceId.trim();
+      if (v) {
+        window.localStorage.setItem(HR_ELEVENLABS_VOICE_STORAGE_KEY, v);
+      }
+    } catch {
+      /* noop */
+    }
   }, [sessionElevenLabsVoiceId]);
 
   const rtcRef = useRef<WebRtcInterviewClient | null>(null);
@@ -587,9 +615,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         const trimmed = transcript.trim();
         if (trimmed.length > 0) {
           const signal = elevenLabsUtteranceAbortRef.current?.signal;
-          void playAgentUtteranceWithElevenLabs(trimmed, sessionElevenLabsVoiceIdRef.current || undefined, {
-            signal
-          }).catch((err) => {
+          void playAgentUtteranceWithElevenLabs(trimmed, sessionElevenLabsVoiceIdRef.current, { signal }).catch((err) => {
             if (err instanceof DOMException && err.name === "AbortError") {
               return;
             }
@@ -1489,7 +1515,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       setFlowPhase("completed");
       setAgentState("idle");
       setLatestCaptions({});
-      setSessionElevenLabsVoiceId(DEFAULT_SESSION_ELEVENLABS_VOICE_ID);
       setPhase("idle");
       return true;
     } catch (err) {

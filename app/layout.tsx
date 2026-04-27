@@ -27,14 +27,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="ru"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col">
+    <html lang="ru" className={`${geistSans.variable} ${geistMono.variable} h-full min-w-0 antialiased`}>
+      <body className="flex min-h-full min-w-0 flex-col touch-manipulation">
         <TooltipProvider>
           {children}
-          <Toaster richColors position="top-right" />
+          <Toaster richColors position="top-center" />
           <Analytics />
         </TooltipProvider>
       </body>

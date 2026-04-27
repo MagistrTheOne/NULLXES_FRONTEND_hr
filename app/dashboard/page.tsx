@@ -42,13 +42,13 @@ export default async function DashboardPage({
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-zinc-950 text-zinc-100">
+    <div className="relative min-h-screen w-full min-w-0 overflow-x-hidden bg-zinc-950 text-zinc-100">
       <div
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(120,119,198,0.15),transparent)]"
         aria-hidden
       />
-      <div className="relative mx-auto flex min-h-screen max-w-3xl flex-col px-6 py-16">
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-8">
+      <div className="relative mx-auto flex min-h-screen w-full min-w-0 max-w-3xl flex-col px-4 py-10 sm:px-6 sm:py-16">
+        <header className="flex flex-col gap-4 border-b border-white/10 pb-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:pb-8">
           <div>
             <p className="text-sm font-medium text-zinc-500">Signed in as</p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white">{session.user.name}</h1>
@@ -63,9 +63,11 @@ export default async function DashboardPage({
               ) : null}
             </p>
           </div>
-          <SignOutButton />
+          <div className="w-full shrink-0 sm:w-auto sm:self-start">
+            <SignOutButton />
+          </div>
         </header>
-        <main className="mt-12 space-y-6">
+        <main className="mt-8 min-w-0 space-y-6 sm:mt-12">
           {employerPending && role === "employer" ? (
             <div
               role="status"
@@ -78,7 +80,7 @@ export default async function DashboardPage({
               </p>
             </div>
           ) : null}
-          <div className="rounded-2xl border border-white/10 bg-zinc-900/40 p-8 backdrop-blur-xl">
+          <div className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5 backdrop-blur-xl sm:p-8">
           <p className="text-sm leading-relaxed text-zinc-400">
             Protected route — session validated on the server. Job offers and applications can be built on top of{" "}
             <code className="rounded bg-black/40 px-1 text-zinc-300">company</code> /{" "}

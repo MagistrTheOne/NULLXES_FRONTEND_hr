@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -9,140 +9,7 @@ import { extractJobAiIdFromEntryUrl } from "@/lib/candidate-entry-url";
 import { cn } from "@/lib/utils";
 import type { InterviewStatusView } from "@/lib/interview-status";
 import { InterviewStatusBadge } from "./interview-status-badge";
-
-type ElevenLabsVoiceRowProps = {
-  savedVoiceId: string;
-  onSave: (voiceId: string) => void;
-};
-
-function isLikelyElevenLabsVoiceId(value: string): boolean {
-  const v = value.trim();
-  return v.length >= 8 && /^[a-zA-Z0-9_-]+$/.test(v);
-}
-
-function ElevenLabsVoiceRow({ savedVoiceId, onSave }: ElevenLabsVoiceRowProps) {
-  const [draft, setDraft] = useState(savedVoiceId);
-  const [voices, setVoices] = useState<Array<{ voiceId: string; name: string }>>([]);
-  const [listStatus, setListStatus] = useState<"idle" | "loading" | "error" | "ok">("idle");
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const datalistId = "elevenlabs-voice-datalist-meeting-header";
-
-  const loadVoices = async () => {
-    setListStatus("loading");
-    try {
-      const r = await fetch("/api/tts/elevenlabs/voices");
-      const data = (await r.json()) as { voices?: Array<{ voiceId: string; name?: string }>; error?: string };
-      if (!r.ok) {
-        setListStatus("error");
-        toast.error("Не удалось загрузить голоса", { description: data.error ?? r.statusText });
-        return;
-      }
-      const vs = Array.isArray(data.voices) ? data.voices : [];
-      setVoices(vs.map((v) => ({ voiceId: v.voiceId, name: (v.name ?? v.voiceId).slice(0, 72) })));
-      setListStatus("ok");
-    } catch {
-      setListStatus("error");
-      toast.error("Сеть или ElevenLabs недоступны");
-    }
-  };
-
-  useEffect(() => {
-    setDraft(savedVoiceId);
-  }, [savedVoiceId]);
-
-  useEffect(() => {
-    void loadVoices();
-  }, []);
-
-  const dirty = draft.trim() !== savedVoiceId.trim();
-  const canSave = isLikelyElevenLabsVoiceId(draft);
-
-  return (
-    <div className="flex w-full min-w-0 flex-col gap-2 rounded-lg border border-slate-200/90 bg-white/50 p-3 shadow-sm sm:max-w-[min(100%,24rem)]">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs font-medium text-slate-700">Голос ElevenLabs</span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-[11px]"
-          disabled={listStatus === "loading"}
-          onClick={() => void loadVoices()}
-        >
-          {listStatus === "loading" ? "Загрузка…" : "Обновить список"}
-        </Button>
-      </div>
-      <Input
-        ref={inputRef}
-        list={datalistId}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        spellCheck={false}
-        autoComplete="off"
-        placeholder="voice_id из Voice Library"
-        className="h-9 font-mono text-[11px] leading-tight"
-      />
-      <datalist id={datalistId}>
-        {voices.map((v) => (
-          <option key={v.voiceId} value={v.voiceId} label={v.name} />
-        ))}
-      </datalist>
-      <p className="text-[10px] leading-snug text-slate-500">
-        Реальный <span className="font-mono">voice_id</span> уходит в{" "}
-        <span className="font-mono">/api/tts/elevenlabs/stream</span> (модель{" "}
-        <span className="font-mono">eleven_flash_v2_5</span>). Без id на клиенте используется{" "}
-        <span className="font-mono">ELEVENLABS_DEFAULT_VOICE_ID</span> на сервере.
-      </p>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          className="h-8"
-          disabled={!dirty || !canSave}
-          onClick={() => {
-            onSave(draft.trim());
-            toast.success("Голос сохранён", { description: "Применится со следующей реплики ассистента." });
-          }}
-        >
-          Сохранить
-        </Button>
-        {dirty ? (
-          <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => setDraft(savedVoiceId)}>
-            Отмена
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8"
-            onClick={() => {
-              inputRef.current?.focus();
-              inputRef.current?.select();
-            }}
-          >
-            Изменить
-          </Button>
-        )}
-        <a
-          href="https://elevenlabs.io/app/voice-library"
-          target="_blank"
-          rel="noreferrer"
-          className="ml-auto text-[11px] font-medium text-sky-700 underline-offset-2 hover:underline"
-        >
-          Voice Library →
-        </a>
-      </div>
-      {savedVoiceId.trim() ? (
-        <p className="truncate font-mono text-[10px] text-slate-600" title={savedVoiceId.trim()}>
-          Активно: {savedVoiceId.trim()}
-        </p>
-      ) : (
-        <p className="text-[10px] text-amber-800">Клиентский id пуст — будет серверный дефолт.</p>
-      )}
-    </div>
-  );
-}
+import { HrElevenLabsVoicePicker } from "./hr-elevenlabs-voice-picker";
 
 type MeetingHeaderProps = {
   /** Презентационный статус интервью (label + tone + icon). */
@@ -186,11 +53,9 @@ type MeetingHeaderProps = {
     className?: string;
     tone?: "completed" | "blocked" | "lobby";
   } | null;
-  /** ElevenLabs `voice_id` for overlay TTS (HR). Empty string → server `ELEVENLABS_DEFAULT_VOICE_ID`. */
-  savedElevenLabsVoiceId?: string;
-  onSaveElevenLabsVoiceId?: (voiceId: string) => void;
-  /** Показывать блок выбора голоса справа от «Технические детали». */
-  elevenLabsVoiceRowEnabled?: boolean;
+  /** ElevenLabs `voice_id` for agent TTS (HR). Applied between turns via session hook + localStorage. */
+  sessionElevenLabsVoiceId?: string;
+  onSessionElevenLabsVoiceIdChange?: (voiceId: string) => void;
 };
 
 function formatRelativeMeetingTime(meetingAt: string | undefined): string | null {
@@ -229,9 +94,8 @@ export function MeetingHeader({
   candidateMode = false,
   interviewActive = false,
   technicalNotice = null,
-  savedElevenLabsVoiceId = "",
-  onSaveElevenLabsVoiceId,
-  elevenLabsVoiceRowEnabled = false
+  sessionElevenLabsVoiceId,
+  onSessionElevenLabsVoiceIdChange
 }: MeetingHeaderProps) {
   const [entryUrlInput, setEntryUrlInput] = useState(prototypeEntryUrl ?? "");
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -249,7 +113,7 @@ export function MeetingHeader({
   const greeting = candidateFirstName?.trim() || candidateFio.split(" ")[0] || "";
 
   return (
-    <header className="flex w-full min-w-0 flex-col items-center gap-6 sm:gap-8 md:gap-10">
+    <header className="flex w-full min-w-0 max-w-full flex-col items-center gap-5 sm:gap-8 md:gap-10">
       <div className="flex w-full justify-center pt-1">
         <h1
           className={cn(
@@ -262,7 +126,7 @@ export function MeetingHeader({
       </div>
 
       {candidateMode ? null : (
-        <div className="w-full max-w-xl space-y-2 px-0 sm:px-1">
+        <div className="w-full min-w-0 max-w-xl space-y-2 px-0 sm:px-1 md:max-w-2xl">
           <p className="text-center text-xs leading-relaxed text-slate-500 sm:text-left">
             Выберите интервью в списке ниже — здесь появится ссылка для отправки кандидату.
           </p>
@@ -311,8 +175,8 @@ export function MeetingHeader({
 
       <Card
         className={cn(
-          "w-full max-w-xl min-w-0 rounded-2xl border-0 bg-[#d9dee7] shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]",
-          candidateMode && "max-w-sm sm:max-w-xl"
+          "w-full min-w-0 max-w-xl rounded-2xl border-0 bg-[#d9dee7] shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)] md:max-w-2xl",
+          candidateMode && "max-w-sm sm:max-w-xl md:max-w-xl"
         )}
       >
         <CardHeader className={cn("space-y-1", candidateMode ? "pb-2 sm:pb-3" : "pb-3")}>
@@ -320,7 +184,7 @@ export function MeetingHeader({
             {candidateMode ? "Ваше интервью" : "Управление интервью"}
           </CardTitle>
         </CardHeader>
-        <CardContent className={cn("text-sm text-slate-600", candidateMode ? "space-y-3 sm:space-y-4" : "space-y-4")}>
+        <CardContent className={cn("min-w-0 text-sm text-slate-600", candidateMode ? "space-y-3 sm:space-y-4" : "space-y-4")}>
           {candidateMode ? (
             <div className="space-y-2">
               {greeting ? (
@@ -339,7 +203,7 @@ export function MeetingHeader({
               ) : null}
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-2 text-slate-500 sm:grid-cols-2">
+            <div className="grid min-w-0 grid-cols-1 gap-2 text-slate-500 sm:grid-cols-2">
               <p>
                 Кандидат · <span className="font-medium text-slate-700">{candidateFio || "—"}</span>
               </p>
@@ -366,7 +230,7 @@ export function MeetingHeader({
             </div>
           ) : (
             <div className="flex flex-col gap-3 border-t border-slate-300/40 pt-4">
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                 <InterviewStatusBadge status={status} />
                 {/*
                   CTA hierarchy: в активной фазе главная кнопка — Завершить
@@ -382,8 +246,8 @@ export function MeetingHeader({
                  */}
                 {interviewActive ? (
                   <>
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                      <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden />
+                    <span className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200 sm:py-1">
+                      <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
                       Кандидат на связи
                     </span>
                     {onStopSession ? (
@@ -393,7 +257,7 @@ export function MeetingHeader({
                         onClick={onStopSession}
                         disabled={stopSessionDisabled}
                         title={stopSessionDisabled ? "Завершение временно недоступно" : "Завершить текущее интервью"}
-                        className="ml-auto h-9 shrink-0 rounded-lg px-4 text-xs font-semibold"
+                        className="h-11 w-full shrink-0 rounded-lg px-4 text-xs font-semibold sm:ml-auto sm:h-9 sm:w-auto"
                       >
                         Завершить интервью
                       </Button>
@@ -401,8 +265,8 @@ export function MeetingHeader({
                   </>
                 ) : (
                   <>
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200">
-                      <span className="size-1.5 rounded-full bg-slate-400" aria-hidden />
+                    <span className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1.5 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 sm:py-1">
+                      <span className="size-1.5 shrink-0 rounded-full bg-slate-400" aria-hidden />
                       Ожидаем подключения кандидата по ссылке
                     </span>
                     {onStopSession ? (
@@ -412,7 +276,7 @@ export function MeetingHeader({
                         onClick={onStopSession}
                         disabled
                         title="Доступно после подключения кандидата"
-                        className="ml-auto h-9 shrink-0 rounded-lg px-4 text-xs text-slate-500"
+                        className="h-11 w-full shrink-0 rounded-lg px-4 text-xs text-slate-500 sm:ml-auto sm:h-9 sm:w-auto"
                       >
                         Завершить интервью
                       </Button>
@@ -434,32 +298,36 @@ export function MeetingHeader({
           )}
 
           {candidateMode ? null : (
-            <div className="flex flex-col gap-3 border-t border-slate-300/40 pt-4 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-              <div className="min-w-0 shrink-0">
+            <div className="flex flex-col gap-3 border-t border-slate-300/40 pt-3 md:flex-row md:items-start md:gap-4">
+              <div className="min-w-0 flex-1">
                 <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
-                  <CollapsibleTrigger className="inline-flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-xs font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground sm:w-auto">
+                  <CollapsibleTrigger className="inline-flex h-11 min-h-11 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-xs font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground sm:h-9 sm:min-h-9 sm:w-auto">
                     Технические детали
                     <ChevronDown className={`size-4 transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
                   </CollapsibleTrigger>
-                  <CollapsibleContent className="pt-3">
-                    <div className="grid grid-cols-1 gap-x-10 gap-y-2 text-slate-500 sm:grid-cols-2">
-                      <p>
+                  <CollapsibleContent className="min-w-0 pt-3">
+                    {/*
+                      Тех. id в одну колонку: при sm:grid-cols-2 длинные meeting/session id
+                      делили узкую половину карточки и «уезжали» за край рядом с блоком голоса.
+                    */}
+                    <div className="grid min-w-0 grid-cols-1 gap-y-2 text-slate-500">
+                      <p className="min-w-0 wrap-break-word">
                         Внутренний идентификатор ·{" "}
-                        <span className="font-mono text-[11px] text-slate-700">{meetingId ?? "Появится после запуска"}</span>
+                        <span className="break-all font-mono text-[11px] text-slate-700">{meetingId ?? "Появится после запуска"}</span>
                       </p>
-                      <p>
+                      <p className="min-w-0 wrap-break-word">
                         ID реалтайм-сессии ·{" "}
-                        <span className="font-mono text-[11px] text-slate-700">{sessionId ?? "Появится после запуска"}</span>
+                        <span className="break-all font-mono text-[11px] text-slate-700">{sessionId ?? "Появится после запуска"}</span>
                       </p>
                       {showDebugActions && rawStatusLabel ? (
-                        <p className="sm:col-span-2">
-                          Внутренняя фаза · <span className="font-mono text-[11px] text-slate-700">{rawStatusLabel}</span>
+                        <p className="min-w-0 wrap-break-word">
+                          Внутренняя фаза · <span className="break-all font-mono text-[11px] text-slate-700">{rawStatusLabel}</span>
                         </p>
                       ) : null}
                       {technicalNotice ? (
                         <p
                           className={cn(
-                            "sm:col-span-2 rounded-lg border px-3 py-2 text-xs text-slate-700",
+                            "min-w-0 wrap-break-word rounded-lg border px-3 py-2 text-xs text-slate-700",
                             technicalNotice.className ?? "border-slate-200 bg-slate-50"
                           )}
                           data-session-banner={technicalNotice.tone}
@@ -471,8 +339,12 @@ export function MeetingHeader({
                   </CollapsibleContent>
                 </Collapsible>
               </div>
-              {elevenLabsVoiceRowEnabled && onSaveElevenLabsVoiceId ? (
-                <ElevenLabsVoiceRow savedVoiceId={savedElevenLabsVoiceId} onSave={onSaveElevenLabsVoiceId} />
+              {onSessionElevenLabsVoiceIdChange && typeof sessionElevenLabsVoiceId === "string" ? (
+                <HrElevenLabsVoicePicker
+                  className="w-full min-w-0 shrink-0 md:max-w-sm md:flex-1 md:basis-0"
+                  committedVoiceId={sessionElevenLabsVoiceId}
+                  onSave={onSessionElevenLabsVoiceIdChange}
+                />
               ) : null}
             </div>
           )}

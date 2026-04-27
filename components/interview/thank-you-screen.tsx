@@ -50,9 +50,9 @@ export function ThankYouScreen({
       : "Видеособеседование завершено.";
 
   return (
-    <main className="flex min-h-[60vh] flex-col items-center justify-center gap-6 px-4 py-10 text-center">
-      <div className="rounded-3xl bg-[#d9dee7] px-10 py-12 shadow-[-12px_-12px_24px_rgba(255,255,255,.9),12px_12px_28px_rgba(163,177,198,.55)]">
-        <h1 className="text-2xl font-semibold text-slate-800 sm:text-3xl">{greeting}</h1>
+    <main className="flex min-h-[60vh] w-full min-w-0 flex-col items-center justify-center gap-6 px-3 py-8 text-center sm:px-4 sm:py-10">
+      <div className="mx-auto w-full max-w-lg rounded-3xl bg-[#d9dee7] px-5 py-8 shadow-[-12px_-12px_24px_rgba(255,255,255,.9),12px_12px_28px_rgba(163,177,198,.55)] sm:px-10 sm:py-12">
+        <h1 className="text-xl font-semibold text-slate-800 sm:text-2xl md:text-3xl">{greeting}</h1>
         <p className="mt-3 max-w-xl text-base leading-relaxed text-slate-600 sm:text-lg">
           {subtitle}
         </p>

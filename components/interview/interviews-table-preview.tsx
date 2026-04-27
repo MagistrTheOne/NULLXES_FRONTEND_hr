@@ -245,17 +245,17 @@ export function InterviewsTablePreview({
   })();
 
   return (
-    <Card className="rounded-2xl border-0 bg-[#d9dee7] shadow-[-10px_-10px_20px_rgba(255,255,255,.9),10px_10px_22px_rgba(163,177,198,.55)]">
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
+    <Card className="min-w-0 rounded-2xl border-0 bg-[#d9dee7] shadow-[-10px_-10px_20px_rgba(255,255,255,.9),10px_10px_22px_rgba(163,177,198,.55)]">
+      <CardHeader className="flex flex-col gap-3 pb-2 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
         <CardTitle className="text-base text-slate-700">Список собеседований</CardTitle>
-        <Button size="sm" variant="secondary" onClick={onRefresh} disabled={loading}>
+        <Button size="sm" variant="secondary" className="h-10 w-full shrink-0 sm:h-9 sm:w-auto" onClick={onRefresh} disabled={loading}>
           {loading ? "Обновление..." : "Обновить"}
         </Button>
       </CardHeader>
       <CardContent>
         {error ? <p className="mb-3 rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
-        <div className="overflow-x-auto rounded-xl bg-white/50">
-          <Table>
+        <div className="min-w-0 rounded-xl bg-white/50">
+          <Table className="min-w-[640px]">
             <TableHeader>
               <TableRow>
                 <TableHead>ID Nullxes</TableHead>

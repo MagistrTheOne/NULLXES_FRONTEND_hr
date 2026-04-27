@@ -26,27 +26,25 @@ export function stopAgentElevenLabsPlayback(): void {
  */
 export async function playAgentUtteranceWithElevenLabs(
   text: string,
-  voiceId: string | undefined,
+  voiceId: string,
   options?: { signal?: AbortSignal }
 ): Promise<void> {
   const trimmed = text.trim();
   if (!trimmed.length) {
     return;
   }
+  if (!voiceId.trim()) {
+    console.warn("[elevenlabs-agent-tts] missing voiceId");
+    return;
+  }
 
   stopAgentElevenLabsPlayback();
-
-  const vid = voiceId?.trim();
-  const body: { text: string; voiceId?: string } = { text: trimmed.slice(0, 8000) };
-  if (vid && vid.length >= 8) {
-    body.voiceId = vid;
-  }
 
   const res = await fetch("/api/tts/elevenlabs/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify(body),
+    body: JSON.stringify({ text: trimmed.slice(0, 8000), voiceId: voiceId.trim() }),
     signal: options?.signal
   });
 

@@ -970,8 +970,8 @@ export function InterviewShell() {
   ]);
 
   return (
-    <div className="min-h-screen w-full bg-[#dfe4ec] px-4 py-6 sm:px-6 sm:py-8 md:px-10">
-      <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-10">
+    <div className="min-h-screen w-full min-w-0 bg-[#dfe4ec] px-3 py-5 sm:px-5 sm:py-7 md:px-8 md:py-8 lg:px-10">
+      <div className="mx-auto flex w-full min-w-0 max-w-[1280px] flex-col gap-8 sm:gap-10">
         {isCandidateFlow && !requestedInterviewId ? (
           <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-sm">
             В ссылке для кандидата не указан <span className="font-mono">jobAiId</span>. Попросите HR отправить корректную
@@ -1023,15 +1023,8 @@ export function InterviewShell() {
             !meetingId ||
             (!isCandidateFlow && !interviewCandidatePresent)
           }
-          savedElevenLabsVoiceId={sessionElevenLabsVoiceId}
-          onSaveElevenLabsVoiceId={setSessionElevenLabsVoiceId}
-          elevenLabsVoiceRowEnabled={
-            process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT === "1" &&
-            phase === "connected" &&
-            Boolean(meetingId) &&
-            !isCandidateFlow &&
-            !completedInterviewLocked
-          }
+          sessionElevenLabsVoiceId={sessionElevenLabsVoiceId}
+          onSessionElevenLabsVoiceIdChange={!isCandidateFlow ? setSessionElevenLabsVoiceId : undefined}
           onFail={markFailed}
           startDisabled={
             phase === "connected" ||
@@ -1224,7 +1217,7 @@ export function InterviewShell() {
             ) : null}
             <main
               className={cn(
-                "relative mt-4 grid grid-cols-1 gap-8 lg:items-stretch lg:gap-6",
+                "relative mt-3 grid min-w-0 grid-cols-1 gap-6 sm:mt-4 sm:gap-7 lg:items-stretch lg:gap-6",
                 isCandidateFlow || (!OBSERVER_PANEL_ENABLED && !HR_INSIGHT_PANEL_ENABLED)
                   ? "lg:grid-cols-2"
                   : "lg:grid-cols-3",
@@ -1260,7 +1253,7 @@ export function InterviewShell() {
               // regular grid column. Width / position chosen to match Zoom-like
               // mobile layouts and not overlap the candidate's own face.
               isCandidateFlow &&
-                "absolute right-3 top-3 z-20 h-36 w-28 sm:h-44 sm:w-32 lg:relative lg:right-auto lg:top-auto lg:z-auto lg:h-auto lg:w-auto"
+                "absolute z-20 h-36 w-28 sm:h-44 sm:w-32 lg:relative lg:right-auto lg:top-auto lg:z-auto lg:h-auto lg:w-auto right-[max(0.75rem,env(safe-area-inset-right,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))]"
             )}
           >
           <AvatarStreamCard

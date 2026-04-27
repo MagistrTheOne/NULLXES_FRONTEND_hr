@@ -28,8 +28,8 @@ export function InterviewPhaseIndicator({
   }
 
   return (
-    <div className="flex w-full justify-center">
-      <span className="rounded-full border border-slate-300/70 bg-white/70 px-4 py-1 text-xs font-medium uppercase tracking-wide text-slate-600 shadow-sm">
+    <div className="flex w-full min-w-0 justify-center px-1">
+      <span className="max-w-full rounded-full border border-slate-300/70 bg-white/70 px-3 py-1.5 text-center text-[11px] font-medium uppercase leading-snug tracking-wide text-slate-600 shadow-sm sm:px-4 sm:py-1 sm:text-xs">
         {label}
       </span>
     </div>
