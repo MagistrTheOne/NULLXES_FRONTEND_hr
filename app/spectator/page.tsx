@@ -294,7 +294,10 @@ function SpectatorBody() {
     typeof runtimeSnapshot?.media?.streamCallType === "string" ? runtimeSnapshot.media.streamCallType.trim() : "";
   const resolvedStreamCallId = runtimeStreamCallIdRaw || effectiveMeetingId || "";
   const resolvedStreamCallType = runtimeStreamCallTypeRaw || "default";
-  const canConnect = Boolean(effectiveMeetingId);
+  // Do not attempt observer Stream join until meeting is truly active.
+  // Early joins (meetingId exists but status is not active yet) often lead to
+  // racey "joined but no third participant in UI/account card" behaviour.
+  const canConnect = Boolean(effectiveMeetingId) && (projectionActive || runtimeActive);
   const spectatorWaitingReason = useMemo(() => {
     if (!effectiveMeetingId) {
       return "Ожидаем назначение meetingId от runtime. Интервью ещё не перешло в активную фазу.";

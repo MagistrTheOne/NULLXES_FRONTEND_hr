@@ -31,6 +31,7 @@ const ACTIVE_MEETING_STATUSES = new Set(["starting", "in_meeting"]);
 type SpectatorConsumedTicket = {
   meetingId?: unknown;
   jobAiId?: unknown;
+  viewerKey?: unknown;
 };
 
 function sanitizeIdentifier(value: string, fallback: string): string {
@@ -100,6 +101,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
   let meetingId = sanitizeIdentifier(rawMeetingId ?? "", "meeting");
   let spectatorAuthorizedByTicket = false;
+  let spectatorStableViewerKey: string | null = null;
   const observerTicketRaw = typeof body.observerTicket === "string" ? body.observerTicket.trim() : "";
 
   if (role === "spectator" && observerTicketRaw) {
@@ -129,6 +131,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const consumed = (await consumeRes.json().catch(() => ({}))) as SpectatorConsumedTicket;
     const ticketMeetingIdRaw = typeof consumed.meetingId === "string" ? consumed.meetingId : "";
     const ticketMeetingId = sanitizeIdentifier(ticketMeetingIdRaw, "");
+    const viewerKeyRaw = typeof consumed.viewerKey === "string" ? consumed.viewerKey : "";
+    const viewerKey = sanitizeIdentifier(viewerKeyRaw, "");
     if (!ticketMeetingId) {
       return NextResponse.json(
         { message: "Observer ticket payload is malformed.", code: "spectator.ticket_malformed" },
@@ -136,6 +140,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
     meetingId = ticketMeetingId;
+    spectatorStableViewerKey = viewerKey || null;
     spectatorAuthorizedByTicket = true;
   }
 
@@ -143,7 +148,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ message: "meetingId is required for Stream token issuance." }, { status: 400 });
   }
 
-  const userId = sanitizeIdentifier(body.userId ?? `${role}-${meetingId}`, `${role}-user`);
+  const spectatorServerUserId =
+    role === "spectator" && spectatorStableViewerKey
+      ? sanitizeIdentifier(`observer-${meetingId}-${spectatorStableViewerKey}`, `observer-${meetingId}`)
+      : null;
+  const userId = sanitizeIdentifier(body.userId ?? spectatorServerUserId ?? `${role}-${meetingId}`, `${role}-user`);
   const userName = (body.userName ?? (role === "candidate" ? "Candidate" : "Spectator")).trim() || "Participant";
   const callId = sanitizeIdentifier(body.callId ?? meetingId, meetingId);
   const callType = sanitizeIdentifier(body.callType ?? "default", "default");
