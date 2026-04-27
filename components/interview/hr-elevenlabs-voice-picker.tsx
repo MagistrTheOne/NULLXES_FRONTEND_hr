@@ -1,10 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FilterX, Languages, Loader2, Mic2, RotateCw, Square, Users, Volume2, X } from "lucide-react";
+import { FilterX, Loader2, Mic2, RotateCw, Square, Volume2, X } from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import {
   Select,
   SelectContent,
@@ -12,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue
 } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 type VoiceRow = { voiceId: string; name: string; labels?: Record<string, string> };
@@ -24,7 +28,7 @@ const VOICE_PREVIEW_SAMPLE_TEXT =
   "Привет! Я цифровой HR JobAI на базе NULLXES. Приятно познакомиться — расскажу о вакансии, компании и дальнейших шагах.";
 
 const LANG_OPTIONS: { id: string; label: string }[] = [
-  { id: "any", label: "Все" },
+  { id: "any", label: "Все языки" },
   { id: "en", label: "English" },
   { id: "ru", label: "Русский" },
   { id: "de", label: "Deutsch" },
@@ -43,10 +47,10 @@ const LANG_OPTIONS: { id: string; label: string }[] = [
 ];
 
 const GENDER_OPTIONS: { id: string; label: string }[] = [
-  { id: "any", label: "Все" },
+  { id: "any", label: "Любой пол" },
   { id: "female", label: "Женский" },
-  { id: "male", label: "Мужский" },
-  { id: "neutral", label: "Нейтр." }
+  { id: "male", label: "Мужской" },
+  { id: "neutral", label: "Нейтральный" }
 ];
 
 type Props = {
@@ -72,6 +76,13 @@ function labelBadges(labels: Record<string, string> | undefined): { key: string;
     }
   }
   return out.slice(0, 4);
+}
+
+/** Человекочитаемое имя без показа технического voice_id. */
+function friendlyVoiceLabel(row: VoiceRow): string {
+  const n = row.name.trim();
+  if (n && n !== row.voiceId) return n;
+  return "Голос без названия";
 }
 
 export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }: Props) {
@@ -235,7 +246,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
     }
     const t = window.setTimeout(() => {
       void fetchVoices();
-    }, 280);
+    }, 220);
     return () => window.clearTimeout(t);
   }, [editing, fetchVoices]);
 
@@ -258,353 +269,336 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
     if (c && !byId.has(c)) {
       byId.set(c, { voiceId: c, name: c });
     }
-    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name, "ru"));
+    return Array.from(byId.values()).sort((a, b) =>
+      friendlyVoiceLabel(a).localeCompare(friendlyVoiceLabel(b), "ru")
+    );
   }, [voices, draftVoiceId, committedVoiceId]);
 
   const committedLabel = useMemo(() => {
-    const hit = voices.find((v) => v.voiceId === committedVoiceId.trim());
-    if (hit) return `${hit.name}`;
-    const short = committedVoiceId.trim();
-    if (!short) return "—";
-    return short.length > 14 ? `${short.slice(0, 6)}…${short.slice(-4)}` : short;
+    const id = committedVoiceId.trim();
+    if (!id) return "—";
+    const hit = voices.find((v) => v.voiceId === id);
+    if (hit) return friendlyVoiceLabel(hit);
+    return "Сохранённый голос";
   }, [voices, committedVoiceId]);
 
-  const draftDisplayName = useMemo(() => {
-    const id = draftVoiceId.trim();
-    if (!id) return "Не выбран";
-    const row = selectRows.find((v) => v.voiceId === id);
-    if (row && row.name !== row.voiceId) return row.name;
-    return row?.name ?? id;
-  }, [selectRows, draftVoiceId]);
-
-  const chipClass = (active: boolean) =>
-    cn(
-      "shrink-0 rounded-full px-2.5 py-1 text-[10px] font-medium transition-all active:scale-[0.98]",
-      active
-        ? "bg-slate-800 text-white shadow-sm ring-1 ring-slate-800/20"
-        : "bg-white/90 text-slate-600 shadow-sm ring-1 ring-slate-200/80 hover:bg-white hover:ring-slate-300"
-    );
-
   return (
-    <div
-      className={cn(
-        "flex min-w-0 flex-col gap-3 rounded-2xl border border-sky-200/35 bg-gradient-to-br from-white via-white to-sky-50/50 p-3.5 text-xs text-slate-600 shadow-sm ring-1 ring-white/70",
-        className
-      )}
-    >
-      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 gap-2.5">
-          <div
-            className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-sky-600 text-white shadow-md shadow-sky-500/25"
-            aria-hidden
-          >
-            <Mic2 className="size-4" strokeWidth={2} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold tracking-tight text-slate-800">Голос ассистента</span>
-              <span className="rounded-full bg-sky-100/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-900">
-                ElevenLabs
-              </span>
+    <TooltipProvider delay={400}>
+      <div
+        className={cn(
+          "flex min-w-0 flex-col gap-2 rounded-xl border border-sky-200/40 bg-gradient-to-br from-white via-white to-sky-50/40 p-2.5 text-xs text-slate-600 shadow-sm ring-1 ring-white/60",
+          className
+        )}
+      >
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+          <div className="flex min-w-0 flex-1 gap-2">
+            <Tooltip>
+              <TooltipTrigger
+                className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-sky-500 to-sky-600 text-white shadow-sm shadow-sky-500/20"
+                aria-label="Подсказка по выбору голоса"
+              >
+                <Mic2 className="size-3.5" strokeWidth={2} aria-hidden />
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-[240px] text-xs leading-snug">
+                Выберите голос в списке, при необходимости сузьте язык и пол, прослушайте демо и нажмите «Сохранить».
+              </TooltipContent>
+            </Tooltip>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[13px] font-semibold tracking-tight text-slate-800">Голос ассистента</span>
+                <Badge variant="secondary" className="h-5 px-1.5 text-[9px] font-semibold uppercase tracking-wide">
+                  ElevenLabs
+                </Badge>
+              </div>
+              {!editing ? (
+                <p className="mt-0.5 line-clamp-1 text-[10px] leading-tight text-slate-500">
+                  Тембр озвучки ассистента для этого интервью.
+                </p>
+              ) : (
+                <p className="mt-0.5 line-clamp-1 text-[10px] leading-tight text-slate-500">
+                  Список → демо → «Сохранить».
+                </p>
+              )}
             </div>
-            <p className="mt-1 text-[11px] leading-snug text-slate-500">
-              Выберите тембр из каталога, при необходимости отфильтруйте язык и пол, нажмите «Прослушать демо» и сохраните.
+          </div>
+          {!editing ? (
+            <div className="flex w-full shrink-0 gap-1.5 sm:ml-auto sm:w-auto">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-9 min-h-9 flex-1 gap-1 rounded-lg px-2.5 text-[11px] sm:flex-initial"
+                title={VOICE_PREVIEW_SAMPLE_TEXT}
+                disabled={previewPhase !== "idle" || !committedVoiceId.trim()}
+                onClick={() => void playPreview(committedVoiceId)}
+              >
+                {previewPhase === "loading" ? (
+                  <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+                ) : (
+                  <Volume2 className="size-3.5 shrink-0" aria-hidden />
+                )}
+                {previewPhase === "loading" ? "…" : "Демо"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 min-h-9 shrink-0 gap-1 rounded-lg px-2.5 text-[11px]"
+                title="Остановить демо"
+                disabled={previewPhase !== "playing"}
+                onClick={stopPreview}
+              >
+                <Square className="size-2.5 fill-current" aria-hidden />
+                Стоп
+              </Button>
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                className="h-9 min-h-9 flex-1 rounded-lg px-2.5 text-[11px] sm:flex-initial"
+                onClick={() => setEditing(true)}
+              >
+                Изменить
+              </Button>
+            </div>
+          ) : (
+            <div className="flex w-full shrink-0 justify-end gap-1 sm:ml-auto sm:w-auto">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-9 min-h-9 rounded-lg px-2.5 text-[11px]"
+                onClick={() => {
+                  stopPreview();
+                  setEditing(false);
+                  setDraftVoiceId(committedVoiceId);
+                  resetFiltersAndSearch();
+                }}
+              >
+                Отмена
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="h-9 min-h-9 rounded-lg px-3 text-[11px] font-semibold"
+                disabled={!draftVoiceId.trim()}
+                onClick={() => {
+                  const next = draftVoiceId.trim();
+                  if (!next) return;
+                  stopPreview();
+                  onSave(next);
+                  setEditing(false);
+                  resetFiltersAndSearch();
+                }}
+              >
+                Сохранить
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {!editing ? (
+          <div className="rounded-lg border border-slate-200/80 bg-white/80 px-2.5 py-2 shadow-inner">
+            <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Сейчас</p>
+            <p className="mt-0.5 truncate text-sm font-semibold text-slate-800" title={committedLabel}>
+              {committedLabel}
             </p>
           </div>
-        </div>
-        {!editing ? (
-          <div className="flex w-full shrink-0 gap-2 sm:ml-auto sm:w-auto">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="h-10 min-h-10 flex-1 gap-1.5 rounded-xl px-3 text-[11px] shadow-sm sm:h-9 sm:min-h-9 sm:flex-initial"
-              title={VOICE_PREVIEW_SAMPLE_TEXT}
-              disabled={previewPhase !== "idle" || !committedVoiceId.trim()}
-              onClick={() => void playPreview(committedVoiceId)}
-            >
-              {previewPhase === "loading" ? (
-                <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
-              ) : (
-                <Volume2 className="size-3.5 shrink-0" aria-hidden />
-              )}
-              {previewPhase === "loading" ? "Загрузка…" : "Демо"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-10 min-h-10 shrink-0 gap-1.5 rounded-xl px-3 text-[11px] shadow-sm sm:h-9 sm:min-h-9"
-              title="Остановить воспроизведение демо"
-              disabled={previewPhase !== "playing"}
-              onClick={stopPreview}
-            >
-              <Square className="size-3 fill-current" aria-hidden />
-              Стоп
-            </Button>
-            <Button
-              type="button"
-              variant="default"
-              size="sm"
-              className="h-10 min-h-10 flex-1 rounded-xl px-3 text-[11px] shadow-sm sm:h-9 sm:min-h-9 sm:flex-initial"
-              onClick={() => setEditing(true)}
-            >
-              Изменить
-            </Button>
-          </div>
         ) : (
-          <div className="flex w-full shrink-0 justify-end gap-1 sm:ml-auto sm:w-auto">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-10 min-h-10 rounded-xl px-3 text-[11px] sm:h-9 sm:min-h-9"
-              onClick={() => {
-                stopPreview();
-                setEditing(false);
-                setDraftVoiceId(committedVoiceId);
-                resetFiltersAndSearch();
-              }}
-            >
-              Отмена
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              className="h-10 min-h-10 rounded-xl px-4 text-[11px] font-semibold sm:h-9 sm:min-h-9"
-              disabled={!draftVoiceId.trim()}
-              onClick={() => {
-                const next = draftVoiceId.trim();
-                if (!next) return;
-                stopPreview();
-                onSave(next);
-                setEditing(false);
-                resetFiltersAndSearch();
-              }}
-            >
-              Сохранить
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {!editing ? (
-        <div className="rounded-xl border border-slate-200/90 bg-white/70 px-3 py-2.5 shadow-inner">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Сейчас выбрано</p>
-          <p className="mt-1 truncate text-sm font-semibold text-slate-800" title={committedLabel}>
-            {committedLabel}
-          </p>
-          <p className="mt-1 break-all font-mono text-[10px] leading-snug text-slate-500" title={committedVoiceId}>
-            {committedVoiceId.trim() || "—"}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <div className="relative">
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Поиск по имени или описанию…"
-              className="h-10 min-h-10 rounded-xl border-slate-200/90 bg-white/90 pr-17 text-xs shadow-inner sm:h-9 sm:min-h-9 sm:pr-20"
-            />
-            <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center gap-0.5">
-              <div className="pointer-events-auto flex items-center gap-0.5 rounded-md bg-white/80 p-0.5 shadow-sm ring-1 ring-slate-200/60 backdrop-blur-[2px]">
-                {search.trim().length > 0 ? (
+          <div className="space-y-2">
+            <div className="relative">
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Поиск по имени голоса…"
+                className="h-9 min-h-9 rounded-lg border-slate-200/90 bg-white/95 pr-14 text-xs shadow-inner"
+                aria-label="Поиск по каталогу ElevenLabs"
+              />
+              <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center">
+                <div className="pointer-events-auto flex items-center rounded-md bg-white/90 p-0.5 shadow-sm ring-1 ring-slate-200/50">
+                  {search.trim().length > 0 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-7 rounded-md text-slate-500 hover:text-slate-800"
+                      title="Очистить поиск"
+                      onClick={() => setSearch("")}
+                    >
+                      <X className="size-3.5" aria-hidden />
+                    </Button>
+                  ) : null}
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
                     className="size-7 rounded-md text-slate-500 hover:text-slate-800"
-                    title="Очистить поиск"
-                    onClick={() => setSearch("")}
+                    title="Обновить список"
+                    disabled={loading}
+                    onClick={() => void fetchVoices()}
                   >
-                    <X className="size-3.5" aria-hidden />
+                    <RotateCw className={cn("size-3.5", loading && "animate-spin")} aria-hidden />
                   </Button>
-                ) : null}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 rounded-md text-slate-500 hover:text-slate-800"
-                  title="Обновить список"
-                  disabled={loading}
-                  onClick={() => void fetchVoices()}
-                >
-                  <RotateCw className={cn("size-3.5", loading && "animate-spin")} aria-hidden />
-                </Button>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div className="rounded-xl border border-slate-200/70 bg-slate-50/50 p-2.5 ring-1 ring-slate-100/80">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Фильтры каталога</span>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
+                <div className="grid min-w-0 gap-1">
+                  <Label htmlFor="hr-el-lang" className="text-[10px] font-medium text-slate-500">
+                    Язык
+                  </Label>
+                  <NativeSelect
+                    id="hr-el-lang"
+                    size="sm"
+                    className="w-full min-w-0"
+                    value={filterLang}
+                    onChange={(e) => setFilterLang(e.target.value)}
+                  >
+                    {LANG_OPTIONS.map((opt) => (
+                      <NativeSelectOption key={opt.id} value={opt.id}>
+                        {opt.label}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </div>
+                <div className="grid min-w-0 gap-1">
+                  <Label htmlFor="hr-el-gender" className="text-[10px] font-medium text-slate-500">
+                    Пол
+                  </Label>
+                  <NativeSelect
+                    id="hr-el-gender"
+                    size="sm"
+                    className="w-full min-w-0"
+                    value={filterGender}
+                    onChange={(e) => setFilterGender(e.target.value)}
+                  >
+                    {GENDER_OPTIONS.map((opt) => (
+                      <NativeSelectOption key={opt.id} value={opt.id}>
+                        {opt.label}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </div>
+              </div>
               <Button
                 type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1 rounded-lg px-2 text-[10px] text-slate-500 hover:bg-white/80 hover:text-slate-800"
+                variant="outline"
+                size="icon"
+                className="size-9 shrink-0 rounded-lg"
                 title="Сбросить поиск и фильтры"
                 onClick={resetFiltersAndSearch}
               >
-                <FilterX className="size-3" aria-hidden />
-                Сброс
+                <FilterX className="size-3.5" aria-hidden />
               </Button>
             </div>
-            <div className="space-y-2">
-            <div className="space-y-1">
-            <div className="flex items-center gap-1 text-[10px] font-medium text-slate-500">
-              <Languages className="size-3 shrink-0 opacity-80" aria-hidden />
-              Язык
-            </div>
-            <div className="flex gap-1 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              {LANG_OPTIONS.map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  className={chipClass(filterLang === opt.id)}
-                  onClick={() => {
-                    if (opt.id === "any") setFilterLang("any");
-                    else setFilterLang((prev) => (prev === opt.id ? "any" : opt.id));
-                  }}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
 
-            <div className="space-y-1">
-            <div className="flex items-center gap-1 text-[10px] font-medium text-slate-500">
-              <Users className="size-3 shrink-0 opacity-80" aria-hidden />
-              Пол
+            <div className="flex min-h-[18px] flex-wrap items-center gap-2 text-[10px] text-slate-400">
+              {loading ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <Loader2 className="size-3 animate-spin" aria-hidden />
+                  Загрузка…
+                </span>
+              ) : !error ? (
+                <span>
+                  В списке:{" "}
+                  <span className="font-medium text-slate-600 tabular-nums">{selectRows.length}</span>
+                  {selectRows.length >= 100 ? "+" : ""}
+                </span>
+              ) : null}
             </div>
-            <div className="flex flex-wrap gap-1">
-              {GENDER_OPTIONS.map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  className={chipClass(filterGender === opt.id)}
-                  onClick={() => {
-                    if (opt.id === "any") setFilterGender("any");
-                    else setFilterGender((prev) => (prev === opt.id ? "any" : opt.id));
-                  }}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-            </div>
-          </div>
 
-          {loading ? (
-            <div className="flex items-center gap-2 text-[11px] text-slate-500">
-              <Loader2 className="size-3.5 animate-spin" aria-hidden />
-              Загрузка каталога…
-            </div>
-          ) : null}
-          {error === "no_api_key" || error === "elevenlabs_not_configured" ? (
-            <p className="rounded-lg border border-rose-200/80 bg-rose-50/80 px-3 py-2 text-[11px] leading-snug text-rose-800">
-              Каталог голосов сейчас недоступен: проверьте настройки сервера (ключ ElevenLabs).
-            </p>
-          ) : error ? (
-            <p className="rounded-lg border border-rose-200/80 bg-rose-50/80 px-3 py-2 text-[11px] leading-snug text-rose-800">
-              Не удалось загрузить каталог. Попробуйте «Обновить» или смените фильтры.
-            </p>
-          ) : null}
-          {!loading && editing && !error ? (
-            <p className="text-[10px] text-slate-400">
-              В списке: <span className="font-medium text-slate-600">{selectRows.length}</span>
-              {selectRows.length >= 100 ? "+" : ""} голосов
-            </p>
-          ) : null}
+            {error === "no_api_key" || error === "elevenlabs_not_configured" ? (
+              <p className="rounded-md border border-rose-200/80 bg-rose-50/80 px-2.5 py-1.5 text-[11px] leading-snug text-rose-800">
+                Каталог недоступен. Проверьте настройки сервера (ключ ElevenLabs).
+              </p>
+            ) : error ? (
+              <p className="rounded-md border border-rose-200/80 bg-rose-50/80 px-2.5 py-1.5 text-[11px] leading-snug text-rose-800">
+                Не удалось загрузить каталог. Попробуйте «Обновить» или смените фильтры.
+              </p>
+            ) : null}
 
-          <div className="rounded-xl border border-slate-200/90 bg-gradient-to-br from-slate-50/90 to-white px-3 py-2.5 shadow-inner">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Выбор</p>
-            <p className="mt-0.5 truncate text-sm font-semibold text-slate-800">{draftDisplayName}</p>
-            <p className="mt-0.5 break-all font-mono text-[10px] leading-snug text-slate-500">{draftVoiceId.trim() || "—"}</p>
-          </div>
-
-          <Select
-            value={draftVoiceId.trim() || undefined}
-            onValueChange={(v) => {
-              if (typeof v === "string" && v.length > 0) {
-                setDraftVoiceId(v);
-              }
-            }}
-          >
-            <SelectTrigger
-              size="sm"
-              className="h-11 min-h-11 w-full min-w-0 rounded-xl border-slate-200/90 bg-white/95 text-left text-[11px] sm:h-10 sm:min-h-10"
+            <Select
+              value={draftVoiceId.trim() || undefined}
+              onValueChange={(v) => {
+                if (typeof v === "string" && v.length > 0) {
+                  setDraftVoiceId(v);
+                }
+              }}
             >
-              <SelectValue placeholder="Откройте список и выберите голос…" />
-            </SelectTrigger>
-            <SelectContent className="max-h-72 rounded-xl">
-              {selectRows.length === 0 && !loading && !error ? (
-                <p className="px-3 py-4 text-center text-[11px] leading-relaxed text-slate-500">
-                  Ничего не нашлось. Смягчите фильтры, нажмите «Сброс» или уточните поиск.
-                </p>
-              ) : (
-                selectRows.map((v) => {
-                  const badges = labelBadges(v.labels);
-                  return (
-                    <SelectItem
-                      key={v.voiceId}
-                      value={v.voiceId}
-                      className="items-start py-2 text-left text-[11px]"
-                      title={`${v.name} — ${v.voiceId}`}
-                    >
-                      <span className="block font-medium text-slate-800">{v.name}</span>
-                      <span className="mt-0.5 block font-mono text-[10px] leading-tight text-slate-500">{v.voiceId}</span>
-                      {badges.length > 0 ? (
-                        <span className="mt-1 flex flex-wrap gap-1">
+              <SelectTrigger
+                size="sm"
+                className="h-9 min-h-9 w-full min-w-0 rounded-lg border-slate-200/90 bg-white/95 text-left text-xs"
+              >
+                <SelectValue placeholder="Выберите голос…" />
+              </SelectTrigger>
+              <SelectContent className="max-h-60 rounded-lg text-xs" align="start" sideOffset={4}>
+                {selectRows.length === 0 && !loading && !error ? (
+                  <p className="px-2.5 py-3 text-center text-[11px] leading-relaxed text-slate-500">
+                    Ничего не нашлось. Сбросьте фильтры или уточните поиск.
+                  </p>
+                ) : (
+                  selectRows.map((v) => {
+                    const badges = labelBadges(v.labels).slice(0, 2);
+                    const label = friendlyVoiceLabel(v);
+                    return (
+                      <SelectItem
+                        key={v.voiceId}
+                        value={v.voiceId}
+                        className="py-1.5 pr-7 text-left text-xs"
+                        title={label}
+                      >
+                        <span className="flex min-w-0 max-w-[min(100vw-4rem,20rem)] items-center gap-1.5">
+                          <span className="truncate font-medium text-slate-800">{label}</span>
                           {badges.map((b) => (
-                            <span
+                            <Badge
                               key={`${v.voiceId}-${b.key}`}
-                              className="rounded-md bg-slate-100/90 px-1.5 py-0.5 text-[9px] font-medium text-slate-600"
+                              variant="outline"
+                              className="inline-flex h-4 max-w-[4.5rem] shrink-0 truncate px-1 py-0 text-[9px] font-normal"
                             >
                               {b.text}
-                            </span>
+                            </Badge>
                           ))}
                         </span>
-                      ) : null}
-                    </SelectItem>
-                  );
-                })
-              )}
-            </SelectContent>
-          </Select>
-          <div className="flex w-full gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 min-h-10 min-w-0 flex-1 gap-2 rounded-xl border-sky-200/80 bg-sky-50/40 text-[11px] font-medium text-sky-950 hover:bg-sky-50/80 sm:h-9 sm:min-h-9"
-              title={VOICE_PREVIEW_SAMPLE_TEXT}
-              disabled={previewPhase !== "idle" || !draftVoiceId.trim()}
-              onClick={() => void playPreview(draftVoiceId)}
-            >
-              {previewPhase === "loading" ? (
-                <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
-              ) : (
-                <Volume2 className="size-3.5 shrink-0" aria-hidden />
-              )}
-              {previewPhase === "loading" ? "Загрузка…" : "Прослушать демо"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 min-h-10 shrink-0 gap-1.5 rounded-xl border-slate-200/90 px-3 text-[11px] font-medium sm:h-9 sm:min-h-9"
-              title="Остановить воспроизведение демо"
-              disabled={previewPhase !== "playing"}
-              onClick={stopPreview}
-            >
-              <Square className="size-3 fill-current" aria-hidden />
-              Стоп
-            </Button>
+                      </SelectItem>
+                    );
+                  })
+                )}
+              </SelectContent>
+            </Select>
+
+            <div className="flex gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 min-h-9 min-w-0 flex-1 gap-1.5 rounded-lg border-sky-200/70 bg-sky-50/30 text-[11px] font-medium text-sky-950"
+                title={VOICE_PREVIEW_SAMPLE_TEXT}
+                disabled={previewPhase !== "idle" || !draftVoiceId.trim()}
+                onClick={() => void playPreview(draftVoiceId)}
+              >
+                {previewPhase === "loading" ? (
+                  <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+                ) : (
+                  <Volume2 className="size-3.5 shrink-0" aria-hidden />
+                )}
+                {previewPhase === "loading" ? "Загрузка…" : "Прослушать демо"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 min-h-9 shrink-0 gap-1 rounded-lg px-2.5 text-[11px]"
+                title="Остановить демо"
+                disabled={previewPhase !== "playing"}
+                onClick={stopPreview}
+              >
+                <Square className="size-2.5 fill-current" aria-hidden />
+                Стоп
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </TooltipProvider>
   );
 }
