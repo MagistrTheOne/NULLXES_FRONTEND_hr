@@ -116,10 +116,9 @@ function ObserverSplitDashboard({ localUserId, candidateDisplayName, onParticipa
     const candidate =
       participants.find((participant) => participant.userId?.startsWith("candidate-")) ?? null;
     const agent =
-      participants.find(
-        (participant) =>
-          participant.userId?.startsWith("agent-") || participant.userId?.startsWith("agent_")
-      ) ?? null;
+      participants.find((participant) => participant.userId?.startsWith("agent-")) ??
+      participants.find((participant) => participant.userId?.startsWith("agent_")) ??
+      null;
     return { candidateParticipant: candidate, agentParticipant: agent };
   }, [participants]);
 
@@ -266,35 +265,9 @@ function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLa
   const state = useCallCallingState();
   const participants = useParticipants();
 
-  const orderedParticipants = useMemo(() => {
-    const candidate = participants.find((participant) => participant.userId?.startsWith("candidate-")) ?? null;
-    const agent =
-      participants.find(
-        (participant) =>
-          participant.userId?.startsWith("agent-") || participant.userId?.startsWith("agent_")
-      ) ?? null;
-    const byId = new Set<string>();
-    const ordered: typeof participants = [];
-    for (const participant of [candidate, agent]) {
-      if (!participant?.sessionId || byId.has(participant.sessionId)) {
-        continue;
-      }
-      byId.add(participant.sessionId);
-      ordered.push(participant);
-    }
-    for (const participant of participants) {
-      if (!participant.sessionId || participant.userId === localUserId || byId.has(participant.sessionId)) {
-        continue;
-      }
-      byId.add(participant.sessionId);
-      ordered.push(participant);
-    }
-    return ordered.slice(0, 4);
-  }, [localUserId, participants]);
-
   useEffect(() => {
-    onParticipantsDetected?.(orderedParticipants.length > 0);
-  }, [onParticipantsDetected, orderedParticipants.length]);
+    onParticipantsDetected?.(participants.some((p) => p.userId && p.userId !== localUserId));
+  }, [localUserId, onParticipantsDetected, participants]);
 
   if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
     return <div className="flex h-full items-center justify-center text-sm text-slate-600">Подключение наблюдателя…</div>;
@@ -304,10 +277,9 @@ function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLa
     const candidateParticipant =
       participants.find((participant) => participant.userId?.startsWith("candidate-")) ?? null;
     const agentParticipant =
-      participants.find(
-        (participant) =>
-          participant.userId?.startsWith("agent-") || participant.userId?.startsWith("agent_")
-      ) ?? null;
+      participants.find((participant) => participant.userId?.startsWith("agent-")) ??
+      participants.find((participant) => participant.userId?.startsWith("agent_")) ??
+      null;
     return (
       <div className="grid h-full min-h-0 w-full grid-cols-1 gap-4 p-1 sm:grid-cols-2 sm:gap-4">
         <StreamParticipantShell
@@ -342,9 +314,21 @@ function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLa
     );
   }
 
-  const candidate = orderedParticipants[0] ?? null;
-  const avatar = orderedParticipants[1] ?? null;
-  const extra = orderedParticipants.slice(2, 4);
+  const candidate = participants.find((participant) => participant.userId?.startsWith("candidate-")) ?? null;
+  const agent =
+    participants.find((participant) => participant.userId?.startsWith("agent-")) ??
+    participants.find((participant) => participant.userId?.startsWith("agent_")) ??
+    null;
+  const avatar = agent;
+  const extra = participants
+    .filter(
+      (participant) =>
+        participant.sessionId &&
+        participant.userId !== localUserId &&
+        participant.sessionId !== candidate?.sessionId &&
+        participant.sessionId !== agent?.sessionId
+    )
+    .slice(0, 2);
 
   return (
     <div className="grid h-full w-full grid-cols-1 gap-2 p-2 lg:grid-cols-3">
@@ -817,11 +801,12 @@ export function ObserverStreamCard({
           await withTimeout(
             // Observer is read-only and must never create ghost calls.
             // Join only existing call created by candidate/HR flow.
-            streamCall.join({ create: false, video: false }),
+            // audio: false — never publish microphone to SFU (candidate must not hear observer).
+            // JoinCallData in react-sdk typings omits `audio`; coordinator accepts it (@stream-io/video-client).
+            streamCall.join({ create: false, video: false, audio: false } as Parameters<typeof streamCall.join>[0]),
             OBSERVER_JOIN_TIMEOUT_MS,
             "Observer stream join timeout"
           );
-          // Audio-first fallback: observer must continue even if video negotiation is flaky.
           await streamCall.microphone.disable().catch(() => undefined);
           await streamCall.camera.disable().catch(() => undefined);
           setConnectionPhase("connected");
@@ -951,15 +936,17 @@ export function ObserverStreamCard({
   ]);
 
   useEffect(() => {
-    if (!call || !allowTalkToggle) {
-      return;
-    }
-    if (talkMode === "on") {
-      void call.microphone.enable().catch(() => undefined);
+    if (!call) {
       return;
     }
     void call.microphone.disable().catch(() => undefined);
-  }, [allowTalkToggle, call, talkMode]);
+  }, [call]);
+
+  useEffect(() => {
+    if (call && talkMode === "on") {
+      onTalkModeChange?.("off");
+    }
+  }, [call, onTalkModeChange, talkMode]);
 
   useEffect(() => {
     if ((status === "joining" || status === "waiting_meeting") && talkMode === "on") {
