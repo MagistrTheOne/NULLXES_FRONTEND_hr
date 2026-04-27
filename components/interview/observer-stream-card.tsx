@@ -52,6 +52,7 @@ const OBSERVER_JOIN_TIMEOUT_MS = 20_000;
 const OBSERVER_MAX_ATTEMPTS = 4;
 const OBSERVER_RETRY_BACKOFF_MS = 800;
 const OBSERVER_RECONNECT_LOCK_MS = 1_500;
+const OBSERVER_NO_PARTICIPANTS_GRACE_MS = 3_500;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -251,6 +252,7 @@ export function ObserverStreamCard({
   const [connectionPhase, setConnectionPhase] = useState<ObserverConnectionPhase>("connecting");
   const reconnectLockUntilRef = useRef(0);
   const connectInFlightRef = useRef(false);
+  const noParticipantsReconnectDoneRef = useRef<string | null>(null);
 
   const ended = Boolean(sessionEnded) || uiState === "completed";
   const canConnect =
@@ -684,7 +686,40 @@ export function ObserverStreamCard({
       return;
     }
     void disconnectStream();
+    noParticipantsReconnectDoneRef.current = null;
   }, [canConnect, disconnectStream]);
+
+  useEffect(() => {
+    if (!canConnect || !call || hasParticipants !== false || busy) {
+      return;
+    }
+    const reconnectKey = `${meetingId ?? "no-meeting"}:${streamCallType ?? "no-type"}:${streamCallId ?? "no-call"}`;
+    if (noParticipantsReconnectDoneRef.current === reconnectKey) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (noParticipantsReconnectDoneRef.current === reconnectKey) {
+        return;
+      }
+      noParticipantsReconnectDoneRef.current = reconnectKey;
+      void disconnectStream().then(() => {
+        // Allow one auto-rejoin attempt when call presence lags behind join.
+        autoJoinAttemptForRef.current = null;
+      });
+    }, OBSERVER_NO_PARTICIPANTS_GRACE_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [
+    busy,
+    call,
+    canConnect,
+    disconnectStream,
+    hasParticipants,
+    meetingId,
+    streamCallId,
+    streamCallType
+  ]);
 
   useEffect(() => {
     if (!call || !allowTalkToggle) {
