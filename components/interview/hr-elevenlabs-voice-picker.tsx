@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FilterX, Languages, Loader2, Mic2, RotateCw, Users, Volume2, X } from "lucide-react";
+import { FilterX, Languages, Loader2, Mic2, RotateCw, Square, Users, Volume2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,8 +16,12 @@ import { cn } from "@/lib/utils";
 
 type VoiceRow = { voiceId: string; name: string; labels?: Record<string, string> };
 
-/** Короткая демо-фраза для предпрослушивания TTS выбранного голоса (тот же прокси, что и в сессии). */
-const VOICE_PREVIEW_SAMPLE_TEXT = "Hello i am Digital Employee by NULLXES NICE TO MEET YOU";
+/**
+ * Короткая демо-фраза для предпрослушивания TTS выбранного голоса (тот же прокси, что и в сессии).
+ * Русский текст — чтобы превью совпадало с тем, как ассистент звучит для кандидата.
+ */
+const VOICE_PREVIEW_SAMPLE_TEXT =
+  "Привет! Я цифровой HR JobAI на базе NULLXES. Приятно познакомиться — расскажу о вакансии, компании и дальнейших шагах.";
 
 const LANG_OPTIONS: { id: string; label: string }[] = [
   { id: "any", label: "Все" },
@@ -79,25 +83,30 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
   const [voices, setVoices] = useState<VoiceRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [previewBusy, setPreviewBusy] = useState(false);
+  type PreviewPhase = "idle" | "loading" | "playing";
+  const [previewPhase, setPreviewPhase] = useState<PreviewPhase>("idle");
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewGenRef = useRef(0);
   const fetchSeqRef = useRef(0);
 
   const stopPreview = useCallback(() => {
+    previewGenRef.current += 1;
     const audio = previewAudioRef.current;
-    if (!audio) return;
-    try {
-      audio.pause();
-    } catch {
-      /* noop */
+    if (audio) {
+      try {
+        audio.pause();
+      } catch {
+        /* noop */
+      }
+      const src = audio.src;
+      if (src.startsWith("blob:")) {
+        URL.revokeObjectURL(src);
+      }
+      audio.removeAttribute("src");
+      audio.load();
+      previewAudioRef.current = null;
     }
-    const src = audio.src;
-    if (src.startsWith("blob:")) {
-      URL.revokeObjectURL(src);
-    }
-    audio.removeAttribute("src");
-    audio.load();
-    previewAudioRef.current = null;
+    setPreviewPhase("idle");
   }, []);
 
   const playPreview = useCallback(
@@ -105,7 +114,8 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
       const id = voiceId.trim();
       if (!id) return;
       stopPreview();
-      setPreviewBusy(true);
+      const gen = previewGenRef.current;
+      setPreviewPhase("loading");
       try {
         const res = await fetch("/api/tts/elevenlabs/stream", {
           method: "POST",
@@ -116,43 +126,60 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
             voiceId: id
           })
         });
+        if (previewGenRef.current !== gen) return;
         if (!res.ok) {
           if (res.status === 503) {
-            toast.error("TTS недоступен", { description: "На сервере не задан ELEVENLABS_API_KEY." });
+            toast.error("TTS недоступен", { description: "На сервере не задан ключ ElevenLabs." });
           } else {
             toast.error("Не удалось получить демо-аудио", { description: `HTTP ${res.status}` });
           }
+          setPreviewPhase("idle");
           return;
         }
         const blob = await res.blob();
+        if (previewGenRef.current !== gen) return;
         const url = URL.createObjectURL(blob);
         const audio = new Audio();
         previewAudioRef.current = audio;
         audio.src = url;
-        await new Promise<void>((resolve, reject) => {
-          const cleanup = () => {
-            URL.revokeObjectURL(url);
-            if (previewAudioRef.current === audio) {
-              previewAudioRef.current = null;
-            }
-          };
-          audio.onended = () => {
-            cleanup();
-            resolve();
-          };
-          audio.onerror = () => {
-            cleanup();
-            reject(new Error("preview_audio_error"));
-          };
-          void audio.play().catch((err) => {
-            cleanup();
-            reject(err instanceof Error ? err : new Error(String(err)));
-          });
-        });
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          if (previewAudioRef.current === audio) {
+            previewAudioRef.current = null;
+          }
+          if (previewGenRef.current === gen) {
+            setPreviewPhase("idle");
+          }
+        };
+        audio.onerror = () => {
+          URL.revokeObjectURL(url);
+          if (previewAudioRef.current === audio) {
+            previewAudioRef.current = null;
+          }
+          if (previewGenRef.current === gen) {
+            setPreviewPhase("idle");
+            toast.error("Не удалось воспроизвести демо");
+          }
+        };
+        await audio.play();
+        if (previewGenRef.current !== gen) {
+          try {
+            audio.pause();
+          } catch {
+            /* noop */
+          }
+          URL.revokeObjectURL(url);
+          if (previewAudioRef.current === audio) {
+            previewAudioRef.current = null;
+          }
+          return;
+        }
+        setPreviewPhase("playing");
       } catch {
-        toast.error("Не удалось воспроизвести демо");
-      } finally {
-        setPreviewBusy(false);
+        if (previewGenRef.current === gen) {
+          toast.error("Не удалось воспроизвести демо");
+          setPreviewPhase("idle");
+        }
       }
     },
     [stopPreview]
@@ -293,11 +320,27 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
               size="sm"
               className="h-10 min-h-10 flex-1 gap-1.5 rounded-xl px-3 text-[11px] shadow-sm sm:h-9 sm:min-h-9 sm:flex-initial"
               title={VOICE_PREVIEW_SAMPLE_TEXT}
-              disabled={previewBusy || !committedVoiceId.trim()}
+              disabled={previewPhase !== "idle" || !committedVoiceId.trim()}
               onClick={() => void playPreview(committedVoiceId)}
             >
-              {previewBusy ? <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden /> : <Volume2 className="size-3.5 shrink-0" aria-hidden />}
-              Демо
+              {previewPhase === "loading" ? (
+                <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+              ) : (
+                <Volume2 className="size-3.5 shrink-0" aria-hidden />
+              )}
+              {previewPhase === "loading" ? "Загрузка…" : "Демо"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-10 min-h-10 shrink-0 gap-1.5 rounded-xl px-3 text-[11px] shadow-sm sm:h-9 sm:min-h-9"
+              title="Остановить воспроизведение демо"
+              disabled={previewPhase !== "playing"}
+              onClick={stopPreview}
+            >
+              <Square className="size-3 fill-current" aria-hidden />
+              Стоп
             </Button>
             <Button
               type="button"
@@ -532,17 +575,34 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
               )}
             </SelectContent>
           </Select>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-10 min-h-10 w-full gap-2 rounded-xl border-sky-200/80 bg-sky-50/40 text-[11px] font-medium text-sky-950 hover:bg-sky-50/80 sm:h-9 sm:min-h-9"
-            title={VOICE_PREVIEW_SAMPLE_TEXT}
-            disabled={previewBusy || !draftVoiceId.trim()}
-            onClick={() => void playPreview(draftVoiceId)}
-          >
-            {previewBusy ? <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden /> : <Volume2 className="size-3.5 shrink-0" aria-hidden />}
-            Прослушать демо
-          </Button>
+          <div className="flex w-full gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 min-h-10 min-w-0 flex-1 gap-2 rounded-xl border-sky-200/80 bg-sky-50/40 text-[11px] font-medium text-sky-950 hover:bg-sky-50/80 sm:h-9 sm:min-h-9"
+              title={VOICE_PREVIEW_SAMPLE_TEXT}
+              disabled={previewPhase !== "idle" || !draftVoiceId.trim()}
+              onClick={() => void playPreview(draftVoiceId)}
+            >
+              {previewPhase === "loading" ? (
+                <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+              ) : (
+                <Volume2 className="size-3.5 shrink-0" aria-hidden />
+              )}
+              {previewPhase === "loading" ? "Загрузка…" : "Прослушать демо"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 min-h-10 shrink-0 gap-1.5 rounded-xl border-slate-200/90 px-3 text-[11px] font-medium sm:h-9 sm:min-h-9"
+              title="Остановить воспроизведение демо"
+              disabled={previewPhase !== "playing"}
+              onClick={stopPreview}
+            >
+              <Square className="size-3 fill-current" aria-hidden />
+              Стоп
+            </Button>
+          </div>
         </div>
       )}
     </div>
