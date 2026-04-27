@@ -144,6 +144,11 @@ function SpectatorBody() {
     const t = typeof raw === "string" ? raw.trim() : "";
     return t.length > 0 ? t : null;
   }, [searchParams]);
+  const spectatorViewerKey = useMemo(() => {
+    const raw = searchParams.get("viewerKey");
+    const t = typeof raw === "string" ? raw.trim() : "";
+    return t.length > 0 ? t : null;
+  }, [searchParams]);
   const [detail, setDetail] = useState<InterviewDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -294,10 +299,8 @@ function SpectatorBody() {
     typeof runtimeSnapshot?.media?.streamCallType === "string" ? runtimeSnapshot.media.streamCallType.trim() : "";
   const resolvedStreamCallId = runtimeStreamCallIdRaw || effectiveMeetingId || "";
   const resolvedStreamCallType = runtimeStreamCallTypeRaw || "default";
-  // Do not attempt observer Stream join until meeting is truly active.
-  // Early joins (meetingId exists but status is not active yet) often lead to
-  // racey "joined but no third participant in UI/account card" behaviour.
-  const canConnect = Boolean(effectiveMeetingId) && (projectionActive || runtimeActive);
+  // Frontend should not over-gate spectator connect. Backend validates meeting activity.
+  const canConnect = Boolean(effectiveMeetingId);
   const spectatorWaitingReason = useMemo(() => {
     if (!effectiveMeetingId) {
       return "Ожидаем назначение meetingId от runtime. Интервью ещё не перешло в активную фазу.";
@@ -536,6 +539,7 @@ function SpectatorBody() {
               waitingReason={spectatorWaitingReason}
               spectatorJoinToken={spectatorJoinToken}
               spectatorObserverTicket={spectatorObserverTicket}
+              spectatorViewerKey={spectatorViewerKey}
               onTalkModeChange={(nextTalkMode) => {
                 if (!jobAiId) {
                   return;

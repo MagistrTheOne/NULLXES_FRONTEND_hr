@@ -45,11 +45,13 @@ export type ObserverConnectionStatus =
   | "no_participants"
   | "error"
   | "idle_hidden";
+type ObserverConnectionPhase = "connecting" | "connected" | "reconnecting" | "failed";
 
 const OBSERVER_TOKEN_TIMEOUT_MS = 15_000;
 const OBSERVER_JOIN_TIMEOUT_MS = 20_000;
 const OBSERVER_MAX_ATTEMPTS = 4;
 const OBSERVER_RETRY_BACKOFF_MS = 800;
+const OBSERVER_RECONNECT_LOCK_MS = 1_500;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -196,6 +198,8 @@ type ObserverStreamCardProps = {
   spectatorJoinToken?: string | null;
   /** Одноразовый observer session ticket, выданный backend на join-шаге. */
   spectatorObserverTicket?: string | null;
+  /** Stable spectator key for reconnect identity (if available from URL/parent). */
+  spectatorViewerKey?: string | null;
   /** Компоновка в стиле "полотно сессии": кандидат слева, аватар справа. */
   sessionMirrorLayout?: boolean;
   /** Мини self-view наблюдателя (локальная камера/микрофон) поверх потока. */
@@ -223,6 +227,7 @@ export function ObserverStreamCard({
   uiState,
   spectatorJoinToken = null,
   spectatorObserverTicket = null,
+  spectatorViewerKey = null,
   sessionMirrorLayout = false,
   showSelfPreview = false,
   waitingReason = null
@@ -240,8 +245,12 @@ export function ObserverStreamCard({
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
   const selfPreviewVideoRef = useRef<HTMLVideoElement | null>(null);
   const autoJoinAttemptForRef = useRef<string | null>(null);
-  const sessionSuffixRef = useRef<string>(Math.random().toString(36).slice(2, 8));
   const connectEpochRef = useRef(0);
+  const [persistedViewerKey, setPersistedViewerKey] = useState<string | null>(null);
+  const [tabId, setTabId] = useState<string | null>(null);
+  const [connectionPhase, setConnectionPhase] = useState<ObserverConnectionPhase>("connecting");
+  const reconnectLockUntilRef = useRef(0);
+  const connectInFlightRef = useRef(false);
 
   const ended = Boolean(sessionEnded) || uiState === "completed";
   const canConnect =
@@ -299,13 +308,19 @@ export function ObserverStreamCard({
       return waitingReason ?? "Ждём конфигурацию Stream call от runtime.";
     }
     if (busy) {
+      if (connectionPhase === "reconnecting") {
+        return "Восстанавливаем подключение наблюдателя...";
+      }
       return "Подключаем наблюдателя к активной сессии...";
     }
     if (error) {
       return "Подключение не удалось. Повторите попытку.";
     }
+    if (connectionPhase === "connected") {
+      return "Наблюдатель подключен к активной сессии.";
+    }
     return "Наблюдатель подключен к активной сессии.";
-  }, [busy, enabled, ended, error, meetingId, streamCallId, streamCallType, waitingReason]);
+  }, [busy, connectionPhase, enabled, ended, error, meetingId, streamCallId, streamCallType, waitingReason]);
 
   useEffect(() => {
     onStatusChange?.(status);
@@ -408,6 +423,46 @@ export function ObserverStreamCard({
     });
   }, [selfCameraEnabled, selfMicEnabled, selfPreviewStream]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      setTabId(null);
+      return;
+    }
+    const storageKey = "nullxes:spectator:tabId";
+    const existing = window.sessionStorage.getItem(storageKey)?.trim() ?? "";
+    if (existing) {
+      setTabId(existing);
+      return;
+    }
+    const generated =
+      typeof window.crypto?.randomUUID === "function"
+        ? window.crypto.randomUUID()
+        : `tab-${Math.random().toString(36).slice(2, 12)}`;
+    window.sessionStorage.setItem(storageKey, generated);
+    setTabId(generated);
+  }, []);
+
+  useEffect(() => {
+    const explicitViewerKey = spectatorViewerKey?.trim();
+    if (explicitViewerKey) {
+      setPersistedViewerKey(explicitViewerKey);
+      return;
+    }
+    if (!meetingId || typeof window === "undefined") {
+      setPersistedViewerKey(null);
+      return;
+    }
+    const storageKey = `nullxes:spectator:viewerKey:${meetingId}`;
+    const existing = window.localStorage.getItem(storageKey)?.trim() ?? "";
+    if (existing) {
+      setPersistedViewerKey(existing);
+      return;
+    }
+    const generated = `viewer-${Math.random().toString(36).slice(2, 12)}`;
+    window.localStorage.setItem(storageKey, generated);
+    setPersistedViewerKey(generated);
+  }, [meetingId, spectatorViewerKey]);
+
   const refreshObserverTicket = useCallback(async (): Promise<string | null> => {
     const joinToken = spectatorJoinToken?.trim();
     if (!joinToken) {
@@ -445,8 +500,18 @@ export function ObserverStreamCard({
     if (!meetingId) {
       return;
     }
+    if (connectInFlightRef.current) {
+      return;
+    }
+    const now = Date.now();
+    if (reconnectLockUntilRef.current > now) {
+      return;
+    }
+    reconnectLockUntilRef.current = now + OBSERVER_RECONNECT_LOCK_MS;
+    connectInFlightRef.current = true;
     setBusy(true);
     setError(null);
+    setConnectionPhase(call ? "reconnecting" : "connecting");
     const epoch = ++connectEpochRef.current;
     // Runtime command is advisory; never block Stream join on it.
     void issueRuntimeCommand(meetingId, {
@@ -455,7 +520,6 @@ export function ObserverStreamCard({
       payload: { participantName }
     }).catch(() => undefined);
     try {
-      const observerUserId = `observer-${meetingId}-${sessionSuffixRef.current}`;
       let lastError: Error | null = null;
       let activeObserverTicket = spectatorObserverTicket?.trim() || null;
       let refreshedTicketOnce = false;
@@ -478,8 +542,10 @@ export function ObserverStreamCard({
                 meetingId,
                 callId: streamCallId,
                 callType: streamCallType,
-                userId: observerUserId,
                 userName: participantName,
+                ...(persistedViewerKey
+                  ? { viewerKey: tabId ? `${persistedViewerKey}:${tabId}` : persistedViewerKey }
+                  : {}),
                 ...(spectatorJoinToken ? { joinToken: spectatorJoinToken } : {}),
                 ...(activeObserverTicket ? { observerTicket: activeObserverTicket } : {})
               })
@@ -524,8 +590,10 @@ export function ObserverStreamCard({
             OBSERVER_JOIN_TIMEOUT_MS,
             "Observer stream join timeout"
           );
-          await streamCall.camera.disable().catch(() => undefined);
+          // Audio-first fallback: observer must continue even if video negotiation is flaky.
           await streamCall.microphone.disable().catch(() => undefined);
+          await streamCall.camera.disable().catch(() => undefined);
+          setConnectionPhase("connected");
 
           if (connectEpochRef.current !== epoch) {
             await streamCall.leave().catch(() => undefined);
@@ -551,6 +619,8 @@ export function ObserverStreamCard({
             lower.includes("abort") ||
             lower.includes("observer.ticket.refreshed_retry") ||
             lower.includes("meeting.not_active") ||
+            lower.includes("video") ||
+            lower.includes("media") ||
             lower.includes("сессия не активна");
           if (!transient || attempt >= OBSERVER_MAX_ATTEMPTS) {
             if (lower.includes("meeting.not_active") || lower.includes("сессия не активна")) {
@@ -572,10 +642,12 @@ export function ObserverStreamCard({
       }
       const msg = err instanceof Error ? err.message : "Failed to start observer stream";
       setError(msg);
+      setConnectionPhase("failed");
       toast.error("Видео наблюдателя", { description: msg });
       // Let auto-join attempt again on next render cycle after transient failures.
       autoJoinAttemptForRef.current = null;
     } finally {
+      connectInFlightRef.current = false;
       if (connectEpochRef.current === epoch) {
         setBusy(false);
       }
@@ -588,8 +660,11 @@ export function ObserverStreamCard({
     meetingId,
     participantName,
     refreshObserverTicket,
+    persistedViewerKey,
     spectatorJoinToken,
-    spectatorObserverTicket
+    spectatorObserverTicket,
+    tabId,
+    call
   ]);
 
   useEffect(() => {
