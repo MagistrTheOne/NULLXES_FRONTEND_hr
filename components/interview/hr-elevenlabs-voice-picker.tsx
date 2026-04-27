@@ -309,7 +309,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
     <TooltipProvider delay={400}>
       <div
         className={cn(
-          "flex min-w-0 flex-col gap-2 rounded-xl border border-sky-200/40 bg-gradient-to-br from-white via-white to-sky-50/40 p-2.5 text-xs text-slate-600 shadow-sm ring-1 ring-white/60",
+          "flex min-w-0 flex-col gap-2 rounded-xl border border-sky-200/40 bg-linear-to-br from-white via-white to-sky-50/40 p-2.5 text-xs text-slate-600 shadow-sm ring-1 ring-white/60",
           className
         )}
       >
@@ -317,7 +317,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
           <div className="flex min-w-0 flex-1 gap-2">
             <Tooltip>
               <TooltipTrigger
-                className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-sky-500 to-sky-600 text-white shadow-sm shadow-sky-500/20"
+                className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-sky-500 to-sky-600 text-white shadow-sm shadow-sky-500/20"
                 aria-label="Подсказка по выбору голоса"
               >
                 <Mic2 className="size-3.5" strokeWidth={2} aria-hidden />
@@ -328,10 +328,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
             </Tooltip>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[13px] font-semibold tracking-tight text-slate-800">Голос ассистента</span>
-                <Badge variant="secondary" className="h-5 px-1.5 text-[9px] font-semibold uppercase tracking-wide">
-                  ElevenLabs
-                </Badge>
+                <span className="text-[13px] font-semibold tracking-tight text-slate-800">JobAI Voice</span>
               </div>
               {!editing ? (
                 <p className="mt-0.5 line-clamp-1 text-[10px] leading-tight text-slate-500">
@@ -473,7 +470,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                                 <Badge
                                   key={`${v.voiceId}-${b.key}`}
                                   variant="outline"
-                                  className="inline-flex h-4 max-w-[4.5rem] shrink-0 truncate px-1 py-0 text-[9px] font-normal"
+                                  className="inline-flex h-4 max-w-18 shrink-0 truncate px-1 py-0 text-[9px] font-normal"
                                 >
                                   {b.text}
                                 </Badge>
@@ -585,11 +582,11 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
             ) : null}
 
             <Collapsible className="rounded-lg border border-slate-200/70 bg-slate-50/40 px-2 py-1.5">
-              <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 text-left text-[10px] font-medium text-slate-600 hover:text-slate-800 data-[panel-open]:[&>svg]:rotate-180">
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 text-left text-[10px] font-medium text-slate-600 hover:text-slate-800 data-panel-open:[&>svg]:rotate-180">
                 <span>Для поддержки (технический id)</span>
                 <ChevronDown className="size-3.5 shrink-0 transition-transform" aria-hidden />
               </CollapsibleTrigger>
-              <CollapsibleContent className="pt-2 data-[ending-style]:hidden">
+              <CollapsibleContent className="pt-2 data-ending-style:hidden">
                 <div className="flex items-start gap-2">
                   <p className="min-w-0 flex-1 break-all font-mono text-[10px] leading-snug text-slate-700">
                     {draftVoiceId.trim() || "—"}
