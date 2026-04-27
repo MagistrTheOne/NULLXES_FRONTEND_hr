@@ -37,6 +37,21 @@ function AvatarPlaceholder({ emphasize }: { emphasize?: boolean }) {
   );
 }
 
+function AvatarFallbackEmbed({ shareUrl }: { shareUrl: string }) {
+  return (
+    <div className="relative h-full w-full overflow-hidden bg-slate-200">
+      <iframe
+        src={shareUrl}
+        title="HR ассистент"
+        className="h-full w-full border-0"
+        allow="camera; microphone; autoplay; clipboard-write; encrypted-media; picture-in-picture"
+        referrerPolicy="strict-origin-when-cross-origin"
+      />
+      <div className="pointer-events-none absolute inset-0 ring-1 ring-black/5" />
+    </div>
+  );
+}
+
 type StreamTokenResponse = {
   apiKey: string;
   token: string;
@@ -156,10 +171,44 @@ export function AvatarStreamCard({
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
   const canRenderAvatarWindow = enabled && Boolean(client && call);
   const [busy, setBusy] = useState(false);
+  const [fallbackEnabled, setFallbackEnabled] = useState(false);
+  const [fallbackShareUrl, setFallbackShareUrl] = useState<string | null>(null);
   const ended = Boolean(sessionEnded) || uiState === "completed";
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
   const autoJoinAttemptForRef = useRef<string | null>(null);
   const callRoomId = meetingId ?? "unknown-meeting";
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadFallbackConfig = async () => {
+      const response = await fetch("/api/hr-avatar/fallback-config", {
+        method: "GET",
+        credentials: "include"
+      }).catch(() => null);
+      if (!response?.ok) {
+        if (!cancelled) {
+          setFallbackEnabled(false);
+          setFallbackShareUrl(null);
+        }
+        return;
+      }
+      const payload = (await response.json().catch(() => ({}))) as {
+        enabled?: unknown;
+        shareUrl?: unknown;
+      };
+      if (cancelled) {
+        return;
+      }
+      const enabled = payload.enabled === true;
+      const shareUrl = typeof payload.shareUrl === "string" ? payload.shareUrl.trim() : "";
+      setFallbackEnabled(enabled && shareUrl.length > 0);
+      setFallbackShareUrl(enabled && shareUrl.length > 0 ? shareUrl : null);
+    };
+    void loadFallbackConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const root = streamViewportRef.current;
@@ -398,7 +447,11 @@ export function AvatarStreamCard({
         // совпадает с финальным видео-аватаром и избавляет кандидата
         // от пустой серой заглушки.
         <div className="relative h-full w-full">
-          <AvatarPlaceholder emphasize={emphasizePrimary} />
+          {fallbackEnabled && fallbackShareUrl && enabled && meetingId ? (
+            <AvatarFallbackEmbed shareUrl={fallbackShareUrl} />
+          ) : (
+            <AvatarPlaceholder emphasize={emphasizePrimary} />
+          )}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 px-4 pb-3 text-center">
             {(busy || (enabled && meetingId && !call)) ? (
               <Loader2 className="h-5 w-5 shrink-0 animate-spin text-white/90" aria-hidden />
