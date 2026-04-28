@@ -131,6 +131,10 @@ export function InterviewShell() {
   const pathname = usePathname() || "/";
   /** URL flag for candidate-side polling / auto-start / lobby hints — layout is always the full 3-column operator UI. */
   const isCandidateFlow = useMemo(() => searchParams.get("entry") === "candidate", [searchParams]);
+  const isSpectatorFlow = useMemo(
+    () => searchParams.get("entry") === "spectator" || pathname.includes("/join/spectator/"),
+    [pathname, searchParams]
+  );
 
   const requestedInterviewId = useMemo(() => {
     const raw = searchParams.get("jobAiId");
@@ -353,10 +357,11 @@ export function InterviewShell() {
   const streamSurfaceEnabled =
     phase === "connected" && !completedInterviewLocked && Boolean(recoveredMeetingId && recoveredSessionId);
   const hasInterviewSelection = Boolean(selectedRow || selectedInterviewDetailMatched);
-  const canControlRecording = Boolean(!isCandidateFlow && recoveredMeetingId && selectedInterviewId);
+  const canControlRecording = Boolean(recoveredMeetingId && selectedInterviewId);
+  const recordingCanMutate = !isCandidateFlow && !isSpectatorFlow;
 
   const refreshRecording = useCallback(async () => {
-    if (!recoveredMeetingId || isCandidateFlow) {
+    if (!recoveredMeetingId) {
       setRecording(null);
       setRecordingError(null);
       return;
@@ -369,13 +374,17 @@ export function InterviewShell() {
       const message = error instanceof Error ? error.message : "Не удалось получить статус записи";
       setRecordingError(message);
     }
-  }, [isCandidateFlow, recoveredMeetingId]);
+  }, [recoveredMeetingId]);
 
   const runRecordingAction = useCallback(
     async (kind: "start" | "stop" | "sync" | "download"): Promise<void> => {
       if (!recoveredMeetingId || !selectedInterviewId) return;
       setRecordingBusy(kind);
       try {
+        if ((kind === "start" || kind === "stop" || kind === "sync") && !recordingCanMutate) {
+          toast.info("Только HR может управлять записью в этой сессии");
+          return;
+        }
         if (kind === "start") {
           const snapshot = await startMeetingRecording(recoveredMeetingId);
           setRecording(snapshot);
@@ -395,8 +404,12 @@ export function InterviewShell() {
           return;
         }
         const payload = await getMeetingRecordingDownload(recoveredMeetingId);
+        if ("ready" in payload && payload.ready === false) {
+          toast.info(payload.message ?? "Запись ещё обрабатывается");
+          return;
+        }
         if (!payload.asset.url) {
-          toast.error("Ссылка на скачивание пока не готова");
+          toast.info("Запись пока не готова к скачиванию");
           return;
         }
         window.open(payload.asset.url, "_blank", "noopener,noreferrer");
@@ -407,7 +420,7 @@ export function InterviewShell() {
         setRecordingBusy(null);
       }
     },
-    [recoveredMeetingId, selectedInterviewId]
+    [recoveredMeetingId, recordingCanMutate, selectedInterviewId]
   );
 
   useEffect(() => {
@@ -1116,7 +1129,7 @@ export function InterviewShell() {
         />
 
         </>
-        {!isCandidateFlow && recoveredMeetingId && selectedInterviewId ? (
+        {recoveredMeetingId && selectedInterviewId ? (
           <div className="rounded-xl border border-slate-200 bg-white/70 p-3 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm font-semibold text-slate-800">Запись собеседования</p>
@@ -1129,22 +1142,26 @@ export function InterviewShell() {
               </span>
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="h-9 rounded-lg border border-emerald-300 bg-emerald-600 px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => void runRecordingAction("start")}
-                disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
-              >
-                Начать запись
-              </button>
-              <button
-                type="button"
-                className="h-9 rounded-lg border border-amber-300 bg-amber-500 px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => void runRecordingAction("stop")}
-                disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
-              >
-                Остановить запись
-              </button>
+              {recordingCanMutate ? (
+                <>
+                  <button
+                    type="button"
+                    className="h-9 rounded-lg border border-emerald-300 bg-emerald-600 px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => void runRecordingAction("start")}
+                    disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
+                  >
+                    Начать запись
+                  </button>
+                  <button
+                    type="button"
+                    className="h-9 rounded-lg border border-amber-300 bg-amber-500 px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => void runRecordingAction("stop")}
+                    disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
+                  >
+                    Остановить запись
+                  </button>
+                </>
+              ) : null}
               <button
                 type="button"
                 className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1153,14 +1170,16 @@ export function InterviewShell() {
               >
                 Скачать запись
               </button>
-              <button
-                type="button"
-                className="h-9 rounded-lg border border-sky-300 bg-sky-50 px-3 text-xs font-semibold text-sky-900 disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => void runRecordingAction("sync")}
-                disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
-              >
-                Синхронизировать с JobAI
-              </button>
+              {recordingCanMutate ? (
+                <button
+                  type="button"
+                  className="h-9 rounded-lg border border-sky-300 bg-sky-50 px-3 text-xs font-semibold text-sky-900 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => void runRecordingAction("sync")}
+                  disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
+                >
+                  Синхронизировать с JobAI
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"

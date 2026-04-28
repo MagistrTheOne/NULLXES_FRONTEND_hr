@@ -546,8 +546,14 @@ export async function stopMeetingRecording(
 
 export async function getMeetingRecordingDownload(
   meetingId: string
-): Promise<{ state: string; callType: string; callId: string; asset: MeetingRecordingAsset }> {
-  return requestJson<{ state: string; callType: string; callId: string; asset: MeetingRecordingAsset }>(
+): Promise<
+  | { state: string; callType: string; callId: string; ready: false; message?: string }
+  | { state: string; callType: string; callId: string; asset: MeetingRecordingAsset }
+> {
+  return requestJson<
+    | { state: string; callType: string; callId: string; ready: false; message?: string }
+    | { state: string; callType: string; callId: string; asset: MeetingRecordingAsset }
+  >(
     `meetings/${encodeURIComponent(meetingId)}/recording/download`,
     { method: "GET" }
   );
