@@ -90,6 +90,18 @@ function isObserverTicketError(payload: StreamTokenErrorPayload): boolean {
   );
 }
 
+function normalizeObserverStreamError(message: string): string {
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("signaling ws channel error") ||
+    lower.includes("websocket") ||
+    lower.includes("sfuclientws")
+  ) {
+    return "SFU signaling временно недоступен (WS). Проверьте сеть/VPN/firewall и повторите подключение.";
+  }
+  return message;
+}
+
 type PipPosition = { x: number; y: number };
 
 function clampPipPosition(position: PipPosition, root: HTMLElement, pip: HTMLElement): PipPosition {
@@ -1172,10 +1184,12 @@ export function ObserverStreamCard({
       if (connectEpochRef.current !== epoch) {
         return;
       }
-      const msg = err instanceof Error ? err.message : "Failed to start observer stream";
+      const msgRaw = err instanceof Error ? err.message : "Failed to start observer stream";
+      const msg = normalizeObserverStreamError(msgRaw);
       setError(msg);
       setConnectionPhase("failed");
       toast.error("Видео наблюдателя", { description: msg });
+      pushEvent(`Ошибка подключения наблюдателя: ${msg}`);
       // Let auto-join attempt again on next render cycle after transient failures.
       autoJoinAttemptForRef.current = null;
     } finally {
@@ -1196,7 +1210,8 @@ export function ObserverStreamCard({
     spectatorJoinToken,
     spectatorObserverTicket,
     tabId,
-    call
+    call,
+    pushEvent
   ]);
 
   useEffect(() => {

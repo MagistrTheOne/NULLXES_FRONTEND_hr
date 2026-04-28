@@ -1168,19 +1168,19 @@ export function InterviewShell() {
                 <>
                   <button
                     type="button"
-                    className="h-9 rounded-lg border border-emerald-300 bg-emerald-600 px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    className="h-9 rounded-lg border border-emerald-300 bg-emerald-600 px-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => void runRecordingAction("start")}
                     disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
                   >
-                    Начать запись
+                    Старт
                   </button>
                   <button
                     type="button"
-                    className="h-9 rounded-lg border border-amber-300 bg-amber-500 px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    className="h-9 rounded-lg border border-amber-300 bg-amber-500 px-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => void runRecordingAction("stop")}
                     disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
                   >
-                    Остановить запись
+                    Стоп
                   </button>
                 </>
               ) : null}
