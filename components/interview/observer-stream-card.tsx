@@ -10,17 +10,38 @@ import {
   StreamVideoClient,
   useCallStateHooks
 } from "@stream-io/video-react-sdk";
-import { GripHorizontal, Loader2, Maximize2, Mic, MicOff, Pin, PinOff, RotateCcw, Video, VideoOff, Volume2, VolumeX } from "lucide-react";
+import {
+  BellOff,
+  Bookmark,
+  GripHorizontal,
+  Headphones,
+  Loader2,
+  Maximize2,
+  Mic,
+  MicOff,
+  Pin,
+  PinOff,
+  RotateCcw,
+  Video,
+  VideoOff,
+  Volume2,
+  VolumeX
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
 import { InterviewStatusBadge } from "@/components/interview/interview-status-badge";
 import { MicIndicator } from "@/components/interview/mic-indicator";
+import { ObserverBookmarkPanel } from "@/components/interview/observer-bookmark-panel";
+import { ObserverPresencePopover } from "@/components/interview/observer-presence-popover";
 import { issueRuntimeCommand } from "@/lib/api";
 import { mapVideoStatus, type VideoConnectionState } from "@/lib/interview-status";
 import type { SessionUIState } from "@/lib/session-ui-state";
 import { cn } from "@/lib/utils";
+import { useObserverBookmarks, type ObserverBookmarkSpeaker } from "@/hooks/use-observer-bookmarks";
+import { usePresenceLog } from "@/hooks/use-presence-log";
+import { useSilenceDetector } from "@/hooks/use-silence-detector";
 
 type StreamTokenResponse = {
   apiKey: string;
@@ -100,6 +121,8 @@ type ObserverCallBodyProps = {
   localUserId: string;
   onParticipantsDetected?: (hasParticipants: boolean) => void;
   sessionMirrorLayout?: boolean;
+  audioOnly?: boolean;
+  candidateVideoContainerRef?: { current: HTMLDivElement | null };
 };
 
 /** Две колонки как у кандидата: кандидат | HR (внутри одного StreamCall). */
@@ -107,9 +130,17 @@ type ObserverSplitDashboardProps = {
   localUserId: string;
   candidateDisplayName: string;
   onParticipantsDetected?: (hasParticipants: boolean) => void;
+  audioOnly?: boolean;
+  candidateVideoContainerRef?: { current: HTMLDivElement | null };
 };
 
-function ObserverSplitDashboard({ localUserId, candidateDisplayName, onParticipantsDetected }: ObserverSplitDashboardProps) {
+function ObserverSplitDashboard({
+  localUserId,
+  candidateDisplayName,
+  onParticipantsDetected,
+  audioOnly = false,
+  candidateVideoContainerRef
+}: ObserverSplitDashboardProps) {
   const { useCallCallingState, useParticipants } = useCallStateHooks();
   const state = useCallCallingState();
   const participants = useParticipants();
@@ -241,11 +272,20 @@ function ObserverSplitDashboard({ localUserId, candidateDisplayName, onParticipa
           </div>
         }
       >
-        {candidateParticipant ? (
-          <ParticipantView participant={candidateParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
-        ) : (
-          <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание кандидата</div>
-        )}
+        <div ref={candidateVideoContainerRef} className="h-full w-full">
+          {candidateParticipant ? (
+            audioOnly ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-slate-600">
+                <p>{candidateDisplayName}</p>
+                <Badge variant="secondary">{candidateParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
+              </div>
+            ) : (
+              <ParticipantView participant={candidateParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+            )
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание кандидата</div>
+          )}
+        </div>
       </StreamParticipantShell>
       <StreamParticipantShell
         title="HR аватар"
@@ -262,7 +302,14 @@ function ObserverSplitDashboard({ localUserId, candidateDisplayName, onParticipa
         }
       >
         {agentParticipant ? (
-          <ParticipantView participant={agentParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+          audioOnly ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-slate-600">
+              <p>HR ассистент</p>
+              <Badge variant="secondary">{agentParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
+            </div>
+          ) : (
+            <ParticipantView participant={agentParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+          )
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание HR аватара</div>
         )}
@@ -271,7 +318,13 @@ function ObserverSplitDashboard({ localUserId, candidateDisplayName, onParticipa
   );
 }
 
-function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLayout = false }: ObserverCallBodyProps) {
+function ObserverCallBody({
+  localUserId,
+  onParticipantsDetected,
+  sessionMirrorLayout = false,
+  audioOnly = false,
+  candidateVideoContainerRef
+}: ObserverCallBodyProps) {
   const { useCallCallingState, useParticipants } = useCallStateHooks();
   const state = useCallCallingState();
   const participants = useParticipants();
@@ -301,11 +354,20 @@ function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLa
             </div>
           }
         >
-          {candidateParticipant ? (
-            <ParticipantView participant={candidateParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
-          ) : (
-            <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание кандидата</div>
-          )}
+          <div ref={candidateVideoContainerRef} className="h-full w-full">
+            {candidateParticipant ? (
+              audioOnly ? (
+                <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-slate-600">
+                  <p>Кандидат</p>
+                  <Badge variant="secondary">{candidateParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
+                </div>
+              ) : (
+                <ParticipantView participant={candidateParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+              )
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание кандидата</div>
+            )}
+          </div>
         </StreamParticipantShell>
         <StreamParticipantShell
           title="HR аватар"
@@ -316,7 +378,14 @@ function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLa
           }
         >
           {agentParticipant ? (
-            <ParticipantView participant={agentParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+            audioOnly ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-slate-600">
+                <p>HR ассистент</p>
+                <Badge variant="secondary">{agentParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
+              </div>
+            ) : (
+              <ParticipantView participant={agentParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+            )
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание HR аватара</div>
           )}
@@ -344,16 +413,32 @@ function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLa
   return (
     <div className="grid h-full min-h-0 w-full grid-cols-1 gap-2 p-2 md:grid-cols-3 md:gap-3">
       <div className="overflow-hidden rounded-lg border border-white/20 bg-slate-900/50 md:col-span-2">
-        {candidate ? (
-          <ParticipantView participant={candidate} trackType="videoTrack" />
-        ) : (
-          <div className="flex h-full items-center justify-center text-sm text-slate-300">Ожидание кандидата</div>
-        )}
+        <div ref={candidateVideoContainerRef} className="h-full w-full">
+          {candidate ? (
+            audioOnly ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-slate-300">
+                <p>Кандидат</p>
+                <Badge variant="secondary">{candidate.isSpeaking ? "Говорит" : "Слушает"}</Badge>
+              </div>
+            ) : (
+              <ParticipantView participant={candidate} trackType="videoTrack" />
+            )
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-slate-300">Ожидание кандидата</div>
+          )}
+        </div>
       </div>
       <div className="grid gap-2 md:grid-rows-2">
         <div className="overflow-hidden rounded-lg border border-white/20 bg-slate-900/50">
           {avatar ? (
-            <ParticipantView participant={avatar} trackType="videoTrack" />
+            audioOnly ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-slate-300">
+                <p>HR ассистент</p>
+                <Badge variant="secondary">{avatar.isSpeaking ? "Говорит" : "Слушает"}</Badge>
+              </div>
+            ) : (
+              <ParticipantView participant={avatar} trackType="videoTrack" />
+            )
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-slate-300">Ожидание HR аватара</div>
           )}
@@ -361,13 +446,102 @@ function ObserverCallBody({ localUserId, onParticipantsDetected, sessionMirrorLa
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-1">
           {extra.map((participant) => (
             <div key={participant.sessionId} className="overflow-hidden rounded-lg border border-white/20 bg-slate-900/50">
-              <ParticipantView participant={participant} trackType="videoTrack" />
+              {audioOnly ? (
+                <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-slate-300">
+                  <p>{participant.name || participant.userId || "Участник"}</p>
+                  <Badge variant="secondary">{participant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
+                </div>
+              ) : (
+                <ParticipantView participant={participant} trackType="videoTrack" />
+              )}
             </div>
           ))}
         </div>
       </div>
     </div>
   );
+}
+
+type ObserverAnalyticsBridgeProps = {
+  localUserId: string;
+  enabled: boolean;
+  onJoinedWithRemote: () => void;
+  onPresenceEvent: (text: string) => void;
+  onSpeakerChange: (speaker: ObserverBookmarkSpeaker) => void;
+  onDominantSpeakerPresent: (present: boolean) => void;
+};
+
+function ObserverAnalyticsBridge({
+  localUserId,
+  enabled,
+  onJoinedWithRemote,
+  onPresenceEvent,
+  onSpeakerChange,
+  onDominantSpeakerPresent
+}: ObserverAnalyticsBridgeProps) {
+  const { useCallCallingState, useParticipants, useDominantSpeaker } = useCallStateHooks();
+  const state = useCallCallingState();
+  const participants = useParticipants();
+  const dominantSpeaker = useDominantSpeaker();
+  const prevParticipantIdsRef = useRef<Set<string>>(new Set());
+  const prevSpeakerRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const remoteParticipants = participants.filter((p) => p.userId && p.userId !== localUserId);
+    if (state === CallingState.JOINED && remoteParticipants.length > 0) {
+      onJoinedWithRemote();
+    }
+  }, [enabled, localUserId, onJoinedWithRemote, participants, state]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const current = new Set(
+      participants
+        .filter((item) => item.userId && item.userId !== localUserId)
+        .map((item) => item.userId as string)
+    );
+    const prev = prevParticipantIdsRef.current;
+    const joined = [...current].filter((id) => !prev.has(id));
+    const left = [...prev].filter((id) => !current.has(id));
+
+    joined.forEach((id) => {
+      if (id.startsWith("candidate-")) onPresenceEvent("Кандидат подключился");
+      else if (id.startsWith("agent-") || id.startsWith("agent_")) onPresenceEvent("HR агент подключился");
+    });
+    left.forEach((id) => {
+      if (id.startsWith("candidate-")) onPresenceEvent("Кандидат отключился");
+      else if (id.startsWith("agent-") || id.startsWith("agent_")) onPresenceEvent("HR агент отключился");
+    });
+    prevParticipantIdsRef.current = current;
+  }, [enabled, localUserId, onPresenceEvent, participants]);
+
+  useEffect(() => {
+    if (!enabled || state !== CallingState.JOINED) {
+      onDominantSpeakerPresent(false);
+      onSpeakerChange("unknown");
+      prevSpeakerRef.current = null;
+      return;
+    }
+    const hasDominant = Boolean(dominantSpeaker?.userId && dominantSpeaker.userId !== localUserId);
+    onDominantSpeakerPresent(hasDominant);
+    if (!hasDominant) return;
+    const speakerId = dominantSpeaker?.userId ?? "";
+    const speaker: ObserverBookmarkSpeaker =
+      speakerId.startsWith("candidate-")
+        ? "candidate"
+        : speakerId.startsWith("agent-") || speakerId.startsWith("agent_")
+          ? "agent"
+          : "unknown";
+    onSpeakerChange(speaker);
+    if (prevSpeakerRef.current !== speakerId) {
+      const label = speaker === "candidate" ? "Кандидат" : speaker === "agent" ? "HR агент" : "Неизвестно";
+      onPresenceEvent(`Активный спикер: ${label}`);
+      prevSpeakerRef.current = speakerId;
+    }
+  }, [dominantSpeaker, enabled, localUserId, onDominantSpeakerPresent, onPresenceEvent, onSpeakerChange, state]);
+
+  return null;
 }
 
 type ObserverStreamCardProps = {
@@ -458,9 +632,14 @@ export function ObserverStreamCard({
   const connectInFlightRef = useRef(false);
   const noParticipantsReconnectDoneRef = useRef<string | null>(null);
   const pipRef = useRef<HTMLDivElement | null>(null);
+  const candidateVideoContainerRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
   const [pipPosition, setPipPosition] = useState<PipPosition | null>(null);
   const [pipPinned, setPipPinned] = useState(true);
+  const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
+  const [currentSpeaker, setCurrentSpeaker] = useState<ObserverBookmarkSpeaker>("unknown");
+  const [dominantSpeakerPresent, setDominantSpeakerPresent] = useState(false);
+  const [bookmarksOpen, setBookmarksOpen] = useState(true);
 
   const ended = Boolean(sessionEnded) || uiState === "completed";
   const canConnect =
@@ -548,9 +727,62 @@ export function ObserverStreamCard({
     return "Не в эфире";
   }, [busy, call, connectionPhase, enabled, ended, error, meetingId, status]);
 
+  const silenceEnabledStorageKey = useMemo(
+    () => `nullxes:spectator:silence-enabled:${meetingId ?? "global"}`,
+    [meetingId]
+  );
+  const audioOnlyStorageKey = useMemo(
+    () => `nullxes:spectator:audio-only:${meetingId ?? "global"}`,
+    [meetingId]
+  );
+  const [silenceIndicatorEnabled, setSilenceIndicatorEnabled] = useState(true);
+  const [audioOnlyMode, setAudioOnlyMode] = useState(false);
+  const { events: presenceEvents, pushEvent } = usePresenceLog({ sessionStartedAt });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setSilenceIndicatorEnabled(window.localStorage.getItem(silenceEnabledStorageKey) !== "0");
+    setAudioOnlyMode(window.localStorage.getItem(audioOnlyStorageKey) === "1");
+  }, [audioOnlyStorageKey, silenceEnabledStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(silenceEnabledStorageKey, silenceIndicatorEnabled ? "1" : "0");
+  }, [silenceEnabledStorageKey, silenceIndicatorEnabled]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(audioOnlyStorageKey, audioOnlyMode ? "1" : "0");
+  }, [audioOnlyMode, audioOnlyStorageKey]);
+
+  const { silenceMs, isSilent } = useSilenceDetector({
+    enabled: silenceIndicatorEnabled && visible,
+    joined: Boolean(call),
+    hasDominantSpeaker: dominantSpeakerPresent
+  });
+
+  const bookmarks = useObserverBookmarks({
+    meetingId,
+    enabled: Boolean(visible && call && localUserId),
+    sessionStartedAt,
+    // Берём video кандидата из целевого контейнера; fallback нужен для legacy-раскладки.
+    resolveCandidateVideoElement: () =>
+      candidateVideoContainerRef.current?.querySelector("video") ??
+      (streamViewportRef.current?.querySelector("video") as HTMLVideoElement | null),
+    resolveSpeaker: () => currentSpeaker
+  });
+
   useEffect(() => {
     onStatusChange?.(status);
   }, [onStatusChange, status]);
+
+  useEffect(() => {
+    if (!call || ended) {
+      setSessionStartedAt(null);
+      setDominantSpeakerPresent(false);
+      setCurrentSpeaker("unknown");
+    }
+  }, [call, ended]);
 
   useEffect(() => {
     setPlaybackMuted(mutePlayback);
@@ -1067,6 +1299,9 @@ export function ObserverStreamCard({
       <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
         <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{participantName}</p>
         <div className="flex items-center gap-2">
+          {silenceIndicatorEnabled && isSilent ? (
+            <Badge className="animate-pulse bg-amber-100 text-amber-900">Тишина {Math.floor(silenceMs / 1000)}с</Badge>
+          ) : null}
           <InterviewStatusBadge status={videoStatusView} />
           <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
             <span className="mr-1 text-emerald-600" aria-hidden>
@@ -1078,6 +1313,37 @@ export function ObserverStreamCard({
       </div>
       {allowTalkToggle && visible ? <MicIndicator active={talkMode === "on" && Boolean(call)} /> : null}
       <div className="flex min-h-10 flex-wrap gap-2">
+        <Button
+          type="button"
+          variant={audioOnlyMode ? "secondary" : "outline"}
+          className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+          onClick={() => setAudioOnlyMode((prev) => !prev)}
+          title="Скрыть видео и оставить только аудио дорожки"
+        >
+          <Headphones className="mr-2 h-4 w-4" />
+          Только аудио
+        </Button>
+        <Button
+          type="button"
+          variant={silenceIndicatorEnabled ? "outline" : "secondary"}
+          className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+          onClick={() => setSilenceIndicatorEnabled((prev) => !prev)}
+          title="Вкл/выкл индикатор длительной тишины"
+        >
+          <BellOff className="mr-2 h-4 w-4" />
+          Тишина
+        </Button>
+        <ObserverPresencePopover events={presenceEvents} />
+        <Button
+          type="button"
+          variant={bookmarksOpen ? "secondary" : "outline"}
+          className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+          onClick={() => setBookmarksOpen((prev) => !prev)}
+          title="Открыть таймлайн заметок (M/N/S)"
+        >
+          <Bookmark className="mr-2 h-4 w-4" />
+          Метки
+        </Button>
         {allowVisibilityToggle ? (
           <Button
             type="button"
@@ -1309,14 +1575,39 @@ export function ObserverStreamCard({
               <StreamVideo client={client}>
                 <StreamTheme>
                   <StreamCall call={call}>
+                    <ObserverAnalyticsBridge
+                      localUserId={localUserId}
+                      enabled={Boolean(visible && call && localUserId)}
+                      onJoinedWithRemote={() => setSessionStartedAt((prev) => prev ?? Date.now())}
+                      onPresenceEvent={pushEvent}
+                      onSpeakerChange={setCurrentSpeaker}
+                      onDominantSpeakerPresent={setDominantSpeakerPresent}
+                    />
                     <ObserverSplitDashboard
                       localUserId={localUserId}
                       candidateDisplayName={resolvedCandidateDisplayName}
                       onParticipantsDetected={setHasParticipants}
+                      audioOnly={audioOnlyMode}
+                      candidateVideoContainerRef={candidateVideoContainerRef}
                     />
                   </StreamCall>
                 </StreamTheme>
               </StreamVideo>
+              {visible && call && localUserId ? (
+                <div className="absolute bottom-3 left-3 z-20 w-[min(360px,calc(100%-1.5rem))]">
+                  <ObserverBookmarkPanel
+                    open={bookmarksOpen}
+                    onOpenChange={setBookmarksOpen}
+                    bookmarks={bookmarks.bookmarks}
+                    loading={bookmarks.loading}
+                    inputFocusNonce={bookmarks.inputFocusNonce}
+                    onCreateBookmark={bookmarks.createBookmark}
+                    onDeleteBookmark={bookmarks.deleteBookmark}
+                    onUpdateBookmark={bookmarks.updateBookmark}
+                    onExport={bookmarks.exportBookmarks}
+                  />
+                </div>
+              ) : null}
               {selfPreviewPip}
             </div>
           ) : (
@@ -1401,14 +1692,39 @@ export function ObserverStreamCard({
           <StreamVideo client={client}>
             <StreamTheme>
               <StreamCall call={call}>
+                <ObserverAnalyticsBridge
+                  localUserId={localUserId}
+                  enabled={Boolean(visible && call && localUserId)}
+                  onJoinedWithRemote={() => setSessionStartedAt((prev) => prev ?? Date.now())}
+                  onPresenceEvent={pushEvent}
+                  onSpeakerChange={setCurrentSpeaker}
+                  onDominantSpeakerPresent={setDominantSpeakerPresent}
+                />
                 <ObserverCallBody
                   localUserId={localUserId}
                   onParticipantsDetected={setHasParticipants}
                   sessionMirrorLayout={showSingleFeedMode ? false : sessionMirrorLayout}
+                  audioOnly={audioOnlyMode}
+                  candidateVideoContainerRef={candidateVideoContainerRef}
                 />
               </StreamCall>
             </StreamTheme>
           </StreamVideo>
+          {visible && call && localUserId ? (
+            <div className="absolute bottom-3 left-3 z-20 w-[min(360px,calc(100%-1.5rem))]">
+              <ObserverBookmarkPanel
+                open={bookmarksOpen}
+                onOpenChange={setBookmarksOpen}
+                bookmarks={bookmarks.bookmarks}
+                loading={bookmarks.loading}
+                inputFocusNonce={bookmarks.inputFocusNonce}
+                onCreateBookmark={bookmarks.createBookmark}
+                onDeleteBookmark={bookmarks.deleteBookmark}
+                onUpdateBookmark={bookmarks.updateBookmark}
+                onExport={bookmarks.exportBookmarks}
+              />
+            </div>
+          ) : null}
           {selfPreviewPip}
         </div>
       ) : (

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Download, RefreshCw } from "lucide-react";
 import { useInterviewSession, type InterviewStartContext } from "@/hooks/use-interview-session";
 import {
   decideCandidateAdmission,
@@ -406,6 +407,10 @@ export function InterviewShell() {
         const payload = await getMeetingRecordingDownload(recoveredMeetingId);
         if ("ready" in payload && payload.ready === false) {
           toast.info(payload.message ?? "Запись ещё обрабатывается");
+          return;
+        }
+        if (!("asset" in payload)) {
+          toast.info("Запись пока не готова к скачиванию");
           return;
         }
         if (!payload.asset.url) {
@@ -1164,29 +1169,23 @@ export function InterviewShell() {
               ) : null}
               <button
                 type="button"
-                className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => void runRecordingAction("download")}
                 disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
+                title="Скачать запись"
+                aria-label="Скачать запись"
               >
-                Скачать запись
+                <Download className="h-4 w-4" />
               </button>
-              {recordingCanMutate ? (
-                <button
-                  type="button"
-                  className="h-9 rounded-lg border border-sky-300 bg-sky-50 px-3 text-xs font-semibold text-sky-900 disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={() => void runRecordingAction("sync")}
-                  disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
-                >
-                  Синхронизировать с JobAI
-                </button>
-              ) : null}
               <button
                 type="button"
-                className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => void refreshRecording()}
                 disabled={recordingBusy !== null || !recoveredMeetingId}
+                title="Обновить статус записи"
+                aria-label="Обновить статус записи"
               >
-                Обновить статус
+                <RefreshCw className="h-4 w-4" />
               </button>
             </div>
             {recordingError ? (
