@@ -106,11 +106,10 @@ function readString(source: unknown, key: string): string | undefined {
 }
 
 /** When true, agent speech uses ElevenLabs (text-only OpenAI responses + local playback). */
-function elevenLabsAgentReplacesOpenAiAudio(voiceId?: string): boolean {
+function elevenLabsAgentReplacesOpenAiAudio(_voiceId?: string): boolean {
+  void _voiceId; // сохраняем сигнатуру для обратной совместимости call-sites
   const mode = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT;
-  if (mode === "0") return false;
-  if (mode === "1") return true;
-  return Boolean(voiceId?.trim());
+  return mode === "1";
 }
 
 function openAiAgentResponseModalities(voiceId?: string): ("audio" | "text")[] {

@@ -1135,16 +1135,33 @@ export function InterviewShell() {
 
         </>
         {recoveredMeetingId && selectedInterviewId ? (
-          <div className="rounded-xl border border-slate-200 bg-white/70 p-3 shadow-sm">
+          <div className="rounded-xl border border-slate-200 bg-white/70 p-2.5 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm font-semibold text-slate-800">Запись собеседования</p>
-              <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-700">
-                {recording?.configured === false
-                  ? "Stream recording off"
-                  : recording?.state
-                    ? `Статус: ${recording.state}`
-                    : "Статус: —"}
-              </span>
+              <span
+                className={cn(
+                  "inline-block h-2.5 w-2.5 rounded-full ring-2 ring-white",
+                  recording?.configured === false
+                    ? "bg-slate-400"
+                    : recording?.state === "ready" || recording?.state === "recording"
+                      ? "bg-emerald-500"
+                      : recording?.state === "failed"
+                        ? "bg-rose-500"
+                        : recording?.state === "starting" || recording?.state === "stopping"
+                          ? "bg-amber-500"
+                          : "bg-slate-300"
+                )}
+                title={
+                  recording?.configured === false
+                    ? "Stream recording off"
+                    : `Recording state: ${recording?.state ?? "idle"}`
+                }
+                aria-label={
+                  recording?.configured === false
+                    ? "Stream recording off"
+                    : `Recording state: ${recording?.state ?? "idle"}`
+                }
+              />
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
               {recordingCanMutate ? (
@@ -1189,13 +1206,13 @@ export function InterviewShell() {
               </button>
             </div>
             {recordingError ? (
-              <p className="mt-2 text-xs text-rose-700">{recordingError}</p>
+              <p className="mt-1.5 text-xs text-rose-700">{recordingError}</p>
             ) : recording?.assets && recording.assets.length > 0 ? (
-              <p className="mt-2 text-xs text-slate-600">
+              <p className="mt-1.5 text-xs text-slate-600">
                 Доступно файлов: <span className="font-semibold">{recording.assets.length}</span>
               </p>
             ) : (
-              <p className="mt-2 text-xs text-slate-500">
+              <p className="mt-1.5 text-xs text-slate-500">
                 После остановки записи подождите обработку, затем используйте «Скачать запись».
               </p>
             )}
