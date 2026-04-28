@@ -488,6 +488,27 @@ export type MeetingListResponse = {
   meetings: MeetingListItem[];
 };
 
+export type MeetingRecordingAsset = {
+  id: string;
+  filename?: string;
+  url?: string;
+  sizeBytes?: number;
+  startedAt?: string;
+  endedAt?: string;
+  codec?: string;
+  container?: string;
+  trackType?: string;
+};
+
+export type MeetingRecordingSnapshot = {
+  configured: boolean;
+  state: "idle" | "starting" | "recording" | "stopping" | "stopped" | "ready" | "failed";
+  callType?: string;
+  callId: string;
+  activeRecordingId?: string;
+  assets?: MeetingRecordingAsset[];
+};
+
 export type RuntimeCommandType =
   | "agent.pause"
   | "agent.resume"
@@ -496,6 +517,58 @@ export type RuntimeCommandType =
   | "agent.end_interview"
   | "observer.reconnect"
   | "session.stop";
+
+export async function getMeetingRecording(meetingId: string): Promise<MeetingRecordingSnapshot> {
+  return requestJson<MeetingRecordingSnapshot>(`meetings/${encodeURIComponent(meetingId)}/recording`, {
+    method: "GET"
+  });
+}
+
+export async function startMeetingRecording(
+  meetingId: string,
+  input?: { callType?: string; callId?: string }
+): Promise<MeetingRecordingSnapshot> {
+  return requestJson<MeetingRecordingSnapshot>(`meetings/${encodeURIComponent(meetingId)}/recording/start`, {
+    method: "POST",
+    body: JSON.stringify(input ?? {})
+  });
+}
+
+export async function stopMeetingRecording(
+  meetingId: string,
+  input?: { callType?: string; callId?: string }
+): Promise<MeetingRecordingSnapshot> {
+  return requestJson<MeetingRecordingSnapshot>(`meetings/${encodeURIComponent(meetingId)}/recording/stop`, {
+    method: "POST",
+    body: JSON.stringify(input ?? {})
+  });
+}
+
+export async function getMeetingRecordingDownload(
+  meetingId: string
+): Promise<{ state: string; callType: string; callId: string; asset: MeetingRecordingAsset }> {
+  return requestJson<{ state: string; callType: string; callId: string; asset: MeetingRecordingAsset }>(
+    `meetings/${encodeURIComponent(meetingId)}/recording/download`,
+    { method: "GET" }
+  );
+}
+
+export async function syncMeetingRecordingToJobAi(
+  meetingId: string,
+  jobAiId: number,
+  input?: { callType?: string; callId?: string }
+): Promise<{ ok: true; projection: Record<string, unknown>; snapshot: MeetingRecordingSnapshot }> {
+  return requestJson<{ ok: true; projection: Record<string, unknown>; snapshot: MeetingRecordingSnapshot }>(
+    `meetings/${encodeURIComponent(meetingId)}/recording/sync-jobai`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        jobAiId,
+        ...input
+      })
+    }
+  );
+}
 
 export type RuntimeSnapshot = {
   schemaVersion: "1.0";

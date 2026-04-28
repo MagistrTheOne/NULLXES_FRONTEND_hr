@@ -5,10 +5,16 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useInterviewSession, type InterviewStartContext } from "@/hooks/use-interview-session";
 import {
   decideCandidateAdmission,
+  getMeetingRecording,
+  getMeetingRecordingDownload,
   getCandidateAdmissionStatus,
   getInterviewById,
   issueCandidateJoinLink,
   listInterviews,
+  startMeetingRecording,
+  stopMeetingRecording,
+  syncMeetingRecordingToJobAi,
+  type MeetingRecordingSnapshot,
   type CandidateAdmissionStatus,
   type InterviewDetail,
   type InterviewListRow,
@@ -177,6 +183,9 @@ export function InterviewShell() {
   const [loadingRows, setLoadingRows] = useState(false);
   const [rowsError, setRowsError] = useState<string | null>(null);
   const [rowsWarning, setRowsWarning] = useState<string | null>(null);
+  const [recording, setRecording] = useState<MeetingRecordingSnapshot | null>(null);
+  const [recordingBusy, setRecordingBusy] = useState<"start" | "stop" | "sync" | "download" | null>(null);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [observerControl, setObserverControl] = useState<ObserverControlState>(DEFAULT_OBSERVER_CONTROL);
   const [candidateAdmission, setCandidateAdmission] = useState<CandidateAdmissionStatus | null>(null);
@@ -344,6 +353,73 @@ export function InterviewShell() {
   const streamSurfaceEnabled =
     phase === "connected" && !completedInterviewLocked && Boolean(recoveredMeetingId && recoveredSessionId);
   const hasInterviewSelection = Boolean(selectedRow || selectedInterviewDetailMatched);
+  const canControlRecording = Boolean(!isCandidateFlow && recoveredMeetingId && selectedInterviewId);
+
+  const refreshRecording = useCallback(async () => {
+    if (!recoveredMeetingId || isCandidateFlow) {
+      setRecording(null);
+      setRecordingError(null);
+      return;
+    }
+    try {
+      const snapshot = await getMeetingRecording(recoveredMeetingId);
+      setRecording(snapshot);
+      setRecordingError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось получить статус записи";
+      setRecordingError(message);
+    }
+  }, [isCandidateFlow, recoveredMeetingId]);
+
+  const runRecordingAction = useCallback(
+    async (kind: "start" | "stop" | "sync" | "download"): Promise<void> => {
+      if (!recoveredMeetingId || !selectedInterviewId) return;
+      setRecordingBusy(kind);
+      try {
+        if (kind === "start") {
+          const snapshot = await startMeetingRecording(recoveredMeetingId);
+          setRecording(snapshot);
+          toast.success("Запись включена");
+          return;
+        }
+        if (kind === "stop") {
+          const snapshot = await stopMeetingRecording(recoveredMeetingId);
+          setRecording(snapshot);
+          toast.success("Запись остановлена");
+          return;
+        }
+        if (kind === "sync") {
+          const result = await syncMeetingRecordingToJobAi(recoveredMeetingId, selectedInterviewId);
+          setRecording(result.snapshot);
+          toast.success("Запись синхронизирована с JobAI backend");
+          return;
+        }
+        const payload = await getMeetingRecordingDownload(recoveredMeetingId);
+        if (!payload.asset.url) {
+          toast.error("Ссылка на скачивание пока не готова");
+          return;
+        }
+        window.open(payload.asset.url, "_blank", "noopener,noreferrer");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Ошибка работы с записью";
+        toast.error("Операция с записью не выполнена", { description: message });
+      } finally {
+        setRecordingBusy(null);
+      }
+    },
+    [recoveredMeetingId, selectedInterviewId]
+  );
+
+  useEffect(() => {
+    if (!canControlRecording) {
+      return;
+    }
+    void refreshRecording();
+    const timer = window.setInterval(() => {
+      void refreshRecording();
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [canControlRecording, refreshRecording]);
 
   useEffect(() => {
     if (!streamSurfaceEnabled) {
@@ -1040,6 +1116,73 @@ export function InterviewShell() {
         />
 
         </>
+        {!isCandidateFlow && recoveredMeetingId && selectedInterviewId ? (
+          <div className="rounded-xl border border-slate-200 bg-white/70 p-3 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-slate-800">Запись собеседования</p>
+              <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-700">
+                {recording?.configured === false
+                  ? "Stream recording off"
+                  : recording?.state
+                    ? `Статус: ${recording.state}`
+                    : "Статус: —"}
+              </span>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="h-9 rounded-lg border border-emerald-300 bg-emerald-600 px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => void runRecordingAction("start")}
+                disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
+              >
+                Начать запись
+              </button>
+              <button
+                type="button"
+                className="h-9 rounded-lg border border-amber-300 bg-amber-500 px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => void runRecordingAction("stop")}
+                disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
+              >
+                Остановить запись
+              </button>
+              <button
+                type="button"
+                className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => void runRecordingAction("download")}
+                disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
+              >
+                Скачать запись
+              </button>
+              <button
+                type="button"
+                className="h-9 rounded-lg border border-sky-300 bg-sky-50 px-3 text-xs font-semibold text-sky-900 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => void runRecordingAction("sync")}
+                disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
+              >
+                Синхронизировать с JobAI
+              </button>
+              <button
+                type="button"
+                className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => void refreshRecording()}
+                disabled={recordingBusy !== null || !recoveredMeetingId}
+              >
+                Обновить статус
+              </button>
+            </div>
+            {recordingError ? (
+              <p className="mt-2 text-xs text-rose-700">{recordingError}</p>
+            ) : recording?.assets && recording.assets.length > 0 ? (
+              <p className="mt-2 text-xs text-slate-600">
+                Доступно файлов: <span className="font-semibold">{recording.assets.length}</span>
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-slate-500">
+                После остановки записи подождите обработку, затем используйте «Скачать запись».
+              </p>
+            )}
+          </div>
+        ) : null}
         {error ? (
           <p className="rounded-xl bg-rose-100 px-4 py-2 text-sm text-rose-700 shadow-sm">{error}</p>
         ) : null}
@@ -1274,7 +1417,13 @@ export function InterviewShell() {
               void stop(typeof jid === "number" ? { interviewId: jid } : undefined);
             }}
             onTogglePauseAI={() => {
-              void (agentPaused ? resumeAgent() : pauseAgent());
+              void (agentPaused ? resumeAgent() : pauseAgent()).then((ok) => {
+                if (!ok) {
+                  toast.error("Команда боту не выполнена", {
+                    description: "Проверьте состояние сессии и попробуйте снова."
+                  });
+                }
+              });
             }}
             pauseAIDisabled={busy || phase !== "connected"}
             aiPaused={agentPaused}

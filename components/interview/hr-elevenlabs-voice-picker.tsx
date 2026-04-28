@@ -87,6 +87,7 @@ function isAbortError(e: unknown): boolean {
 }
 
 export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }: Props) {
+  const elevenLabsOutputEnabled = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT === "1";
   const [editing, setEditing] = useState(false);
   const [draftVoiceId, setDraftVoiceId] = useState(committedVoiceId);
   const [search, setSearch] = useState("");
@@ -339,6 +340,12 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                   Поиск в одном поле → демо → «Сохранить».
                 </p>
               )}
+              {!elevenLabsOutputEnabled ? (
+                <p className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] leading-snug text-amber-900">
+                  Внимание: сейчас включен стандартный аудио-режим. Выбранный голос применится, когда
+                  `NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT=1`.
+                </p>
+              ) : null}
             </div>
           </div>
           {!editing ? (
@@ -408,6 +415,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                   if (!next) return;
                   stopPreview();
                   onSave(next);
+                  toast.success("Голос сохранён", { description: "Следующие ответы ассистента будут с новым тембром." });
                   setEditing(false);
                   resetFiltersAndSearch();
                 }}

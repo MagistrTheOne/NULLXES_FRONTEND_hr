@@ -389,6 +389,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   }, []);
   const [sessionElevenLabsVoiceId, setSessionElevenLabsVoiceId] = useState(() => getDefaultElevenLabsVoiceId());
   const sessionElevenLabsVoiceIdRef = useRef(sessionElevenLabsVoiceId);
+  const lastReportedVoiceIdRef = useRef<string | null>(null);
   const elevenLabsUtteranceAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -424,6 +425,27 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       /* noop */
     }
   }, [sessionElevenLabsVoiceId]);
+
+  useEffect(() => {
+    const voiceId = sessionElevenLabsVoiceId.trim();
+    if (!voiceId) {
+      return;
+    }
+    if (lastReportedVoiceIdRef.current === voiceId) {
+      return;
+    }
+    const activeSessionId = activeSessionIdRef.current;
+    if (!activeSessionId || phase !== "connected") {
+      return;
+    }
+    lastReportedVoiceIdRef.current = voiceId;
+    void sendRealtimeEvent(activeSessionId, {
+      type: "hr.voice.changed",
+      source: "jobaidemo",
+      meetingId: meetingId ?? undefined,
+      voiceId
+    }).catch(() => undefined);
+  }, [meetingId, phase, sessionElevenLabsVoiceId]);
 
   const rtcRef = useRef<WebRtcInterviewClient | null>(null);
   const reconnectAttemptForSessionRef = useRef<string | null>(null);
@@ -838,12 +860,12 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
 
   const pauseAgent = useCallback(async () => {
     if (phase !== "connected") {
-      return;
+      return false;
     }
     const rtc = ensureClient();
     const activeSessionId = rtc.getSessionId();
     if (!activeSessionId) {
-      return;
+      return false;
     }
 
     setAgentPaused(true);
@@ -876,22 +898,26 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       paused: true
     }).catch(() => undefined);
     if (meetingId) {
-      await issueRuntimeCommand(meetingId, {
+      const result = await issueRuntimeCommand(meetingId, {
         type: "agent.pause",
         issuedBy: "hr_ui",
         payload: { sessionId: activeSessionId }
       }).catch(() => undefined);
+      if (!result) {
+        toast.error("Не удалось отправить команду паузы бота");
+      }
     }
+    return true;
   }, [ensureClient, meetingId, phase]);
 
   const resumeAgent = useCallback(async () => {
     if (phase !== "connected") {
-      return;
+      return false;
     }
     const rtc = ensureClient();
     const activeSessionId = rtc.getSessionId();
     if (!activeSessionId) {
-      return;
+      return false;
     }
 
     setAgentPaused(false);
@@ -926,12 +952,16 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       paused: false
     }).catch(() => undefined);
     if (meetingId) {
-      await issueRuntimeCommand(meetingId, {
+      const result = await issueRuntimeCommand(meetingId, {
         type: "agent.resume",
         issuedBy: "hr_ui",
         payload: { sessionId: activeSessionId }
       }).catch(() => undefined);
+      if (!result) {
+        toast.error("Не удалось отправить команду возобновления бота");
+      }
     }
+    return true;
   }, [ensureClient, meetingId, phase]);
 
   useEffect(() => {
