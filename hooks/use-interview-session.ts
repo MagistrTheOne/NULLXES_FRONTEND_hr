@@ -106,12 +106,15 @@ function readString(source: unknown, key: string): string | undefined {
 }
 
 /** When true, agent speech uses ElevenLabs (text-only OpenAI responses + local playback). */
-function elevenLabsAgentReplacesOpenAiAudio(): boolean {
-  return process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT === "1";
+function elevenLabsAgentReplacesOpenAiAudio(voiceId?: string): boolean {
+  const mode = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT;
+  if (mode === "0") return false;
+  if (mode === "1") return true;
+  return Boolean(voiceId?.trim());
 }
 
-function openAiAgentResponseModalities(): ("audio" | "text")[] {
-  return elevenLabsAgentReplacesOpenAiAudio() ? ["text"] : ["audio", "text"];
+function openAiAgentResponseModalities(voiceId?: string): ("audio" | "text")[] {
+  return elevenLabsAgentReplacesOpenAiAudio(voiceId) ? ["text"] : ["audio", "text"];
 }
 
 function isIgnorableStatusTransitionError(error: unknown): boolean {
@@ -229,6 +232,7 @@ async function postIntroResponseToRtc(
   effectiveContext: InterviewStartContext | undefined,
   mode: IntroMode = "first",
   runtimePromptSettings?: RuntimePromptSettings,
+  selectedVoiceId?: string,
   gateOptions?: {
     getSessionUpdatedVersion: () => number;
     waitForSessionUpdatedAck: (previousVersion: number, timeoutMs: number) => Promise<boolean>;
@@ -307,7 +311,7 @@ async function postIntroResponseToRtc(
   await rtc.postEvent({
     type: "response.create",
     response: {
-      modalities: openAiAgentResponseModalities(),
+      modalities: openAiAgentResponseModalities(selectedVoiceId),
       instructions: [
         ...baseInstructions,
         "",
@@ -594,14 +598,14 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       lastResponseIdRef.current = respId;
       setAgentState("thinking");
       setFlowPhase((prev) => (prev === "lobby" ? "intro" : prev));
-      if (elevenLabsAgentReplacesOpenAiAudio()) {
+      if (elevenLabsAgentReplacesOpenAiAudio(sessionElevenLabsVoiceIdRef.current)) {
         elevenLabsUtteranceAbortRef.current?.abort();
         elevenLabsUtteranceAbortRef.current = new AbortController();
       }
       return;
     }
 
-    if (elevenLabsAgentReplacesOpenAiAudio()) {
+    if (elevenLabsAgentReplacesOpenAiAudio(sessionElevenLabsVoiceIdRef.current)) {
       if (type === "response.output_text.delta" || type === "response.text.delta") {
         const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
         const delta = readString(payload, "delta") ?? "";
@@ -651,7 +655,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       }
     }
 
-    if (!elevenLabsAgentReplacesOpenAiAudio()) {
+    if (!elevenLabsAgentReplacesOpenAiAudio(sessionElevenLabsVoiceIdRef.current)) {
       if (type === "response.output_audio.delta" || type === "response.audio.delta") {
         setAgentState((prev) => (prev === "thinking" ? "speaking" : prev === "idle" ? "speaking" : prev));
         return;
@@ -938,7 +942,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       await rtc.postEvent({
         type: "response.create",
         response: {
-          modalities: openAiAgentResponseModalities(),
+          modalities: openAiAgentResponseModalities(sessionElevenLabsVoiceIdRef.current),
           instructions: "Продолжи интервью с текущего места и задай следующий уместный вопрос."
         }
       });
@@ -1119,10 +1123,17 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
                       triggerSource: "webrtc_restore"
                     })
                   );
-                  await postIntroResponseToRtc(rtc, effectiveContext, "reconnect", effectivePromptSettings, {
+                  await postIntroResponseToRtc(
+                    rtc,
+                    effectiveContext,
+                    "reconnect",
+                    effectivePromptSettings,
+                    sessionElevenLabsVoiceIdRef.current,
+                    {
                     getSessionUpdatedVersion,
                     waitForSessionUpdatedAck
-                  });
+                    }
+                  );
                 }
               }
             } catch (introErr) {
@@ -1369,10 +1380,17 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           triggerSource
         })
       );
-      await postIntroResponseToRtc(rtc, effectiveContext, "first", effectivePromptSettings, {
+      await postIntroResponseToRtc(
+        rtc,
+        effectiveContext,
+        "first",
+        effectivePromptSettings,
+        sessionElevenLabsVoiceIdRef.current,
+        {
         getSessionUpdatedVersion,
         waitForSessionUpdatedAck
-      });
+        }
+      );
 
       setPhase("connected");
       setRuntimeRecoveryState("idle");

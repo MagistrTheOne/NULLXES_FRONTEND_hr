@@ -87,7 +87,6 @@ function isAbortError(e: unknown): boolean {
 }
 
 export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }: Props) {
-  const elevenLabsOutputEnabled = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT === "1";
   const [editing, setEditing] = useState(false);
   const [draftVoiceId, setDraftVoiceId] = useState(committedVoiceId);
   const [search, setSearch] = useState("");
@@ -340,52 +339,18 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                   Поиск в одном поле → демо → «Сохранить».
                 </p>
               )}
-              {!elevenLabsOutputEnabled ? (
-                <p className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] leading-snug text-amber-900">
-                  Внимание: сейчас включен стандартный аудио-режим. Выбранный голос применится, когда
-                  `NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT=1`.
-                </p>
-              ) : null}
             </div>
           </div>
           {!editing ? (
             <div className="flex w-full shrink-0 gap-1.5 sm:ml-auto sm:w-auto">
               <Button
                 type="button"
-                variant="secondary"
-                size="sm"
-                className="h-9 min-h-9 flex-1 gap-1 rounded-lg px-2.5 text-[11px] sm:flex-initial"
-                title={VOICE_PREVIEW_SAMPLE_TEXT}
-                disabled={previewPhase !== "idle" || !committedVoiceId.trim()}
-                onClick={() => void playPreview(committedVoiceId)}
-              >
-                {previewPhase === "loading" ? (
-                  <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
-                ) : (
-                  <Volume2 className="size-3.5 shrink-0" aria-hidden />
-                )}
-                {previewPhase === "loading" ? "…" : "Демо"}
-              </Button>
-              <Button
-                type="button"
                 variant="outline"
-                size="sm"
-                className="h-9 min-h-9 shrink-0 gap-1 rounded-lg px-2.5 text-[11px]"
-                title="Остановить демо"
-                disabled={previewPhase !== "playing"}
-                onClick={stopPreview}
-              >
-                <Square className="size-2.5 fill-current" aria-hidden />
-                Стоп
-              </Button>
-              <Button
-                type="button"
-                variant="default"
                 size="sm"
                 className="h-9 min-h-9 flex-1 rounded-lg px-2.5 text-[11px] sm:flex-initial"
                 onClick={() => setEditing(true)}
               >
-                Изменить
+                Выбрать голос
               </Button>
             </div>
           ) : (
