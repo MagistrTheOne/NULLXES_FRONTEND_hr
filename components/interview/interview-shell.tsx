@@ -1520,6 +1520,17 @@ export function InterviewShell() {
             </button>
           </div>
         ) : null}
+        {isSpectatorFlow ? (
+          <div className="mt-3 flex w-full justify-center">
+            <button
+              type="button"
+              onClick={() => router.push("/")}
+              className="min-h-11 rounded-xl bg-[#d9dee7] px-7 py-3 text-base text-slate-600 shadow-[-6px_-6px_12px_rgba(255,255,255,.85),6px_6px_12px_rgba(163,177,198,.5)] hover:bg-[#d5dbe4] sm:min-h-10 sm:px-6 sm:py-2 sm:text-sm"
+            >
+              Выйти в главное меню
+            </button>
+          </div>
+        ) : null}
           </>
         )}
         {isCandidateFlow ? null : (

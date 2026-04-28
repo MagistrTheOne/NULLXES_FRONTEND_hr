@@ -10,7 +10,7 @@ import {
   StreamVideoClient,
   useCallStateHooks
 } from "@stream-io/video-react-sdk";
-import { Loader2, Maximize2, Mic, MicOff, RotateCcw, Video, VideoOff, Volume2, VolumeX } from "lucide-react";
+import { GripHorizontal, Loader2, Maximize2, Mic, MicOff, Pin, PinOff, RotateCcw, Video, VideoOff, Volume2, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -67,6 +67,17 @@ function isObserverTicketError(payload: StreamTokenErrorPayload): boolean {
     code === "observer_ticket_expired" ||
     code === "observer_ticket_consumed"
   );
+}
+
+type PipPosition = { x: number; y: number };
+
+function clampPipPosition(position: PipPosition, root: HTMLElement, pip: HTMLElement): PipPosition {
+  const maxX = Math.max(8, root.clientWidth - pip.offsetWidth - 8);
+  const maxY = Math.max(8, root.clientHeight - pip.offsetHeight - 8);
+  return {
+    x: Math.min(Math.max(8, position.x), maxX),
+    y: Math.min(Math.max(8, position.y), maxY)
+  };
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -446,6 +457,10 @@ export function ObserverStreamCard({
   const reconnectLockUntilRef = useRef(0);
   const connectInFlightRef = useRef(false);
   const noParticipantsReconnectDoneRef = useRef<string | null>(null);
+  const pipRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
+  const [pipPosition, setPipPosition] = useState<PipPosition | null>(null);
+  const [pipPinned, setPipPinned] = useState(true);
 
   const ended = Boolean(sessionEnded) || uiState === "completed";
   const canConnect =
@@ -678,6 +693,74 @@ export function ObserverStreamCard({
     window.localStorage.setItem(storageKey, generated);
     setPersistedViewerKey(generated);
   }, [meetingId, spectatorViewerKey]);
+
+  const pipStorageKey = useMemo(() => {
+    const id = meetingId?.trim() || "global";
+    const layout = spectatorDashboardLayout ? "dashboard" : "card";
+    return `nullxes:spectator:pip:${layout}:${id}`;
+  }, [meetingId, spectatorDashboardLayout]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(pipStorageKey);
+    if (!raw) {
+      setPipPinned(true);
+      setPipPosition(null);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw) as { pinned?: boolean; x?: number; y?: number };
+      setPipPinned(parsed.pinned !== false);
+      if (typeof parsed.x === "number" && typeof parsed.y === "number") {
+        setPipPosition({ x: parsed.x, y: parsed.y });
+      } else {
+        setPipPosition(null);
+      }
+    } catch {
+      setPipPinned(true);
+      setPipPosition(null);
+    }
+  }, [pipStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      pipStorageKey,
+      JSON.stringify({
+        pinned: pipPinned,
+        x: pipPosition?.x,
+        y: pipPosition?.y
+      })
+    );
+  }, [pipPinned, pipPosition, pipStorageKey]);
+
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const drag = dragStateRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const pip = pipRef.current;
+      const root = spectatorDashboardLayout ? splitPlaybackRootRef.current : streamViewportRef.current;
+      if (!pip || !root) return;
+      const rootRect = root.getBoundingClientRect();
+      const next = clampPipPosition(
+        { x: event.clientX - rootRect.left - drag.offsetX, y: event.clientY - rootRect.top - drag.offsetY },
+        root,
+        pip
+      );
+      setPipPosition(next);
+    };
+    const onPointerUp = (event: PointerEvent) => {
+      const drag = dragStateRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      dragStateRef.current = null;
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [spectatorDashboardLayout]);
 
   const refreshObserverTicket = useCallback(async (): Promise<string | null> => {
     const joinToken = spectatorJoinToken?.trim();
@@ -1104,14 +1187,48 @@ export function ObserverStreamCard({
 
   const selfPreviewPip = showSelfPreview ? (
     <div
+      ref={pipRef}
+      style={pipPosition ? { left: `${pipPosition.x}px`, top: `${pipPosition.y}px` } : undefined}
       className={cn(
-        "pointer-events-none z-20 w-44 rounded-xl border border-white/40 bg-slate-900/75 p-2 shadow-lg backdrop-blur",
-        spectatorDashboardLayout ? "absolute bottom-3 right-3" : "absolute right-3 top-3"
+        "z-20 w-44 rounded-xl border border-white/40 bg-slate-900/75 p-2 shadow-lg backdrop-blur",
+        pipPosition ? "absolute" : spectatorDashboardLayout ? "absolute bottom-3 right-3" : "absolute right-3 top-3"
       )}
     >
-      <p className="pointer-events-none mb-1 text-center text-[10px] font-medium uppercase tracking-wide text-slate-400">
-        Наблюдатель
-      </p>
+      <div
+        className={cn(
+          "mb-1 flex items-center justify-between gap-2 rounded-md px-1",
+          pipPinned ? "cursor-default" : "cursor-grab active:cursor-grabbing"
+        )}
+        onPointerDown={(event) => {
+          if (pipPinned) return;
+          const pip = pipRef.current;
+          const root = spectatorDashboardLayout ? splitPlaybackRootRef.current : streamViewportRef.current;
+          if (!pip || !root) return;
+          const pipRect = pip.getBoundingClientRect();
+          dragStateRef.current = {
+            pointerId: event.pointerId,
+            offsetX: event.clientX - pipRect.left,
+            offsetY: event.clientY - pipRect.top
+          };
+        }}
+      >
+        <p className="text-center text-[10px] font-medium uppercase tracking-wide text-slate-400">
+          Наблюдатель
+        </p>
+        <div className="flex items-center gap-1">
+          <GripHorizontal className="h-3.5 w-3.5 text-slate-400" />
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-6 rounded-full px-2 text-[10px] text-slate-200 hover:bg-slate-700/70"
+            onClick={() => setPipPinned((prev) => !prev)}
+            title={pipPinned ? "Открепить для перетаскивания" : "Закрепить текущую позицию"}
+          >
+            {pipPinned ? <PinOff className="mr-1 h-3 w-3" /> : <Pin className="mr-1 h-3 w-3" />}
+            {pipPinned ? "Открепить" : "Закрепить"}
+          </Button>
+        </div>
+      </div>
       <div className="overflow-hidden rounded-lg bg-black">
         {selfPreviewStream && selfCameraEnabled ? (
           <video ref={selfPreviewVideoRef} className="h-24 w-full object-cover" muted playsInline autoPlay />
@@ -1123,7 +1240,7 @@ export function ObserverStreamCard({
         <Button
           type="button"
           variant={selfCameraEnabled ? "default" : "secondary"}
-          className="pointer-events-auto h-9 rounded-full px-3 text-xs"
+          className="h-9 rounded-full px-3 text-xs"
           disabled={!selfPreviewStream}
           onClick={() => setSelfCameraEnabled((prev) => !prev)}
           title={selfCameraEnabled ? "Выключить камеру" : "Включить камеру"}
@@ -1134,7 +1251,7 @@ export function ObserverStreamCard({
         <Button
           type="button"
           variant={selfMicEnabled ? "default" : "secondary"}
-          className="pointer-events-auto h-9 rounded-full px-3 text-xs"
+          className="h-9 rounded-full px-3 text-xs"
           disabled={!selfPreviewStream}
           onClick={() => setSelfMicEnabled((prev) => !prev)}
           title={selfMicEnabled ? "Выключить микрофон" : "Включить микрофон"}
@@ -1146,7 +1263,7 @@ export function ObserverStreamCard({
           <Button
             type="button"
             variant="outline"
-            className="pointer-events-auto h-8 rounded-full px-3 text-[11px]"
+            className="h-8 rounded-full px-3 text-[11px]"
             onClick={() => void ensureSelfPreview()}
           >
             Повторить доступ
