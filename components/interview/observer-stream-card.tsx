@@ -74,7 +74,8 @@ const OBSERVER_JOIN_TIMEOUT_MS = 20_000;
 const OBSERVER_MAX_ATTEMPTS = 4;
 const OBSERVER_RETRY_BACKOFF_MS = 800;
 const OBSERVER_RECONNECT_LOCK_MS = 1_500;
-const OBSERVER_NO_PARTICIPANTS_GRACE_MS = 3_500;
+const OBSERVER_NO_PARTICIPANTS_GRACE_MS = 7_000;
+const OBSERVER_NO_PARTICIPANTS_RECONNECT_MAX = 3;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -642,7 +643,7 @@ export function ObserverStreamCard({
   const [connectionPhase, setConnectionPhase] = useState<ObserverConnectionPhase>("connecting");
   const reconnectLockUntilRef = useRef(0);
   const connectInFlightRef = useRef(false);
-  const noParticipantsReconnectDoneRef = useRef<string | null>(null);
+  const noParticipantsReconnectCountRef = useRef<Record<string, number>>({});
   const pipRef = useRef<HTMLDivElement | null>(null);
   const candidateVideoContainerRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
@@ -661,6 +662,21 @@ export function ObserverStreamCard({
     Boolean(streamCallId?.trim()) &&
     Boolean(streamCallType?.trim()) &&
     !ended;
+  const emitObserverAuditEvent = useCallback(
+    (type: "observer_join_attempt" | "observer_joined" | "observer_no_participants_retry", payload: Record<string, unknown>) => {
+      if (!meetingId) return;
+      void fetch(`/api/gateway/runtime/${encodeURIComponent(meetingId)}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "realtime.session.event",
+          actor: "observer_ui",
+          payload: { telemetryType: type, ...payload }
+        })
+      }).catch(() => undefined);
+    },
+    [meetingId]
+  );
   const status: ObserverConnectionStatus = useMemo(() => {
     if (!visible && allowVisibilityToggle) {
       return "idle_hidden";
@@ -1071,6 +1087,11 @@ export function ObserverStreamCard({
         let streamClient: StreamVideoClient | null = null;
         let streamCall: ReturnType<StreamVideoClient["call"]> | null = null;
         try {
+          emitObserverAuditEvent("observer_join_attempt", {
+            attempt,
+            streamCallId: streamCallId ?? null,
+            streamCallType: streamCallType ?? null
+          });
           const tokenAbort = new AbortController();
           const abortTimer = setTimeout(() => tokenAbort.abort(), OBSERVER_TOKEN_TIMEOUT_MS);
           let response: Response;
@@ -1148,6 +1169,11 @@ export function ObserverStreamCard({
           setCall(streamCall);
           setLocalUserId(payload.user.id);
           setHasParticipants(null);
+          emitObserverAuditEvent("observer_joined", {
+            userId: payload.user.id,
+            callId: payload.callId,
+            callType: payload.callType
+          });
           void ensureSelfPreview();
           return;
         } catch (err) {
@@ -1211,7 +1237,8 @@ export function ObserverStreamCard({
     spectatorObserverTicket,
     tabId,
     call,
-    pushEvent
+    pushEvent,
+    emitObserverAuditEvent
   ]);
 
   useEffect(() => {
@@ -1231,7 +1258,7 @@ export function ObserverStreamCard({
       return;
     }
     void disconnectStream();
-    noParticipantsReconnectDoneRef.current = null;
+    noParticipantsReconnectCountRef.current = {};
   }, [canConnect, disconnectStream]);
 
   useEffect(() => {
@@ -1239,16 +1266,23 @@ export function ObserverStreamCard({
       return;
     }
     const reconnectKey = `${meetingId ?? "no-meeting"}:${streamCallType ?? "no-type"}:${streamCallId ?? "no-call"}`;
-    if (noParticipantsReconnectDoneRef.current === reconnectKey) {
+    const reconnectCount = noParticipantsReconnectCountRef.current[reconnectKey] ?? 0;
+    if (reconnectCount >= OBSERVER_NO_PARTICIPANTS_RECONNECT_MAX) {
       return;
     }
     const timer = setTimeout(() => {
-      if (noParticipantsReconnectDoneRef.current === reconnectKey) {
+      const currentCount = noParticipantsReconnectCountRef.current[reconnectKey] ?? 0;
+      if (currentCount >= OBSERVER_NO_PARTICIPANTS_RECONNECT_MAX) {
         return;
       }
-      noParticipantsReconnectDoneRef.current = reconnectKey;
+      noParticipantsReconnectCountRef.current[reconnectKey] = currentCount + 1;
+      emitObserverAuditEvent("observer_no_participants_retry", {
+        reconnectKey,
+        attempt: currentCount + 1,
+        maxAttempts: OBSERVER_NO_PARTICIPANTS_RECONNECT_MAX
+      });
       void disconnectStream().then(() => {
-        // Allow one auto-rejoin attempt when call presence lags behind join.
+        // Allow controlled auto-rejoin attempts when Stream presence lags behind join.
         autoJoinAttemptForRef.current = null;
       });
     }, OBSERVER_NO_PARTICIPANTS_GRACE_MS);
@@ -1263,7 +1297,8 @@ export function ObserverStreamCard({
     hasParticipants,
     meetingId,
     streamCallId,
-    streamCallType
+    streamCallType,
+    emitObserverAuditEvent
   ]);
 
   useEffect(() => {

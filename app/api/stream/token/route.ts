@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { StreamClient } from "@stream-io/node-sdk";
+import { createHmac } from "node:crypto";
 
 import { resolveBackendGatewayBaseUrl } from "@/lib/backend-gateway-env";
 import { hasTrustedAppUser } from "@/lib/server-app-trust";
@@ -26,6 +27,14 @@ type MeetingLookupResponse = {
   };
 };
 
+type RuntimeLookupResponse = {
+  meetingId?: unknown;
+  media?: {
+    streamCallId?: unknown;
+    streamCallType?: unknown;
+  };
+};
+
 const ACTIVE_MEETING_STATUSES = new Set(["starting", "in_meeting"]);
 
 type SpectatorConsumedTicket = {
@@ -42,6 +51,64 @@ function sanitizeIdentifier(value: string, fallback: string): string {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
   return normalized.length > 0 ? normalized : fallback;
+}
+
+function base64UrlEncode(input: Buffer | string): string {
+  const buf = typeof input === "string" ? Buffer.from(input, "utf8") : input;
+  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function mintStreamAdminToken(apiSecret: string): string {
+  const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const payload = base64UrlEncode(JSON.stringify({ server: true }));
+  const signingInput = `${header}.${payload}`;
+  const signature = createHmac("sha256", apiSecret).update(signingInput).digest();
+  return `${signingInput}.${base64UrlEncode(signature)}`;
+}
+
+async function streamAdminPost(
+  apiKey: string,
+  secret: string,
+  url: string,
+  body: unknown
+): Promise<Response | null> {
+  const adminToken = mintStreamAdminToken(secret);
+  return fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: adminToken,
+      "stream-auth-type": "jwt"
+    },
+    body: JSON.stringify(body)
+  }).catch(() => null);
+}
+
+async function enforceSpectatorReadonlyRole(
+  apiKey: string,
+  secret: string,
+  userId: string,
+  userName: string,
+  callType: string,
+  callId: string
+): Promise<void> {
+  const usersUrl = `https://video.stream-io-api.com/api/v2/users?api_key=${encodeURIComponent(apiKey)}`;
+  await streamAdminPost(apiKey, secret, usersUrl, {
+    users: {
+      [userId]: {
+        id: userId,
+        name: userName,
+        role: "observer_readonly"
+      }
+    }
+  });
+
+  const callUrl = `https://video.stream-io-api.com/api/v2/video/call/${encodeURIComponent(callType)}/${encodeURIComponent(callId)}?api_key=${encodeURIComponent(apiKey)}`;
+  await streamAdminPost(apiKey, secret, callUrl, {
+    data: {
+      members: [{ user_id: userId, role: "observer_readonly" }]
+    }
+  });
 }
 
 async function verifySpectatorJoinTokenToMeeting(
@@ -156,6 +223,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const userName = (body.userName ?? (role === "candidate" ? "Candidate" : "Spectator")).trim() || "Participant";
   const callId = sanitizeIdentifier(body.callId ?? meetingId, meetingId);
   const callType = sanitizeIdentifier(body.callType ?? "default", "default");
+  let resolvedCallId = callId;
+  let resolvedCallType = callType;
 
   const meetingResponse = await fetch(`${backendUrl}/meetings/${encodeURIComponent(meetingId)}`, {
     method: "GET",
@@ -271,6 +340,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
     }
+
+    // Spectator call binding is authoritative from runtime snapshot.
+    const runtimeResponse = await fetch(`${backendUrl}/runtime/${encodeURIComponent(meetingId)}`, {
+      method: "GET",
+      cache: "no-store"
+    }).catch(() => null);
+    if (runtimeResponse?.ok) {
+      const runtime = (await runtimeResponse.json().catch(() => ({}))) as RuntimeLookupResponse;
+      const runtimeCallIdRaw =
+        runtime?.media && typeof runtime.media.streamCallId === "string" ? runtime.media.streamCallId : "";
+      const runtimeCallTypeRaw =
+        runtime?.media && typeof runtime.media.streamCallType === "string" ? runtime.media.streamCallType : "";
+      const runtimeCallId = sanitizeIdentifier(runtimeCallIdRaw, "");
+      const runtimeCallType = sanitizeIdentifier(runtimeCallTypeRaw, "");
+      resolvedCallId = runtimeCallId || meetingId;
+      resolvedCallType = runtimeCallType || "default";
+    } else {
+      resolvedCallId = meetingId;
+      resolvedCallType = "default";
+    }
   }
 
   const serverClient = new StreamClient(apiKey, secret);
@@ -287,11 +376,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       payload: {
         role,
         userId,
-        callId,
-        callType
+        callId: resolvedCallId,
+        callType: resolvedCallType
       }
     })
   }).catch(() => undefined);
+
+  if (role === "spectator") {
+    await enforceSpectatorReadonlyRole(apiKey, secret, userId, userName, resolvedCallType, resolvedCallId).catch(
+      () => undefined
+    );
+  }
 
   return NextResponse.json({
     apiKey,
@@ -300,7 +395,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       id: userId,
       name: userName
     },
-    callId,
-    callType
+    callId: resolvedCallId,
+    callType: resolvedCallType
   });
 }

@@ -24,8 +24,6 @@ import {
 } from "@/lib/interview-status";
 import {
   getObserverControlState,
-  resolveObserverTalkState,
-  setObserverControlState,
   subscribeObserverControlState,
   type ObserverControlState
 } from "@/lib/observer-control";
@@ -299,8 +297,8 @@ function SpectatorBody() {
     typeof runtimeSnapshot?.media?.streamCallType === "string" ? runtimeSnapshot.media.streamCallType.trim() : "";
   const resolvedStreamCallId = runtimeStreamCallIdRaw || effectiveMeetingId || "";
   const resolvedStreamCallType = runtimeStreamCallTypeRaw || "default";
-  // Frontend should not over-gate spectator connect. Backend validates meeting activity.
-  const canConnect = Boolean(effectiveMeetingId);
+  // Spectator should join only when meeting is actively running.
+  const canConnect = Boolean(effectiveMeetingId) && (projectionActive || runtimeActive);
   const spectatorWaitingReason = useMemo(() => {
     if (!effectiveMeetingId) {
       return "Ожидаем назначение meetingId от runtime. Интервью ещё не перешло в активную фазу.";
@@ -541,16 +539,8 @@ function SpectatorBody() {
               spectatorJoinToken={spectatorJoinToken}
               spectatorObserverTicket={spectatorObserverTicket}
               spectatorViewerKey={spectatorViewerKey}
-              onTalkModeChange={(nextTalkMode) => {
-                if (!jobAiId) {
-                  return;
-                }
-                const next = resolveObserverTalkState(observerControl, nextTalkMode);
-                setObserverControlState(jobAiId, {
-                  visibility: "visible",
-                  talk: next.talk,
-                  updatedAt: new Date().toISOString()
-                });
+              onTalkModeChange={() => {
+                // Spectator is hard read-only in this flow.
               }}
               onStatusChange={setObserverStatus}
             />
