@@ -71,9 +71,9 @@ async function streamAdminPost(
   secret: string,
   url: string,
   body: unknown
-): Promise<Response | null> {
+): Promise<Response> {
   const adminToken = mintStreamAdminToken(secret);
-  return fetch(url, {
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -81,7 +81,14 @@ async function streamAdminPost(
       "stream-auth-type": "jwt"
     },
     body: JSON.stringify(body)
-  }).catch(() => null);
+  });
+  if (!response.ok) {
+    const detail = (await response.text().catch(() => "")).slice(0, 500);
+    throw new Error(
+      `Stream admin request failed (${response.status})${detail ? `: ${detail}` : ""}`
+    );
+  }
+  return response;
 }
 
 async function enforceSpectatorReadonlyRole(
@@ -362,6 +369,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
   }
 
+  if (role === "spectator") {
+    try {
+      await enforceSpectatorReadonlyRole(apiKey, secret, userId, userName, resolvedCallType, resolvedCallId);
+    } catch (error) {
+      console.error("[stream-token] readonly observer enforcement failed", {
+        userId,
+        callType: resolvedCallType,
+        callId: resolvedCallId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return NextResponse.json(
+        {
+          message: "Failed to enforce readonly observer role before token issuance.",
+          code: "spectator.readonly_enforcement_failed"
+        },
+        { status: 502 }
+      );
+    }
+  }
+
   const serverClient = new StreamClient(apiKey, secret);
   const token = serverClient.generateUserToken({
     user_id: userId,
@@ -381,12 +408,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     })
   }).catch(() => undefined);
-
-  if (role === "spectator") {
-    await enforceSpectatorReadonlyRole(apiKey, secret, userId, userName, resolvedCallType, resolvedCallId).catch(
-      () => undefined
-    );
-  }
 
   return NextResponse.json({
     apiKey,
