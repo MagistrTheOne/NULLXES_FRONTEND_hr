@@ -10,7 +10,7 @@ import {
   StreamVideoClient,
   useCallStateHooks
 } from "@stream-io/video-react-sdk";
-import { releaseCandidateAdmission, sendRealtimeEvent } from "@/lib/api";
+import { releaseCandidateAdmission, sendRealtimeEvent, startMeetingRecording } from "@/lib/api";
 import { formatCandidateMeetingLobbyMessage, isMeetingNotYetOpen } from "@/lib/meeting-at-guard";
 import type { InterviewStartContext, InterviewStartResult } from "@/hooks/use-interview-session";
 import type { SessionUIState } from "@/lib/session-ui-state";
@@ -554,6 +554,13 @@ export function CandidateStreamCard({
       setClient(streamClient);
       setCall(streamCall);
       stopMediaPreview();
+
+      await startMeetingRecording(effectiveMeetingId, {
+        callId: payload.callId,
+        callType: payload.callType
+      }).catch((recordingError) => {
+        console.warn("[candidate-stream-card] recording auto-start failed after Stream join:", recordingError);
+      });
 
       if (effectiveSessionId) {
         await sendRealtimeEvent(effectiveSessionId, {
