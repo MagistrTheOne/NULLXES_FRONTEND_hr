@@ -290,27 +290,37 @@ function SpectatorBody() {
     .trim();
   const companyName = detail?.projection.companyName ?? "";
   const projectionActive = ACTIVE_MEETING_STATUSES.has(String(detail?.projection.nullxesStatus ?? ""));
-  const runtimeActive = ACTIVE_MEETING_STATUSES.has(String(runtimeSnapshot?.meeting.status ?? ""));
+  const runtimeMeetingId = normalizeMeetingId(runtimeSnapshot?.meetingId);
+  const runtimeMatchesMeeting = Boolean(effectiveMeetingId && runtimeMeetingId === effectiveMeetingId);
+  const runtimeActive =
+    runtimeMatchesMeeting && ACTIVE_MEETING_STATUSES.has(String(runtimeSnapshot?.meeting.status ?? ""));
+  const runtimeReady = runtimeMatchesMeeting && runtimeSnapshot?.health.ready === true;
   const runtimeStreamCallIdRaw =
     typeof runtimeSnapshot?.media?.streamCallId === "string" ? runtimeSnapshot.media.streamCallId.trim() : "";
   const runtimeStreamCallTypeRaw =
     typeof runtimeSnapshot?.media?.streamCallType === "string" ? runtimeSnapshot.media.streamCallType.trim() : "";
-  const resolvedStreamCallId = runtimeStreamCallIdRaw || effectiveMeetingId || "";
-  const resolvedStreamCallType = runtimeStreamCallTypeRaw || "default";
-  // Spectator should join only when meeting is actively running.
-  const canConnect = Boolean(effectiveMeetingId) && (projectionActive || runtimeActive);
+  const resolvedStreamCallId = runtimeReady ? runtimeStreamCallIdRaw : "";
+  const resolvedStreamCallType = runtimeReady ? runtimeStreamCallTypeRaw || "default" : "";
+  // Spectator joins only after runtime confirms the exact active meeting/call.
+  const canConnect = Boolean(effectiveMeetingId) && runtimeReady;
   const spectatorWaitingReason = useMemo(() => {
     if (!effectiveMeetingId) {
       return "Ожидаем назначение meetingId от runtime. Интервью ещё не перешло в активную фазу.";
     }
-    if (!projectionActive && !runtimeActive) {
-      return "meeting найден, но статус ещё не активен. Ждём, пока кандидат/HR поднимут живую сессию.";
-    }
     if (!runtimeSnapshot) {
       return "Сессия активируется, ждём runtime snapshot.";
     }
+    if (!runtimeMatchesMeeting) {
+      return "Runtime обновляется, ждём подтверждение актуальной сессии наблюдения.";
+    }
+    if (!projectionActive && !runtimeActive) {
+      return "meeting найден, но статус ещё не активен. Ждём, пока кандидат/HR поднимут живую сессию.";
+    }
+    if (!runtimeReady) {
+      return "Runtime найден, ждём готовность живой сессии перед подключением наблюдателя.";
+    }
     return null;
-  }, [effectiveMeetingId, projectionActive, runtimeActive, runtimeSnapshot]);
+  }, [effectiveMeetingId, projectionActive, runtimeActive, runtimeMatchesMeeting, runtimeReady, runtimeSnapshot]);
 
   const sseAttemptRef = useRef(0);
   const sseSlowModeRef = useRef(false);

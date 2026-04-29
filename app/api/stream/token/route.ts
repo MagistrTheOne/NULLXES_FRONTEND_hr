@@ -29,6 +29,9 @@ type MeetingLookupResponse = {
 
 type RuntimeLookupResponse = {
   meetingId?: unknown;
+  health?: {
+    ready?: unknown;
+  };
   media?: {
     streamCallId?: unknown;
     streamCallType?: unknown;
@@ -353,20 +356,51 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       method: "GET",
       cache: "no-store"
     }).catch(() => null);
-    if (runtimeResponse?.ok) {
-      const runtime = (await runtimeResponse.json().catch(() => ({}))) as RuntimeLookupResponse;
-      const runtimeCallIdRaw =
-        runtime?.media && typeof runtime.media.streamCallId === "string" ? runtime.media.streamCallId : "";
-      const runtimeCallTypeRaw =
-        runtime?.media && typeof runtime.media.streamCallType === "string" ? runtime.media.streamCallType : "";
-      const runtimeCallId = sanitizeIdentifier(runtimeCallIdRaw, "");
-      const runtimeCallType = sanitizeIdentifier(runtimeCallTypeRaw, "");
-      resolvedCallId = runtimeCallId || meetingId;
-      resolvedCallType = runtimeCallType || "default";
-    } else {
-      resolvedCallId = meetingId;
-      resolvedCallType = "default";
+    if (!runtimeResponse) {
+      return NextResponse.json(
+        {
+          message: "Runtime service unavailable. Retry in a few seconds.",
+          code: "runtime.unavailable"
+        },
+        { status: 503 }
+      );
     }
+    if (!runtimeResponse.ok) {
+      return NextResponse.json(
+        {
+          message: "Runtime snapshot is not ready for this observer session.",
+          code: "runtime.not_ready"
+        },
+        { status: runtimeResponse.status === 404 ? 409 : 502 }
+      );
+    }
+    const runtime = (await runtimeResponse.json().catch(() => ({}))) as RuntimeLookupResponse;
+    if (runtime.health?.ready !== true) {
+      return NextResponse.json(
+        {
+          message: "Runtime snapshot is not ready for this observer session.",
+          code: "runtime.not_ready"
+        },
+        { status: 409 }
+      );
+    }
+    const runtimeCallIdRaw =
+      runtime?.media && typeof runtime.media.streamCallId === "string" ? runtime.media.streamCallId : "";
+    const runtimeCallTypeRaw =
+      runtime?.media && typeof runtime.media.streamCallType === "string" ? runtime.media.streamCallType : "";
+    const runtimeCallId = sanitizeIdentifier(runtimeCallIdRaw, "");
+    const runtimeCallType = sanitizeIdentifier(runtimeCallTypeRaw, "");
+    if (!runtimeCallId || !runtimeCallType) {
+      return NextResponse.json(
+        {
+          message: "Runtime Stream call binding is not ready for this observer session.",
+          code: "runtime.stream_call_not_ready"
+        },
+        { status: 409 }
+      );
+    }
+    resolvedCallId = runtimeCallId;
+    resolvedCallType = runtimeCallType;
   }
 
   if (role === "spectator") {
