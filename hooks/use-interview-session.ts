@@ -182,8 +182,12 @@ function extractAssistantTextFromRealtimeEvent(event: RealtimeAnyEvent): string 
 
 function resolveVoiceProvider(voiceId?: string, forceOpenAi?: boolean): VoiceProvider {
   const selected = typeof voiceId === "string" ? voiceId.trim() : "";
-  // Feature flag keeps rollout controlled; voice selection decides provider when enabled.
-  const enabled = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT === "1";
+  const flag = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT;
+  // Stable default: OpenAI voice. ElevenLabs is experimental and should be
+  // enabled explicitly via feature flag and (by default) only in dev/preview.
+  const allowProd = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT_ALLOW_PROD === "1";
+  const environmentAllows = process.env.NODE_ENV !== "production" || allowProd;
+  const enabled = flag === "1" && environmentAllows;
   if (forceOpenAi) return "openai";
   return enabled && selected.length > 0 ? "elevenlabs" : "openai";
 }
@@ -538,23 +542,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     if (process.env.NODE_ENV === "production") return;
     const flag = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT;
     const voiceId = sessionElevenLabsVoiceId.trim();
-    const computed = resolveVoiceProvider(voiceId, forceOpenAiVoiceOutput);
-    if (computed !== "elevenlabs") {
-      if (flag !== "1" || !voiceId) {
-        console.warn("[ElevenLabs] disabled: flag off or voiceId missing", {
-          flag,
-          hasVoiceId: Boolean(voiceId),
-          forceOpenAiVoiceOutput
-        });
-      }
-      return;
-    }
-    console.info("[ElevenLabs] enabled", {
-      flag,
-      voiceProvider: computed,
-      voiceId,
-      forceOpenAiVoiceOutput
-    });
+    const provider = resolveVoiceProvider(voiceId, forceOpenAiVoiceOutput);
+    console.info("[VoiceProvider]", { flag, hasVoiceId: Boolean(voiceId), provider });
   }, [forceOpenAiVoiceOutput, sessionElevenLabsVoiceId]);
 
   const clearElevenLabsQueue = useCallback(() => {
@@ -565,6 +554,17 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     elevenLabsUtteranceAbortRef.current = null;
     stopAgentElevenLabsPlayback();
   }, []);
+
+  useEffect(() => {
+    const flag = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT;
+    if (flag === "1") {
+      return;
+    }
+    // Stable mode: ensure no ElevenLabs playback can run at all.
+    elevenLabsTtsFailureToastShownRef.current = false;
+    setForceOpenAiVoiceOutput(false);
+    clearElevenLabsQueue();
+  }, [clearElevenLabsQueue]);
 
   const drainElevenLabsQueue = useCallback(async () => {
     if (elevenLabsQueueDrainingRef.current) return;

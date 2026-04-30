@@ -208,6 +208,7 @@ function isAbortError(e: unknown): boolean {
 }
 
 export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }: Props) {
+  const elevenLabsEnabled = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT === "1";
   const [editing, setEditing] = useState(false);
   const [draftVoiceId, setDraftVoiceId] = useState(committedVoiceId);
   const [search, setSearch] = useState("");
@@ -495,6 +496,15 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[13px] font-semibold tracking-tight text-slate-800">Голос ассистента</span>
+                {!elevenLabsEnabled ? (
+                  <Badge variant="secondary" className="h-5 px-1.5 text-[10px] font-semibold">
+                    ElevenLabs выключен
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="h-5 px-1.5 text-[10px] font-semibold">
+                    Dev mode
+                  </Badge>
+                )}
               </div>
               {!editing ? (
                 <div className="mt-0.5 space-y-0.5">
@@ -518,6 +528,11 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                       </p>
                     </>
                   )}
+                  {!elevenLabsEnabled ? (
+                    <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-slate-500">
+                      Голос ElevenLabs применяется только в dev-режиме (feature flag).
+                    </p>
+                  ) : null}
                 </div>
               ) : (
                 <p className="mt-0.5 line-clamp-1 text-[10px] leading-tight text-slate-500">
