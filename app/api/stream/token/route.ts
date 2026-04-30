@@ -172,6 +172,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const body = (await request.json().catch(() => ({}))) as TokenRequestBody;
   const role = body.role ?? "candidate";
+  // `role` comes from the client request body, so it must be allowlisted server-side.
+  // Unknown roles must never receive Stream tokens (prevents role escalation).
+  if (role !== "candidate" && role !== "spectator") {
+    return NextResponse.json(
+      { message: "Invalid role", code: "role.invalid" },
+      { status: 400 }
+    );
+  }
   const rawMeetingId = body.meetingId?.trim();
   if (!rawMeetingId && role !== "spectator") {
     return NextResponse.json({ message: "meetingId is required for Stream token issuance." }, { status: 400 });

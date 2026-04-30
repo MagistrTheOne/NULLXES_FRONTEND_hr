@@ -63,10 +63,12 @@ export function useSessionCountdown(opts: UseSessionCountdownOptions): UseSessio
     if (!active || startedAtMs == null) {
       offsetMsRef.current = 0;
       expiredFiredRef.current = false;
-      setState(IDLE_STATE);
+      // Avoid setState synchronously inside an effect (eslint react-hooks/set-state-in-effect).
+      queueMicrotask(() => setState(IDLE_STATE));
       return;
     }
-    setState(compute(Date.now()));
+    // Same rationale: schedule the initial tick outside the effect body.
+    queueMicrotask(() => setState(compute(Date.now())));
     const interval = setInterval(() => {
       setState(compute(Date.now()));
     }, 1_000);

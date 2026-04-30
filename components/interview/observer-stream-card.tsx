@@ -1150,9 +1150,10 @@ export function ObserverStreamCard({
           await withTimeout(
             // Observer is read-only and must never create ghost calls.
             // Join only existing call created by candidate/HR flow.
-            // audio: false — never publish microphone to SFU (candidate must not hear observer).
-            // JoinCallData in react-sdk typings omits `audio`; coordinator accepts it (@stream-io/video-client).
-            streamCall.join({ create: false, video: false, audio: false } as Parameters<typeof streamCall.join>[0]),
+            // Spectator does not publish mic/camera to SFU.
+            // Do NOT pass `audio: false` here: in Stream SDK it may disable receiving
+            // remote audio tracks, which breaks the requirement "spectator hears Stream audio".
+            streamCall.join({ create: false, video: false } as Parameters<typeof streamCall.join>[0]),
             OBSERVER_JOIN_TIMEOUT_MS,
             "Observer stream join timeout"
           );

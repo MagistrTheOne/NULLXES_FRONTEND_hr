@@ -968,6 +968,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   }, [ensureClient, meetingId, phase]);
 
   useEffect(() => {
+    // Ref mirrors are mutated intentionally; this rule is overly strict for our pattern.
+    // eslint-disable-next-line react-hooks/immutability
     activeSessionIdRef.current = sessionId;
   }, [sessionId]);
 
