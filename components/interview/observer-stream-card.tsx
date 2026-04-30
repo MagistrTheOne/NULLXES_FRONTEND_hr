@@ -175,6 +175,38 @@ function ObserverSplitDashboard({
   const state = useCallCallingState();
   const participants = useParticipants();
 
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    const snapshot = participants.map((p) => {
+      const userId = typeof p.userId === "string" ? p.userId : "";
+      const user = (p as unknown as { user?: { name?: string; role?: string } }).user;
+      const tracks = (p as unknown as { publishedTracks?: unknown }).publishedTracks;
+      return {
+        userId: userId || null,
+        name: typeof user?.name === "string" ? user.name : null,
+        role: typeof user?.role === "string" ? user.role : null,
+        sessionId:
+          typeof (p as unknown as { sessionId?: unknown }).sessionId === "string"
+            ? ((p as unknown as { sessionId?: string }).sessionId as string)
+            : null,
+        isLocalParticipant: Boolean((p as unknown as { isLocalParticipant?: unknown }).isLocalParticipant),
+        isSpeaking: Boolean((p as unknown as { isSpeaking?: unknown }).isSpeaking),
+        publishedTracksType: tracks ? typeof tracks : null,
+        guessed: {
+          isCandidate: userId.startsWith("candidate-"),
+          isAgent: userId.startsWith("agent-") || userId.startsWith("agent_"),
+          isViewer: userId.startsWith("viewer-") || userId.startsWith("avatar-viewer-")
+        }
+      };
+    });
+    console.info("[stream-participants-diagnostics]", {
+      scope: "observer-split-dashboard",
+      localUserId,
+      count: snapshot.length,
+      participants: snapshot
+    });
+  }, [localUserId, participants]);
+
   const remoteCount = useMemo(
     () => participants.filter((p) => p.userId !== localUserId).length,
     [localUserId, participants]
