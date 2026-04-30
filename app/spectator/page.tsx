@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown } from "lucide-react";
+import { ArrowLeft, ChevronDown, ExternalLink, RefreshCw } from "lucide-react";
 import { ObserverStreamCard, type ObserverConnectionStatus } from "@/components/interview/observer-stream-card";
 import { InterviewStatusBadge } from "@/components/interview/interview-status-badge";
 import { Button } from "@/components/ui/button";
@@ -405,32 +405,33 @@ function SpectatorBody() {
   );
 
   return (
-    <div className="min-h-screen bg-[#dfe4ec] px-4 py-6 sm:px-6 sm:py-8 md:px-10">
+    <div className="min-h-screen bg-[#e9edf4] px-4 py-6 text-slate-800 sm:px-6 sm:py-8 md:px-10">
       <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-6">
         {/* === Header card: глобальный статус интервью + контекст === */}
-        <Card className="rounded-2xl border-0 bg-[#d9dee7] shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base text-slate-700">Наблюдение за интервью</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4 text-sm text-slate-700">
-            {/* Status — first and most prominent */}
-            <div className="flex flex-wrap items-center gap-3">
-              <InterviewStatusBadge status={interviewStatus} />
-              <span className="text-xs text-slate-500">{loading ? "Обновление…" : "Статус интервью"}</span>
+        <Card className="rounded-2xl border border-white/60 bg-[#dce2eb]/70 shadow-sm">
+          <CardHeader className="pb-2 pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="text-sm font-semibold text-slate-700">Наблюдение за интервью</CardTitle>
+              <div className="flex items-center gap-2">
+                <InterviewStatusBadge status={interviewStatus} />
+                <span className="text-[11px] text-slate-500">{loading ? "Обновление…" : "Статус"}</span>
+              </div>
             </div>
-
-            {/* Context: кандидат + компания */}
-            <div className="grid grid-cols-1 gap-2 text-slate-500 sm:grid-cols-2">
-              <p>
-                Кандидат · <span className="font-medium text-slate-700">{candidateName || "—"}</span>
-              </p>
-              <p>
-                Компания · <span className="font-medium text-slate-700">{companyName || "—"}</span>
-              </p>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 pb-4 text-sm text-slate-700">
+            <div className="flex min-w-0 flex-wrap items-center gap-2 text-[12px] text-slate-600">
+              <span className="truncate font-medium text-slate-800">{candidateName || "—"}</span>
+              <span className="text-slate-400" aria-hidden>
+                ·
+              </span>
+              <span className="truncate">{companyName || "—"}</span>
               {jobAiId ? (
-                <p>
-                  ID интервью · <span className="font-medium text-slate-700">{jobAiId}</span>
-                </p>
+                <>
+                  <span className="text-slate-400" aria-hidden>
+                    ·
+                  </span>
+                  <span className="shrink-0">ID {jobAiId}</span>
+                </>
               ) : null}
             </div>
 
@@ -452,109 +453,123 @@ function SpectatorBody() {
                 ) : null}
               </div>
             ) : null}
-            {!canConnect ? (
-              <div className="w-full max-w-[720px] rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
-                <p className="text-sm">{spectatorWaitingReason ?? "Ожидание запуска."}</p>
-                {jobAiId ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-2 h-8 rounded-md px-2 text-[11px]"
-                    onClick={() => {
-                      void getInterviewById(jobAiId, true).then(setDetail).catch(() => undefined);
-                    }}
-                  >
-                    Повторить
-                  </Button>
-                ) : null}
+
+            {/* Terminal/waiting info row (compact, neutral) */}
+            {terminalByProjection ? (
+              <div className="w-full max-w-[720px] rounded-lg border border-white/60 bg-white/55 px-3 py-2 text-slate-700 shadow-sm">
+                <p className="text-[12px] font-medium">Интервью завершено · повторное подключение недоступно</p>
+              </div>
+            ) : !canConnect ? (
+              <div className="w-full max-w-[720px] rounded-lg border border-white/60 bg-white/55 px-3 py-2 text-slate-700 shadow-sm">
+                <p className="text-[12px] font-medium">Ожидание запуска</p>
+                <p className="mt-0.5 text-[11px] text-slate-600">{spectatorWaitingReason ?? "Видео подключится автоматически после старта интервью."}</p>
               </div>
             ) : null}
 
             {/* Actions */}
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
-                variant="secondary"
+                variant="ghost"
+                size="sm"
+                className="h-9 gap-1.5 rounded-lg px-2.5 text-[11px] text-slate-700 hover:bg-white/50"
+                onClick={() => {
+                  router.push("/");
+                }}
+                title="Назад"
+              >
+                <ArrowLeft className="size-4" aria-hidden />
+                Назад
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 gap-1.5 rounded-lg px-2.5 text-[11px]"
                 onClick={() => {
                   if (jobAiId) {
                     void getInterviewById(jobAiId, true).then(setDetail).catch(() => undefined);
                   }
                 }}
+                title="Обновить"
               >
-                Обновить
+                <RefreshCw className="size-4" aria-hidden />
+                <span className="hidden sm:inline">Обновить</span>
               </Button>
               <Button
                 type="button"
+                size="sm"
+                className="h-9 rounded-lg px-2.5 text-[11px]"
                 onClick={() => {
                   router.push(jobAiId ? `/?jobAiId=${encodeURIComponent(jobAiId)}` : "/");
                 }}
+                title="Открыть HR-панель"
               >
-                Открыть HR-панель
+                HR
               </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => {
-                  router.push("/");
-                }}
-              >
-                Назад в основное меню
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  if (typeof window === "undefined") return;
-                  const url = new URL(window.location.href);
-                  url.searchParams.set("popout", "1");
-                  window.open(url.toString(), "_blank", "noopener,noreferrer,width=1520,height=980");
-                }}
-              >
-                Открыть в отдельном окне
-              </Button>
+              {terminalByProjection ? null : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="hidden h-9 gap-1.5 rounded-lg px-2.5 text-[11px] text-slate-600 hover:bg-white/50 sm:inline-flex"
+                  onClick={() => {
+                    if (typeof window === "undefined") return;
+                    const url = new URL(window.location.href);
+                    url.searchParams.set("popout", "1");
+                    window.open(url.toString(), "_blank", "noopener,noreferrer,width=1520,height=980");
+                  }}
+                  title="Открыть в отдельном окне"
+                >
+                  <ExternalLink className="size-4" aria-hidden />
+                  <span className="hidden md:inline">Окно</span>
+                </Button>
+              )}
             </div>
 
             {/* Tech details — collapsed by default, hidden внутренние ID */}
             <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
-              <CollapsibleTrigger className="inline-flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-xs font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground sm:w-auto">
-                Технические детали
+              <CollapsibleTrigger className="inline-flex h-8 w-full items-center justify-between rounded-md border border-white/60 bg-white/55 px-3 py-2 text-[11px] font-medium text-slate-700 shadow-sm transition-colors hover:bg-white/70 sm:w-auto">
+                Тех. детали
                 <ChevronDown className={`size-4 transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
               </CollapsibleTrigger>
               <CollapsibleContent className="pt-3">
-                <div className="grid grid-cols-1 gap-x-10 gap-y-2 text-xs text-slate-500 sm:grid-cols-2">
-                  <p>
-                    Внутренний идентификатор ·{" "}
-                    <span className="font-mono text-[11px] text-slate-700">{effectiveMeetingId ?? "Появится после запуска"}</span>
-                  </p>
-                  <p>
-                    Meeting source ·{" "}
-                    <span className="font-mono text-[11px] text-slate-700">{meetingResolution.source}</span>
-                  </p>
-                  <p>
-                    Видеопоток ·{" "}
-                    <span className="font-mono text-[11px] text-slate-700">{videoStatus.label}</span>
-                  </p>
-                  <p>
-                    Runtime revision ·{" "}
-                    <span className="font-mono text-[11px] text-slate-700">{runtimeSnapshot?.revision ?? "—"}</span>
-                  </p>
-                  <p>
-                    Runtime health ·{" "}
-                    <span className="font-mono text-[11px] text-slate-700">
-                      {runtimeSnapshot?.health.ready ? "ready" : runtimeSnapshot ? runtimeSnapshot.health.warnings.join(",") || "not_ready" : "—"}
-                    </span>
-                  </p>
-                  {SHOW_INTERNAL_DEBUG_UI ? (
-                    <p className="sm:col-span-2">
-                      jobAiStatus · <span className="font-mono text-[11px] text-slate-700">{detail?.projection.jobAiStatus ?? "—"}</span>
+                <div className="grid grid-cols-1 gap-2 text-xs text-slate-600 sm:grid-cols-2">
+                  <div className="rounded-lg border border-white/60 bg-white/55 px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Внутренний ID</p>
+                    <p className="mt-0.5 break-all font-mono text-[11px] text-slate-800">
+                      {effectiveMeetingId ?? "Появится после запуска"}
                     </p>
+                  </div>
+                  <div className="rounded-lg border border-white/60 bg-white/55 px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Источник meeting</p>
+                    <p className="mt-0.5 font-mono text-[11px] text-slate-800">{meetingResolution.source}</p>
+                  </div>
+                  <div className="rounded-lg border border-white/60 bg-white/55 px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Видеопоток</p>
+                    <p className="mt-0.5 text-[11px] font-medium text-slate-800">{videoStatus.label}</p>
+                  </div>
+                  <div className="rounded-lg border border-white/60 bg-white/55 px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Runtime revision</p>
+                    <p className="mt-0.5 font-mono text-[11px] text-slate-800">{runtimeSnapshot?.revision ?? "—"}</p>
+                  </div>
+                  <div className="rounded-lg border border-white/60 bg-white/55 px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Runtime health</p>
+                    <p className="mt-0.5 font-mono text-[11px] text-slate-800">
+                      {runtimeSnapshot?.health.ready ? "ready" : runtimeSnapshot ? runtimeSnapshot.health.warnings.join(",") || "not_ready" : "—"}
+                    </p>
+                  </div>
+                  {SHOW_INTERNAL_DEBUG_UI ? (
+                    <div className="rounded-lg border border-white/60 bg-white/55 px-3 py-2 sm:col-span-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">jobAiStatus</p>
+                      <p className="mt-0.5 font-mono text-[11px] text-slate-800">{detail?.projection.jobAiStatus ?? "—"}</p>
+                    </div>
                   ) : null}
                   {technicalError ? (
-                    <p className="sm:col-span-2">
-                      gateway diagnostic ·{" "}
-                      <span className="font-mono text-[11px] text-slate-700 break-all">{technicalError}</span>
-                    </p>
+                    <div className="rounded-lg border border-rose-200/60 bg-rose-50/60 px-3 py-2 sm:col-span-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-rose-600/80">gateway diagnostic</p>
+                      <p className="mt-0.5 break-all font-mono text-[11px] text-rose-800">{technicalError}</p>
+                    </div>
                   ) : null}
                 </div>
               </CollapsibleContent>
@@ -599,7 +614,7 @@ function SpectatorBody() {
 
 export default function SpectatorPage() {
   return (
-    <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-[#dfe4ec] text-slate-600">Загрузка…</div>}>
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-[#e9edf4] text-slate-600">Загрузка…</div>}>
       <SpectatorBody />
     </Suspense>
   );
