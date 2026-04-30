@@ -1219,16 +1219,6 @@ export function InterviewShell() {
             >
               Agent: {STREAM_OPENAI_AGENT_MODE_ENABLED ? "Stream OpenAI" : "Browser Realtime"}
             </span>
-            {STREAM_OPENAI_AGENT_MODE_ENABLED ? (
-              <span className="rounded-full border border-slate-300/70 bg-white/70 px-3 py-1 text-[11px] font-medium text-slate-700 shadow-sm">
-                state=
-                {safeText((runtimeSnapshot?.meeting?.metadata as Record<string, unknown> | undefined)?.agent_state) ||
-                "unknown"}
-                {safeText((runtimeSnapshot?.meeting?.metadata as Record<string, unknown> | undefined)?.agent_user_id)
-                  ? ` · user=${safeText((runtimeSnapshot?.meeting?.metadata as Record<string, unknown> | undefined)?.agent_user_id)}`
-                  : ""}
-              </span>
-            ) : null}
             {recording?.diagnostics?.warning ? (
               <span className="rounded-full border border-amber-300/80 bg-amber-50 px-3 py-1 text-[11px] font-medium text-amber-900 shadow-sm">
                 rec_warning={recording.diagnostics.warning}
