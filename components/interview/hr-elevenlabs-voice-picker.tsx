@@ -498,7 +498,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
               </div>
               {!editing ? (
                 <div className="mt-0.5 space-y-0.5">
-                  <p className="text-[10px] font-medium text-slate-500">Сохранённый · ElevenLabs</p>
+                  <p className="text-[10px] font-medium text-slate-500">Сохранённый  </p>
                   {committedVoiceId.trim() ? (
                     <>
                       <p className="line-clamp-1 text-[12px] font-semibold leading-tight text-slate-800" title={committedMeta?.display ?? committedLabel}>
