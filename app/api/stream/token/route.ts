@@ -437,7 +437,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           message: "Runtime snapshot is not ready for this observer session.",
           code: "runtime.not_ready"
         },
-        { status: runtimeResponse.status === 404 ? 409 : 502 }
+        // Non-OK runtime is an expected readiness state for spectators. Do not surface as 502.
+        { status: 409 }
       );
     }
   }
@@ -454,10 +455,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       });
       return NextResponse.json(
         {
-          message: "Failed to enforce readonly observer role before token issuance.",
-          code: "spectator.readonly_enforcement_failed"
+          // This is an expected transient state when Stream roles/memberships lag.
+          // Never issue a token before readonly is enforced.
+          message: "Observer readonly role is not ready yet.",
+          code: "observer_role_unavailable"
         },
-        { status: 502 }
+        { status: 503 }
       );
     }
   }

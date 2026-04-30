@@ -48,6 +48,11 @@ type StreamTokenResponse = {
   callType: string;
 };
 
+type StreamTokenErrorPayload = {
+  message?: string;
+  code?: string;
+};
+
 type AvatarCallBodyProps = {
   /** Stream SDK toolbar (mic/camera/layout/video mode). Off for HR avatar by default. */
   showStreamToolbar: boolean;
@@ -156,10 +161,40 @@ export function AvatarStreamCard({
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
   const canRenderAvatarWindow = enabled && Boolean(client && call);
   const [busy, setBusy] = useState(false);
+  const [inlineStatus, setInlineStatus] = useState<string | null>(null);
   const ended = Boolean(sessionEnded) || uiState === "completed";
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
   const autoJoinAttemptForRef = useRef<string | null>(null);
+  const connectInFlightRef = useRef(false);
+  const connectEpochRef = useRef(0);
+  const toastEpochRef = useRef(0);
   const callRoomId = meetingId ?? "unknown-meeting";
+
+  const isAvatarStreamTransientError = useCallback((input: { status?: number; code?: string; message?: string }): boolean => {
+    const status = input.status;
+    const code = (input.code ?? "").toLowerCase();
+    const message = (input.message ?? "").toLowerCase();
+    if (status === 401 || status === 403) return false;
+    if (status === 400) return false;
+    if (status === 409 || status === 423 || status === 503) return true;
+
+    if (
+      code === "runtime.not_ready" ||
+      code === "meeting.not_active" ||
+      code === "stream.binding_missing" ||
+      code === "observer_role_unavailable" ||
+      code === "observer.readonly_enforce_failed" ||
+      code === "spectator.readonly_enforcement_failed" ||
+      code === "runtime.stream_call_not_ready"
+    ) {
+      return true;
+    }
+
+    if (message.includes("runtime snapshot is not ready")) return true;
+    if (message.includes("failed to enforce readonly observer role")) return true;
+    if (message.includes("readonly role is not ready")) return true;
+    return false;
+  }, []);
 
   useEffect(() => {
     const root = streamViewportRef.current;
@@ -180,6 +215,7 @@ export function AvatarStreamCard({
   }, [call]);
 
   const disconnectStream = useCallback(async () => {
+    connectEpochRef.current += 1;
     if (call) {
       await call.leave().catch(() => undefined);
     }
@@ -188,6 +224,7 @@ export function AvatarStreamCard({
     }
     setCall(null);
     setClient(null);
+    setInlineStatus(null);
     autoJoinAttemptForRef.current = null;
   }, [call, client]);
 
@@ -198,30 +235,69 @@ export function AvatarStreamCard({
     if (!meetingId) {
       return;
     }
+    if (connectInFlightRef.current) {
+      return;
+    }
+    connectInFlightRef.current = true;
     setBusy(true);
+    setInlineStatus("Ждём готовность Stream…");
+    const epoch = ++connectEpochRef.current;
     try {
       // We join the SFU as a passive viewer (`viewer-<meetingId>`). The avatar
       // pod publishes its video as `agent_<sessionId>` from RunPod, so we MUST
       // NOT reuse the same userId — Stream would treat us as a duplicate session
       // of the agent and the candidate would see no video tile.
-      const response = await fetch("/api/stream/token", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          role: "spectator",
-          meetingId,
-          userId: `viewer-${meetingId}`,
-          userName: participantName
-        })
-      });
+      const backoffMs = [1000, 2000, 4000, 8000, 15000];
+      const maxAttempts = backoffMs.length + 1;
+      let lastFailure: { status?: number; code?: string; message?: string } | null = null;
 
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => ({}))) as { message?: string };
-        throw new Error(payload.message ?? "Failed to issue HR stream token");
-      }
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        if (connectEpochRef.current !== epoch) {
+          return;
+        }
+        if (ended) {
+          return;
+        }
+        let response: Response | null = null;
+        try {
+          response = await fetch("/api/stream/token", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              role: "spectator",
+              meetingId,
+              userId: `viewer-${meetingId}`,
+              userName: participantName
+            })
+          });
+        } catch (e) {
+          lastFailure = { message: e instanceof Error ? e.message : "network_error" };
+          const transient = isAvatarStreamTransientError({ message: lastFailure.message });
+          if (!transient || attempt >= maxAttempts) {
+            throw new Error(lastFailure.message ?? "Failed to issue HR stream token");
+          }
+          setInlineStatus("Видео HR-аватара подключится автоматически.");
+          await new Promise((resolve) => setTimeout(resolve, backoffMs[Math.min(attempt - 1, backoffMs.length - 1)]));
+          continue;
+        }
 
-      const payload = (await response.json()) as StreamTokenResponse;
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as StreamTokenErrorPayload;
+          lastFailure = { status: response.status, code: payload.code, message: payload.message };
+          const transient = isAvatarStreamTransientError(lastFailure);
+          if (!transient) {
+            throw new Error(payload.message ?? "Failed to issue HR stream token");
+          }
+          if (attempt >= maxAttempts) {
+            throw new Error(payload.message ?? "Stream is not ready yet");
+          }
+          setInlineStatus("Видео HR-аватара подключится автоматически.");
+          await new Promise((resolve) => setTimeout(resolve, backoffMs[Math.min(attempt - 1, backoffMs.length - 1)]));
+          continue;
+        }
+
+        const payload = (await response.json()) as StreamTokenResponse;
       // StreamClientOptions extends Partial<AxiosRequestConfig>. Дефолт axios
       // внутри SDK — timeout=5000мс (см. @stream-io/video-client
       // index.es.js:«timeout: 5000»). На живом интервью 5с бюджет на HTTP
@@ -238,21 +314,35 @@ export function AvatarStreamCard({
       const streamCall = streamClient.call(payload.callType, payload.callId);
       await streamCall.camera.disable().catch(() => undefined);
       await streamCall.microphone.disable().catch(() => undefined);
-      await streamCall.join({ create: true, video: false });
+        // Viewer must never create ghost calls. Join only existing call created by the session.
+        await streamCall.join({ create: false, video: false } as Parameters<typeof streamCall.join>[0]);
       await streamCall.camera.disable().catch(() => undefined);
       await streamCall.microphone.disable().catch(() => undefined);
 
+        if (connectEpochRef.current !== epoch) {
+          await streamCall.leave().catch(() => undefined);
+          await streamClient.disconnectUser().catch(() => undefined);
+          return;
+        }
       setClient(streamClient);
       setCall(streamCall);
+        setInlineStatus(null);
+        return;
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Не удалось подключить видео HR";
-      console.error("[avatar-stream] Stream join failed", err);
-      toast.error("Видео HR-аватара", { description: msg });
-      autoJoinAttemptForRef.current = null;
+      // Avoid spam: transient readiness errors are expected and handled by retry/backoff above.
+      // Toast only once per connect cycle for final non-transient failure.
+      if (toastEpochRef.current !== epoch) {
+        toastEpochRef.current = epoch;
+        toast.error("Видео HR-аватара", { description: msg });
+      }
+      setInlineStatus(msg);
     } finally {
+      connectInFlightRef.current = false;
       setBusy(false);
     }
-  }, [ended, meetingId, participantName]);
+  }, [ended, isAvatarStreamTransientError, meetingId, participantName]);
 
   const hrStatusLabel = useMemo(() => {
     if (ended) {
@@ -406,6 +496,11 @@ export function AvatarStreamCard({
             <p className="rounded-full bg-black/45 px-3 py-1 text-xs font-medium text-white backdrop-blur-sm">
               {hrStatusLabel}
             </p>
+            {inlineStatus ? (
+              <p className="rounded-full bg-black/35 px-3 py-1 text-[11px] text-white/90 backdrop-blur-sm">
+                {inlineStatus}
+              </p>
+            ) : null}
             {!canRenderAvatarWindow && telemetryUnavailable ? (
               <p className="rounded-full bg-black/35 px-3 py-1 text-[11px] text-white/90 backdrop-blur-sm">
                 Телеметрия недоступна, ждём фактический видеопоток
