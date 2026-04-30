@@ -140,7 +140,7 @@ function SpectatorBody() {
     const t = typeof raw === "string" ? raw.trim() : "";
     return t.length > 0 ? t : null;
   }, [searchParams]);
-  const spectatorObserverTicket = useMemo(() => {
+  const spectatorObserverTicketFromQuery = useMemo(() => {
     const raw = searchParams.get("observerTicket");
     const t = typeof raw === "string" ? raw.trim() : "";
     return t.length > 0 ? t : null;
@@ -150,6 +150,7 @@ function SpectatorBody() {
     const t = typeof raw === "string" ? raw.trim() : "";
     return t.length > 0 ? t : null;
   }, [searchParams]);
+  const [spectatorObserverTicket, setSpectatorObserverTicket] = useState<string | null>(null);
   const [detail, setDetail] = useState<InterviewDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -287,7 +288,9 @@ function SpectatorBody() {
   }, [jobAiId]);
 
   const effectiveMeetingId = meetingResolution.id;
-  const isSignedSpectator = Boolean(spectatorJoinToken && spectatorObserverTicket);
+  // External signed spectator mode is primarily identified by joinToken.
+  // observerTicket is short-lived/consume-once and may be missing on initial redirect or after refresh.
+  const isSignedSpectator = Boolean(spectatorJoinToken);
   const isInternalObserverDashboard = !isSignedSpectator && Boolean(jobAiId);
   const candidateName = [detail?.projection.candidateFirstName, detail?.projection.candidateLastName]
     .filter(Boolean)
@@ -346,6 +349,86 @@ function SpectatorBody() {
     runtimeMatchesMeeting,
     runtimeSnapshot,
     terminalByProjection
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!jobAiId) return;
+    // Load persisted spectator credentials (joinToken is always from URL).
+    const storageKey = `nullxes:spectator:credentials:${jobAiId}`;
+    const fromStorage = (() => {
+      try {
+        const raw = window.sessionStorage.getItem(storageKey);
+        if (!raw) return null;
+        return JSON.parse(raw) as { observerTicket?: string; viewerKey?: string };
+      } catch {
+        return null;
+      }
+    })();
+    const queryTicket = spectatorObserverTicketFromQuery?.trim() || "";
+    const storedTicket = typeof fromStorage?.observerTicket === "string" ? fromStorage.observerTicket.trim() : "";
+    const effective = queryTicket || storedTicket || null;
+    setSpectatorObserverTicket(effective);
+  }, [jobAiId, spectatorObserverTicketFromQuery]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!jobAiId || !spectatorJoinToken) return;
+    const storageKey = `nullxes:spectator:credentials:${jobAiId}`;
+    // Persist observerTicket if we have it (do not persist joinToken — it stays in the URL).
+    const ticket = spectatorObserverTicket?.trim() || "";
+    if (!ticket) return;
+    try {
+      window.sessionStorage.setItem(storageKey, JSON.stringify({ observerTicket: ticket, viewerKey: spectatorViewerKey ?? undefined }));
+    } catch {
+      /* noop */
+    }
+  }, [jobAiId, spectatorJoinToken, spectatorObserverTicket, spectatorViewerKey]);
+
+  useEffect(() => {
+    if (!spectatorJoinToken) return;
+    if (spectatorObserverTicket) return;
+    // External spectator without ticket: fetch a fresh one from gateway.
+    let cancelled = false;
+    const run = async () => {
+      const res = await fetch(`/api/gateway/join/spectator/${encodeURIComponent(spectatorJoinToken)}/session-ticket`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" }
+      }).catch(() => null);
+      if (cancelled) return;
+      if (!res?.ok) {
+        return;
+      }
+      const payload = (await res.json().catch(() => ({}))) as { observerTicket?: unknown };
+      const ticket = typeof payload.observerTicket === "string" ? payload.observerTicket.trim() : "";
+      if (ticket) {
+        setSpectatorObserverTicket(ticket);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [spectatorJoinToken, spectatorObserverTicket]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    console.info("[spectator-mode]", {
+      jobAiId,
+      isSignedSpectator,
+      isInternalObserverDashboard,
+      hasJoinToken: Boolean(spectatorJoinToken),
+      hasObserverTicket: Boolean(spectatorObserverTicket),
+      hasViewerKey: Boolean(spectatorViewerKey)
+    });
+  }, [
+    isInternalObserverDashboard,
+    isSignedSpectator,
+    jobAiId,
+    spectatorJoinToken,
+    spectatorObserverTicket,
+    spectatorViewerKey
   ]);
 
   useEffect(() => {

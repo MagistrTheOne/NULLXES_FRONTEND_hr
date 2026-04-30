@@ -1097,6 +1097,15 @@ export function ObserverStreamCard({
           const abortTimer = setTimeout(() => tokenAbort.abort(), OBSERVER_TOKEN_TIMEOUT_MS);
           let response: Response;
           try {
+            if (process.env.NODE_ENV !== "production") {
+              console.info("[observer-token-request]", {
+                mode: viewerKind ? "internal" : "external",
+                hasJoinToken: Boolean(spectatorJoinToken?.trim()),
+                hasObserverTicket: Boolean(activeObserverTicket?.trim()),
+                hasCallId: Boolean(streamCallId?.trim()),
+                hasCallType: Boolean(streamCallType?.trim())
+              });
+            }
             response = await fetch("/api/stream/token", {
               method: "POST",
               credentials: "include",
