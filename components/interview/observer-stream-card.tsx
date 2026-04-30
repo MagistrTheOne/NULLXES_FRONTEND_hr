@@ -762,6 +762,8 @@ export function ObserverStreamCard({
     return "Не в эфире";
   }, [busy, call, connectionPhase, enabled, ended, error, meetingId, status]);
 
+  // TODO(stream-audio): add explicit remote audio renderer for observer; ParticipantView trackType="videoTrack" may not bind audio tracks.
+
   const silenceEnabledStorageKey = useMemo(
     () => `nullxes:spectator:silence-enabled:${meetingId ?? "global"}`,
     [meetingId]
@@ -1053,6 +1055,15 @@ export function ObserverStreamCard({
     }
   }, [cleanupSelfPreview, disconnectStream, ended]);
 
+  useEffect(() => {
+    if (!error) return;
+    // If credentials/binding change after an error (e.g. observerTicket refreshed),
+    // allow auto-join to retry without forcing user interaction.
+    setError(null);
+    autoJoinAttemptForRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetingId, streamCallId, streamCallType, spectatorJoinToken, spectatorObserverTicket, viewerKind]);
+
   const startStream = useCallback(async () => {
     if (ended) {
       return;
@@ -1137,7 +1148,7 @@ export function ObserverStreamCard({
             if (response.status === 409 && payload.code === "stream.binding_missing") {
               throw new Error("stream.binding_missing");
             }
-            if (response.status === 503 && payload.code === "observer_role_unavailable" && suppressErrorToasts) {
+            if (response.status === 503 && payload.code === "observer_role_unavailable") {
               throw new Error("observer_role_unavailable");
             }
             if (!refreshedTicketOnce && isObserverTicketError(payload)) {
@@ -1213,7 +1224,9 @@ export function ObserverStreamCard({
             lower.includes("observer.ticket.refreshed_retry") ||
             lower.includes("meeting.not_active") ||
             lower.includes("stream.binding_missing") ||
-            (suppressErrorToasts && lower.includes("observer_role_unavailable")) ||
+            lower.includes("observer_role_unavailable") ||
+            lower.includes("readonly role") ||
+            lower.includes("observer readonly role") ||
             lower.includes("video") ||
             lower.includes("media") ||
             lower.includes("сессия не активна");
@@ -1398,8 +1411,12 @@ export function ObserverStreamCard({
       {viewMode === "waiting" ? (
         <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-xs font-medium text-slate-700">Ожидание запуска</p>
-            <p className="mt-0.5 text-[11px] leading-snug text-slate-600">Видео подключится автоматически после старта интервью.</p>
+            <p className="text-xs font-medium text-slate-700">
+              {canConnect || busy ? "Подключаем наблюдателя" : waitingReason ? "Ожидание" : "Ожидание запуска"}
+            </p>
+            <p className="mt-0.5 text-[11px] leading-snug text-slate-600">
+              {statusHint || waitingReason || "Видео подключится автоматически после старта интервью."}
+            </p>
           </div>
           <div className="flex flex-wrap gap-1.5">
             <ObserverPresencePopover events={presenceEvents} />

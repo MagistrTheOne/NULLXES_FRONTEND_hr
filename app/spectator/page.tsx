@@ -314,11 +314,13 @@ function SpectatorBody() {
   const resolvedStreamCallId = runtimeMatchesMeeting ? runtimeStreamCallIdRaw : "";
   const resolvedStreamCallType = runtimeMatchesMeeting ? runtimeStreamCallTypeRaw || "default" : "";
   const hasTrustedStreamBinding = Boolean(resolvedStreamCallId) && Boolean(resolvedStreamCallType);
+  const spectatorAccessReady = !isSignedSpectator || Boolean(spectatorObserverTicket);
   // Spectator joins when we have a trusted meeting + trusted Stream binding (health.ready is best-effort only).
   const canConnect =
     Boolean(effectiveMeetingId) &&
     runtimeMatchesMeeting &&
     hasTrustedStreamBinding &&
+    spectatorAccessReady &&
     !terminalByProjection;
   const spectatorWaitingReason = useMemo(() => {
     if (terminalByProjection) {
@@ -333,6 +335,9 @@ function SpectatorBody() {
     if (!runtimeMatchesMeeting) {
       return "Runtime обновляется, ждём подтверждение актуальной сессии наблюдения.";
     }
+    if (isSignedSpectator && !spectatorObserverTicket) {
+      return "Подготавливаем доступ наблюдателя…";
+    }
     if (!hasTrustedStreamBinding) {
       return "Сессия активна. Ждём конфигурацию Stream call.";
     }
@@ -344,10 +349,12 @@ function SpectatorBody() {
   }, [
     effectiveMeetingId,
     hasTrustedStreamBinding,
+    isSignedSpectator,
     projectionActive,
     runtimeActive,
     runtimeMatchesMeeting,
     runtimeSnapshot,
+    spectatorObserverTicket,
     terminalByProjection
   ]);
 
@@ -732,6 +739,7 @@ function SpectatorBody() {
               allowTalkToggle={false}
               spectatorDashboardLayout
               showSelfPreview
+              sessionEnded={terminalByProjection}
               waitingReason={spectatorWaitingReason}
               spectatorJoinToken={spectatorJoinToken}
               spectatorObserverTicket={spectatorObserverTicket}
