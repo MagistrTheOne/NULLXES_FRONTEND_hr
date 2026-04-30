@@ -25,6 +25,8 @@ type VoiceRow = { voiceId: string; name: string; labels?: Record<string, string>
 const VOICE_PREVIEW_SAMPLE_TEXT =
   "Привет! Я цифровой HR JobAI на базе NULLXES. Приятно познакомиться — расскажу о вакансии, компании и дальнейших шагах.";
 
+type VoiceStyleFilter = "any" | "neutral" | "confident" | "soft" | "energetic" | "premium";
+
 const LANG_OPTIONS: { id: string; label: string }[] = [
   { id: "any", label: "Все языки" },
   { id: "en", label: "English" },
@@ -51,35 +53,154 @@ const GENDER_OPTIONS: { id: string; label: string }[] = [
   { id: "neutral", label: "Нейтральный" }
 ];
 
+const STYLE_OPTIONS: { id: VoiceStyleFilter; label: string }[] = [
+  { id: "any", label: "Все стили" },
+  { id: "neutral", label: "Нейтральный" },
+  { id: "confident", label: "Уверенный" },
+  { id: "soft", label: "Мягкий" },
+  { id: "energetic", label: "Энергичный" },
+  { id: "premium", label: "Премиальный" }
+];
+
 type Props = {
   committedVoiceId: string;
   onSave: (voiceId: string) => void;
   className?: string;
 };
 
-function labelBadges(labels: Record<string, string> | undefined): { key: string; text: string }[] {
-  if (!labels) return [];
-  const priority = ["gender", "language", "accent", "age", "use case", "descriptive"];
-  const out: { key: string; text: string }[] = [];
-  for (const key of priority) {
-    const raw = labels[key];
-    if (typeof raw === "string" && raw.trim()) {
-      out.push({ key, text: raw.trim() });
-    }
-  }
-  for (const [key, val] of Object.entries(labels)) {
-    if (priority.includes(key)) continue;
-    if (typeof val === "string" && val.trim() && out.length < 5) {
-      out.push({ key, text: val.trim() });
-    }
-  }
-  return out.slice(0, 4);
+function getVoiceDisplayName(voice: VoiceRow): string {
+  const raw = (voice.name ?? "").trim();
+  if (!raw) return "Без названия";
+  const parts = raw.split(" - ");
+  const head = (parts[0] ?? "").trim();
+  // If the catalog stores only an ID in name — keep it, but still humanize a bit.
+  if (!head) return "Без названия";
+  return head;
 }
 
-function friendlyVoiceLabel(row: VoiceRow): string {
-  const n = row.name.trim();
-  if (n && n !== row.voiceId) return n;
-  return "Голос без названия";
+function getVoiceLanguageLabel(voice: VoiceRow): string | null {
+  const raw = (voice.labels?.language ?? voice.labels?.lang ?? "").trim().toLowerCase();
+  if (!raw) return null;
+  if (raw.startsWith("en")) return "EN";
+  if (raw.startsWith("ru")) return "RU";
+  if (raw.startsWith("de")) return "DE";
+  if (raw.startsWith("fr")) return "FR";
+  if (raw.startsWith("es")) return "ES";
+  if (raw.startsWith("it")) return "IT";
+  if (raw.startsWith("pt")) return "PT";
+  if (raw.startsWith("pl")) return "PL";
+  if (raw.startsWith("uk")) return "UK";
+  if (raw.startsWith("ja")) return "JA";
+  if (raw.startsWith("ko")) return "KO";
+  if (raw.startsWith("zh")) return "ZH";
+  if (raw.startsWith("ar")) return "AR";
+  if (raw.startsWith("tr")) return "TR";
+  if (raw.startsWith("nl")) return "NL";
+  return raw.toUpperCase().slice(0, 3);
+}
+
+function getVoiceGenderLabel(voice: VoiceRow): string | null {
+  const raw = (voice.labels?.gender ?? "").trim().toLowerCase();
+  if (!raw) return null;
+  if (raw === "male") return "Мужской";
+  if (raw === "female") return "Женский";
+  if (raw === "neutral") return "Нейтральный";
+  return null;
+}
+
+const TONE_TAG_ALLOWLIST: Array<{ key: string; label: string; style?: VoiceStyleFilter }> = [
+  { key: "warm", label: "Тёплый", style: "soft" },
+  { key: "calm", label: "Спокойный", style: "soft" },
+  { key: "soft", label: "Мягкий", style: "soft" },
+  { key: "neutral", label: "Нейтральный", style: "neutral" },
+  { key: "confident", label: "Уверенный", style: "confident" },
+  { key: "professional", label: "Профессиональный", style: "premium" },
+  { key: "clear", label: "Чёткий", style: "neutral" },
+  { key: "energetic", label: "Энергичный", style: "energetic" },
+  { key: "premium", label: "Премиальный", style: "premium" }
+];
+
+const NON_ENTERPRISE_TOKENS = new Set([
+  "trickster",
+  "seductive",
+  "villain",
+  "witch",
+  "pirate",
+  "character",
+  "monster",
+  "demon",
+  "evil",
+  "villainous",
+  "sass",
+  "sassy",
+  "anime",
+  "cartoon",
+  "joker",
+  "clown"
+]);
+
+function tokenizeVoiceText(voice: VoiceRow): string[] {
+  const pieces: string[] = [];
+  pieces.push(voice.name ?? "");
+  for (const val of Object.values(voice.labels ?? {})) {
+    if (typeof val === "string") pieces.push(val);
+  }
+  return pieces
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-zа-я0-9\s_-]+/g, " ")
+    .split(/\s+/g)
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function getVoiceToneTags(voice: VoiceRow): { tags: string[]; styles: Set<VoiceStyleFilter> } {
+  const tokens = tokenizeVoiceText(voice);
+  const tokenSet = new Set(tokens);
+  for (const bad of NON_ENTERPRISE_TOKENS) {
+    if (tokenSet.has(bad)) {
+      // If the voice is explicitly character-ish, do not try to infer tone tags from it.
+      return { tags: [], styles: new Set(["any"]) };
+    }
+  }
+
+  const tags: string[] = [];
+  const styles = new Set<VoiceStyleFilter>();
+  for (const entry of TONE_TAG_ALLOWLIST) {
+    if (tokenSet.has(entry.key)) {
+      tags.push(entry.label);
+      if (entry.style) styles.add(entry.style);
+    }
+  }
+
+  // Heuristics: map a few common adjectives to enterprise tags.
+  if (tokenSet.has("warm") || tokenSet.has("friendly")) tags.push("Тёплый");
+  if (tokenSet.has("calm") || tokenSet.has("gentle")) tags.push("Спокойный");
+  if (tokenSet.has("deep") && !tags.includes("Спокойный")) tags.push("Глубокий");
+  if (tokenSet.has("clear")) tags.push("Чёткий");
+  if (tokenSet.has("professional")) tags.push("Профессиональный");
+  if (tokenSet.has("confident")) tags.push("Уверенный");
+
+  // Dedupe + cap.
+  const uniq = Array.from(new Set(tags)).slice(0, 4);
+  return { tags: uniq, styles };
+}
+
+function matchesSearch(voice: VoiceRow, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const display = getVoiceDisplayName(voice).toLowerCase();
+  const lang = (getVoiceLanguageLabel(voice) ?? "").toLowerCase();
+  const gender = (getVoiceGenderLabel(voice) ?? "").toLowerCase();
+  const tones = getVoiceToneTags(voice).tags.join(" ").toLowerCase();
+  const rawName = (voice.name ?? "").toLowerCase();
+  return (
+    display.includes(q) ||
+    rawName.includes(q) ||
+    tones.includes(q) ||
+    lang.includes(q) ||
+    gender.includes(q)
+  );
 }
 
 function isAbortError(e: unknown): boolean {
@@ -92,6 +213,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
   const [search, setSearch] = useState("");
   const [filterLang, setFilterLang] = useState("any");
   const [filterGender, setFilterGender] = useState("any");
+  const [filterStyle, setFilterStyle] = useState<VoiceStyleFilter>("any");
   const [voices, setVoices] = useState<VoiceRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -229,7 +351,9 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
     try {
       const params = new URLSearchParams();
       const q = search.trim();
-      if (q.length > 0) params.set("q", q);
+      // Server-side filtering is useful for large catalogs, but it usually searches raw names only.
+      // Keep it only for "long" queries; short queries should allow client-side matching against normalized tags.
+      if (q.length >= 3) params.set("q", q);
       if (filterLang !== "any") params.set("lang", filterLang);
       if (filterGender !== "any") params.set("gender", filterGender);
       const qs = params.toString();
@@ -270,6 +394,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
     setSearch("");
     setFilterLang("any");
     setFilterGender("any");
+    setFilterStyle("any");
   }, []);
 
   const selectRows = useMemo(() => {
@@ -285,16 +410,38 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
     if (c && !byId.has(c)) {
       byId.set(c, { voiceId: c, name: c });
     }
-    return Array.from(byId.values()).sort((a, b) =>
-      friendlyVoiceLabel(a).localeCompare(friendlyVoiceLabel(b), "ru")
-    );
-  }, [voices, draftVoiceId, committedVoiceId]);
+    const base = Array.from(byId.values());
+    const filtered = base
+      .filter((v) => matchesSearch(v, search))
+      .filter((v) => {
+        if (filterStyle === "any") return true;
+        const { styles, tags } = getVoiceToneTags(v);
+        if (styles.has(filterStyle)) return true;
+        // Fallback mapping for a couple of tags that don't encode explicit style bucket.
+        if (filterStyle === "premium" && tags.includes("Профессиональный")) return true;
+        if (filterStyle === "confident" && tags.includes("Уверенный")) return true;
+        if (filterStyle === "soft" && (tags.includes("Тёплый") || tags.includes("Спокойный") || tags.includes("Мягкий"))) return true;
+        if (filterStyle === "neutral" && (tags.includes("Нейтральный") || tags.includes("Чёткий"))) return true;
+        if (filterStyle === "energetic" && tags.includes("Энергичный")) return true;
+        return false;
+      });
+
+    const recommendedKeys = new Set(["Нейтральный", "Уверенный", "Тёплый", "Спокойный", "Профессиональный", "Чёткий"]);
+    const isRecommended = (v: VoiceRow) => getVoiceToneTags(v).tags.some((t) => recommendedKeys.has(t));
+
+    return filtered.sort((a, b) => {
+      const ar = isRecommended(a) ? 0 : 1;
+      const br = isRecommended(b) ? 0 : 1;
+      if (ar !== br) return ar - br;
+      return getVoiceDisplayName(a).localeCompare(getVoiceDisplayName(b), "ru");
+    });
+  }, [voices, draftVoiceId, committedVoiceId, filterStyle, search]);
 
   const committedLabel = useMemo(() => {
     const id = committedVoiceId.trim();
     if (!id) return "—";
     const hit = voices.find((v) => v.voiceId === id);
-    if (hit) return friendlyVoiceLabel(hit);
+    if (hit) return getVoiceDisplayName(hit);
     return "Сохранённый голос";
   }, [voices, committedVoiceId]);
 
@@ -302,8 +449,32 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
     const id = draftVoiceId.trim();
     if (!id) return null;
     const row = selectRows.find((v) => v.voiceId === id);
-    return row ? friendlyVoiceLabel(row) : null;
+    return row ? getVoiceDisplayName(row) : null;
   }, [selectRows, draftVoiceId]);
+
+  const draftMeta = useMemo(() => {
+    const id = draftVoiceId.trim();
+    if (!id) return null;
+    const row = selectRows.find((v) => v.voiceId === id) ?? voices.find((v) => v.voiceId === id) ?? null;
+    if (!row) return null;
+    const { tags } = getVoiceToneTags(row);
+    const lang = getVoiceLanguageLabel(row);
+    const gender = getVoiceGenderLabel(row);
+    const secondary = [tags.join(" · "), gender, lang].filter((x) => typeof x === "string" && x.trim()).join(" · ");
+    return { display: getVoiceDisplayName(row), secondary };
+  }, [draftVoiceId, selectRows, voices]);
+
+  const committedMeta = useMemo(() => {
+    const id = committedVoiceId.trim();
+    if (!id) return null;
+    const row = voices.find((v) => v.voiceId === id) ?? null;
+    if (!row) return null;
+    const { tags } = getVoiceToneTags(row);
+    const lang = getVoiceLanguageLabel(row);
+    const gender = getVoiceGenderLabel(row);
+    const secondary = [tags.join(" · "), gender, lang].filter((x) => typeof x === "string" && x.trim()).join(" · ");
+    return { display: getVoiceDisplayName(row), secondary };
+  }, [committedVoiceId, voices]);
 
   return (
     <TooltipProvider delay={400}>
@@ -395,6 +566,11 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
             <p className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800" title={committedLabel}>
               {committedLabel}
             </p>
+            {committedMeta?.secondary ? (
+              <p className="hidden min-w-0 max-w-[220px] truncate text-[10px] text-slate-500 sm:block" title={committedMeta.secondary}>
+                {committedMeta.secondary}
+              </p>
+            ) : null}
           </div>
         ) : (
           <div className="space-y-2">
@@ -414,7 +590,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                 >
                   <ComboboxInput
                     className="w-full min-w-0"
-                    placeholder="Поиск и выбор голоса…"
+                    placeholder="Поиск: имя, стиль, язык"
                     disabled={error === "no_api_key" || error === "elevenlabs_not_configured"}
                     showClear
                   />
@@ -425,34 +601,65 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                     sideOffset={4}
                     className="max-h-60 min-w-(--anchor-width) rounded-lg text-xs"
                   >
-                    <ComboboxList className="max-h-52 p-1">
-                      {selectRows.map((v) => {
-                        const badges = labelBadges(v.labels).slice(0, 2);
-                        const label = friendlyVoiceLabel(v);
+                    <ComboboxList className="max-h-52 space-y-0.5 p-1">
+                      {selectRows.map((v, idx) => {
+                        const display = getVoiceDisplayName(v);
+                        const { tags } = getVoiceToneTags(v);
+                        const lang = getVoiceLanguageLabel(v);
+                        const gender = getVoiceGenderLabel(v);
+                        const secondary = [tags.join(" · "), gender, lang].filter((x) => typeof x === "string" && x.trim()).join(" · ");
+                        const recommendedKeys = new Set(["Нейтральный", "Уверенный", "Тёплый", "Спокойный", "Профессиональный", "Чёткий"]);
+                        const isRecommended = tags.some((t) => recommendedKeys.has(t));
+                        const prev = selectRows[idx - 1];
+                        const prevIsRecommended = prev ? getVoiceToneTags(prev).tags.some((t) => recommendedKeys.has(t)) : null;
+                        const showRecommendedHeader = idx === 0 && isRecommended;
+                        const showOthersHeader = idx > 0 && prevIsRecommended === true && !isRecommended;
+
                         return (
-                          <ComboboxItem
-                            key={v.voiceId}
-                            value={v.voiceId}
-                            className="rounded-md py-1.5 pr-8 pl-2 text-xs"
-                          >
-                            <span className="flex min-w-0 items-center gap-1.5">
-                              <span className="truncate font-medium text-slate-800">{label}</span>
-                              {badges.map((b) => (
-                                <Badge
-                                  key={`${v.voiceId}-${b.key}`}
-                                  variant="outline"
-                                  className="inline-flex h-4 max-w-18 shrink-0 truncate px-1 py-0 text-[9px] font-normal"
-                                >
-                                  {b.text}
-                                </Badge>
-                              ))}
-                            </span>
-                          </ComboboxItem>
+                          <div key={v.voiceId}>
+                            {showRecommendedHeader ? (
+                              <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                Рекомендовано для интервью
+                              </p>
+                            ) : null}
+                            {showOthersHeader ? (
+                              <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                Все голоса
+                              </p>
+                            ) : null}
+                            <ComboboxItem value={v.voiceId} className="rounded-md py-1.5 pr-8 pl-2 text-xs">
+                              <span className="flex min-w-0 flex-col gap-0.5">
+                                <span className="flex min-w-0 items-center gap-2">
+                                  <span className="truncate text-[12px] font-semibold text-slate-800">{display}</span>
+                                  {isRecommended ? (
+                                    <Badge variant="secondary" className="h-4 rounded-full px-1.5 text-[9px] font-normal text-slate-600">
+                                      Рек.
+                                    </Badge>
+                                  ) : null}
+                                </span>
+                                {secondary ? (
+                                  <span className="truncate text-[10px] leading-tight text-slate-500">{secondary}</span>
+                                ) : null}
+                              </span>
+                            </ComboboxItem>
+                          </div>
                         );
                       })}
                     </ComboboxList>
-                    <ComboboxEmpty className="px-2 py-3 text-center text-[11px] text-muted-foreground">
-                      {loading ? "Загрузка…" : "Ничего не нашлось — смягчите фильтры или поиск."}
+                    <ComboboxEmpty className="px-3 py-3 text-center text-[11px] text-muted-foreground">
+                      {loading ? (
+                        "Загрузка…"
+                      ) : (
+                        <div className="space-y-2">
+                          <div>
+                            <p className="text-[12px] font-medium text-slate-700">Голоса не найдены</p>
+                            <p className="mt-0.5 text-[11px] text-slate-500">Попробуйте изменить язык, пол или стиль.</p>
+                          </div>
+                          <Button type="button" variant="outline" size="sm" className="h-8 rounded-md px-2 text-[11px]" onClick={resetFiltersAndSearch}>
+                            Сбросить фильтры
+                          </Button>
+                        </div>
+                      )}
                     </ComboboxEmpty>
                   </ComboboxContent>
                 </Combobox>
@@ -470,14 +677,25 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
               </Button>
             </div>
 
-            {draftFriendly && draftVoiceId.trim() ? (
-              <p className="truncate text-[11px] text-slate-600">
-                Выбрано: <span className="font-semibold text-slate-800">{draftFriendly}</span>
-              </p>
-            ) : null}
+            {draftVoiceId.trim() ? (
+              <div className="rounded-lg border border-slate-200/70 bg-white/70 px-2.5 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Выбрано</p>
+                <p className="mt-0.5 truncate text-xs font-semibold text-slate-800" title={draftMeta?.display ?? draftFriendly ?? undefined}>
+                  {draftMeta?.display ?? draftFriendly ?? "—"}
+                </p>
+                {draftMeta?.secondary ? (
+                  <p className="mt-0.5 truncate text-[10px] leading-tight text-slate-500">{draftMeta.secondary}</p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-slate-200/70 bg-white/70 px-2.5 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Выбрано</p>
+                <p className="mt-0.5 text-xs font-semibold text-slate-700">Голос не выбран</p>
+              </div>
+            )}
 
             <div className="flex flex-wrap items-end gap-2">
-              <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
+              <div className="grid min-w-0 flex-1 grid-cols-3 gap-2">
                 <div className="grid min-w-0 gap-1">
                   <Label htmlFor="hr-el-lang" className="text-[10px] font-medium text-slate-500">
                     Язык
@@ -508,6 +726,24 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                     onChange={(e) => setFilterGender(e.target.value)}
                   >
                     {GENDER_OPTIONS.map((opt) => (
+                      <NativeSelectOption key={opt.id} value={opt.id}>
+                        {opt.label}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </div>
+                <div className="grid min-w-0 gap-1">
+                  <Label htmlFor="hr-el-style" className="text-[10px] font-medium text-slate-500">
+                    Стиль
+                  </Label>
+                  <NativeSelect
+                    id="hr-el-style"
+                    size="sm"
+                    className="w-full min-w-0"
+                    value={filterStyle}
+                    onChange={(e) => setFilterStyle(e.target.value as VoiceStyleFilter)}
+                  >
+                    {STYLE_OPTIONS.map((opt) => (
                       <NativeSelectOption key={opt.id} value={opt.id}>
                         {opt.label}
                       </NativeSelectOption>
