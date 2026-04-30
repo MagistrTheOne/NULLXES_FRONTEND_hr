@@ -10,6 +10,8 @@ export const runtime = "nodejs";
 type TokenRequestBody = {
   meetingId?: string;
   role?: "candidate" | "spectator" | "admin";
+  /** Internal viewer marker (e.g. HR avatar panel). */
+  viewerKind?: string;
   userId?: string;
   userName?: string;
   callId?: string;
@@ -173,6 +175,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const body = (await request.json().catch(() => ({}))) as TokenRequestBody;
   const role = body.role ?? "candidate";
+  const viewerKind = typeof body.viewerKind === "string" ? body.viewerKind : null;
+  const isInternalAvatarViewer = role === "spectator" && viewerKind === "hr_avatar_panel";
   // `role` comes from the client request body, so it must be allowlisted server-side.
   // Unknown roles must never receive Stream tokens (prevents role escalation).
   if (role !== "candidate" && role !== "spectator") {
@@ -190,7 +194,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   let spectatorStableViewerKey: string | null = null;
   const observerTicketRaw = typeof body.observerTicket === "string" ? body.observerTicket.trim() : "";
 
-  if (role === "spectator" && observerTicketRaw) {
+  if (role === "spectator" && !isInternalAvatarViewer && observerTicketRaw) {
     const consumeRes = await fetch(`${backendUrl}/join/spectator/session-ticket/consume`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -238,7 +242,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     role === "spectator" && spectatorStableViewerKey
       ? sanitizeIdentifier(`observer-${meetingId}-${spectatorStableViewerKey}`, `observer-${meetingId}`)
       : null;
-  const userId = sanitizeIdentifier(body.userId ?? spectatorServerUserId ?? `${role}-${meetingId}`, `${role}-user`);
+  const internalAvatarUserId =
+    role === "spectator" && isInternalAvatarViewer
+      ? sanitizeIdentifier(`avatar-viewer-${meetingId}`, `avatar-viewer-${meetingId}`)
+      : null;
+  const userId = sanitizeIdentifier(
+    internalAvatarUserId ?? body.userId ?? spectatorServerUserId ?? `${role}-${meetingId}`,
+    `${role}-user`
+  );
   const userName = (body.userName ?? (role === "candidate" ? "Candidate" : "Spectator")).trim() || "Participant";
   const callId = sanitizeIdentifier(body.callId ?? meetingId, meetingId);
   const callType = sanitizeIdentifier(body.callType ?? "default", "default");
@@ -337,7 +348,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // this check can be slow and unnecessarily blocks observer Stream token issuance.
     const internalOk = strict ? await hasTrustedAppUser(request) : false;
 
-    if (!spectatorAuthorizedByTicket && strict && !internalOk && !joinTokenRaw) {
+    // External spectator flow must keep strict auth; internal HR avatar viewer must not depend on it.
+    if (!isInternalAvatarViewer && !spectatorAuthorizedByTicket && strict && !internalOk && !joinTokenRaw) {
       return NextResponse.json(
         {
           message: "Для выдачи токена наблюдателя нужна подписанная ссылка или сессия HR.",
@@ -347,7 +359,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    if (!spectatorAuthorizedByTicket && joinTokenRaw) {
+    if (!isInternalAvatarViewer && !spectatorAuthorizedByTicket && joinTokenRaw) {
       const ok = await verifySpectatorJoinTokenToMeeting(backendUrl, joinTokenRaw, meetingId);
       if (!ok) {
         return NextResponse.json(
@@ -410,8 +422,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         } else {
           return NextResponse.json(
             {
-              message: "Runtime Stream call binding is not ready for this observer session.",
-              code: "runtime.stream_call_not_ready"
+              message: isInternalAvatarViewer
+                ? "Stream call binding is not ready yet."
+                : "Runtime Stream call binding is not ready for this observer session.",
+              code: isInternalAvatarViewer ? "stream.binding_missing" : "runtime.stream_call_not_ready"
             },
             { status: 409 }
           );
@@ -422,8 +436,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       } else {
         return NextResponse.json(
           {
-            message: "Runtime snapshot is not ready for this observer session.",
-            code: "runtime.not_ready"
+            message: isInternalAvatarViewer
+              ? "Stream call binding is not ready yet."
+              : "Runtime snapshot is not ready for this observer session.",
+            code: isInternalAvatarViewer ? "stream.binding_missing" : "runtime.not_ready"
           },
           { status: 409 }
         );
@@ -434,8 +450,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     } else {
       return NextResponse.json(
         {
-          message: "Runtime snapshot is not ready for this observer session.",
-          code: "runtime.not_ready"
+          message: isInternalAvatarViewer
+            ? "Stream call binding is not ready yet."
+            : "Runtime snapshot is not ready for this observer session.",
+          code: isInternalAvatarViewer ? "stream.binding_missing" : "runtime.not_ready"
         },
         // Non-OK runtime is an expected readiness state for spectators. Do not surface as 502.
         { status: 409 }
@@ -443,7 +461,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
   }
 
-  if (role === "spectator") {
+  if (role === "spectator" && !isInternalAvatarViewer) {
     try {
       await enforceSpectatorReadonlyRole(apiKey, secret, userId, userName, resolvedCallType, resolvedCallId);
     } catch (error) {
@@ -461,6 +479,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           code: "observer_role_unavailable"
         },
         { status: 503 }
+      );
+    }
+  }
+
+  // Internal avatar viewer must never take callId/callType from the client as a source of truth.
+  // If the client provided them, treat it only as an optional consistency check.
+  if (isInternalAvatarViewer) {
+    const clientCallId = sanitizeIdentifier(body.callId ?? "", "");
+    const clientCallType = sanitizeIdentifier(body.callType ?? "", "");
+    if (clientCallId && clientCallId !== resolvedCallId) {
+      return NextResponse.json(
+        { message: "Stream call binding is not ready yet.", code: "stream.binding_missing" },
+        { status: 409 }
+      );
+    }
+    if (clientCallType && clientCallType !== resolvedCallType) {
+      return NextResponse.json(
+        { message: "Stream call binding is not ready yet.", code: "stream.binding_missing" },
+        { status: 409 }
       );
     }
   }

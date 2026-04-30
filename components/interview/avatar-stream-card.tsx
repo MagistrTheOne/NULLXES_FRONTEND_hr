@@ -266,8 +266,9 @@ export function AvatarStreamCard({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               role: "spectator",
+              viewerKind: "hr_avatar_panel",
               meetingId,
-              userId: `viewer-${meetingId}`,
+              userId: `avatar-viewer-${meetingId}`,
               userName: participantName
             })
           });
