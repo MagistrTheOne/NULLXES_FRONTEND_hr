@@ -598,6 +598,10 @@ type ObserverStreamCardProps = {
   spectatorObserverTicket?: string | null;
   /** Stable spectator key for reconnect identity (if available from URL/parent). */
   spectatorViewerKey?: string | null;
+  /** Called when observerTicket was refreshed and should be persisted by parent. */
+  onObserverTicketRefresh?: (ticket: string) => void;
+  /** Called when observerTicket is no longer usable and should be cleared by parent. */
+  onObserverTicketInvalid?: () => void;
   /** Компоновка в стиле "полотно сессии": кандидат слева, аватар справа. */
   sessionMirrorLayout?: boolean;
   /** Мини self-view наблюдателя (локальная камера/микрофон) поверх потока. */
@@ -634,6 +638,8 @@ export function ObserverStreamCard({
   spectatorJoinToken = null,
   spectatorObserverTicket = null,
   spectatorViewerKey = null,
+  onObserverTicketRefresh,
+  onObserverTicketInvalid,
   sessionMirrorLayout = false,
   showSelfPreview = false,
   waitingReason = null,
@@ -1165,6 +1171,16 @@ export function ObserverStreamCard({
 
           if (!response.ok) {
             const payload = (await response.json().catch(() => ({}))) as StreamTokenErrorPayload;
+            if (process.env.NODE_ENV !== "production") {
+              console.info("[observer-ticket-flow]", {
+                attempt,
+                responseStatus: response.status,
+                responseCode: typeof payload.code === "string" ? payload.code : null,
+                hasObserverTicket: Boolean(activeObserverTicket?.trim()),
+                refreshedTicketOnce,
+                mode: viewerKind ? "internal" : "external"
+              });
+            }
             if (response.status === 409 && payload.code === "meeting.not_active") {
               throw new Error("meeting.not_active");
             }
@@ -1179,8 +1195,10 @@ export function ObserverStreamCard({
               const refreshed = await refreshObserverTicket();
               if (refreshed) {
                 activeObserverTicket = refreshed;
+                onObserverTicketRefresh?.(refreshed);
                 throw new Error("observer.ticket.refreshed_retry");
               }
+              onObserverTicketInvalid?.();
             }
             throw new Error(payload.message ?? "Failed to issue observer stream token");
           }
@@ -1322,6 +1340,8 @@ export function ObserverStreamCard({
     call,
     pushEvent,
     emitObserverAuditEvent,
+    onObserverTicketInvalid,
+    onObserverTicketRefresh,
     suppressErrorToasts,
     viewerKind
   ]);

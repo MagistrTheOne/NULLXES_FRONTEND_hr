@@ -744,6 +744,33 @@ function SpectatorBody() {
               spectatorJoinToken={spectatorJoinToken}
               spectatorObserverTicket={spectatorObserverTicket}
               spectatorViewerKey={spectatorViewerKey}
+              onObserverTicketRefresh={(ticket) => {
+                if (typeof window === "undefined") return;
+                const next = ticket.trim();
+                if (!next) return;
+                setSpectatorObserverTicket(next);
+                if (!jobAiId) return;
+                const storageKey = `nullxes:spectator:credentials:${jobAiId}`;
+                try {
+                  window.sessionStorage.setItem(
+                    storageKey,
+                    JSON.stringify({ observerTicket: next, viewerKey: spectatorViewerKey ?? undefined })
+                  );
+                } catch {
+                  /* noop */
+                }
+              }}
+              onObserverTicketInvalid={() => {
+                if (typeof window === "undefined") return;
+                setSpectatorObserverTicket(null);
+                if (!jobAiId) return;
+                const storageKey = `nullxes:spectator:credentials:${jobAiId}`;
+                try {
+                  window.sessionStorage.removeItem(storageKey);
+                } catch {
+                  /* noop */
+                }
+              }}
               onTalkModeChange={() => {
                 // Spectator is hard read-only in this flow.
               }}

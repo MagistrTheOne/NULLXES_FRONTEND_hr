@@ -3,7 +3,6 @@ import { StreamClient } from "@stream-io/node-sdk";
 import { createHmac } from "node:crypto";
 
 import { resolveBackendGatewayBaseUrl } from "@/lib/backend-gateway-env";
-import { hasTrustedAppUser } from "@/lib/server-app-trust";
 
 export const runtime = "nodejs";
 
@@ -17,6 +16,8 @@ type TokenRequestBody = {
   callId?: string;
   callType?: string;
   participantId?: string;
+  /** Optional stable spectator identity key (non-secret), used only for deterministic userId. */
+  viewerKey?: string;
   /** Подписанная ссылка наблюдателя; связывает meeting с interview (GET /join/spectator + runtime). */
   joinToken?: string;
   /** Одноразовый signed observer ticket (issue/consume on backend). */
@@ -191,49 +192,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!rawMeetingId && role !== "spectator") {
     return NextResponse.json({ message: "meetingId is required for Stream token issuance." }, { status: 400 });
   }
-  let meetingId = sanitizeIdentifier(rawMeetingId ?? "", "meeting");
-  let spectatorAuthorizedByTicket = false;
+  const meetingId = sanitizeIdentifier(rawMeetingId ?? "", "meeting");
   let spectatorStableViewerKey: string | null = null;
   const observerTicketRaw = typeof body.observerTicket === "string" ? body.observerTicket.trim() : "";
-
-  if (role === "spectator" && isExternalSpectator && observerTicketRaw) {
-    const consumeRes = await fetch(`${backendUrl}/join/spectator/session-ticket/consume`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({ observerTicket: observerTicketRaw })
-    }).catch(() => null);
-
-    if (!consumeRes) {
-      return NextResponse.json(
-        { message: "Observer ticket service unavailable", code: "spectator.ticket_unavailable" },
-        { status: 503 }
-      );
-    }
-    if (!consumeRes.ok) {
-      const payload = (await consumeRes.json().catch(() => ({}))) as { error?: string };
-      const code = payload.error ?? "spectator.ticket_invalid";
-      const status = consumeRes.status === 409 ? 409 : consumeRes.status === 410 ? 410 : 403;
-      return NextResponse.json(
-        { message: "Observer ticket is invalid, expired, or already used.", code },
-        { status }
-      );
-    }
-
-    const consumed = (await consumeRes.json().catch(() => ({}))) as SpectatorConsumedTicket;
-    const ticketMeetingIdRaw = typeof consumed.meetingId === "string" ? consumed.meetingId : "";
-    const ticketMeetingId = sanitizeIdentifier(ticketMeetingIdRaw, "");
-    const viewerKeyRaw = typeof consumed.viewerKey === "string" ? consumed.viewerKey : "";
-    const viewerKey = sanitizeIdentifier(viewerKeyRaw, "");
-    if (!ticketMeetingId) {
-      return NextResponse.json(
-        { message: "Observer ticket payload is malformed.", code: "spectator.ticket_malformed" },
-        { status: 403 }
-      );
-    }
-    meetingId = ticketMeetingId;
-    spectatorStableViewerKey = viewerKey || null;
-    spectatorAuthorizedByTicket = true;
+  const viewerKeyRaw = typeof body.viewerKey === "string" ? body.viewerKey.trim() : "";
+  const viewerKey = sanitizeIdentifier(viewerKeyRaw, "");
+  if (role === "spectator" && isExternalSpectator && viewerKey) {
+    spectatorStableViewerKey = viewerKey;
   }
 
   if (!meetingId) {
@@ -349,13 +314,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   if (role === "spectator") {
     const joinTokenRaw = typeof body.joinToken === "string" ? body.joinToken.trim() : "";
-    const strict = process.env.STREAM_SPECTATOR_REQUIRE_JOIN_TOKEN === "1";
-    // Avoid extra auth/session DB roundtrip when strict mode is off:
-    // this check can be slow and unnecessarily blocks observer Stream token issuance.
-    const internalOk = strict ? await hasTrustedAppUser(request) : false;
-
     // External spectator flow must keep strict auth; internal viewers must not depend on it.
-    if (isExternalSpectator && !spectatorAuthorizedByTicket && strict && !internalOk && !joinTokenRaw) {
+    if (isExternalSpectator && !joinTokenRaw) {
       return NextResponse.json(
         {
           message: "Для выдачи токена наблюдателя нужна подписанная ссылка или сессия HR.",
@@ -364,8 +324,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         { status: 403 }
       );
     }
+    if (isExternalSpectator && !observerTicketRaw) {
+      return NextResponse.json(
+        {
+          message: "Для выдачи токена наблюдателя нужен одноразовый observer ticket.",
+          code: "spectator.observer_ticket_required"
+        },
+        { status: 403 }
+      );
+    }
 
-    if (isExternalSpectator && !spectatorAuthorizedByTicket && joinTokenRaw) {
+    if (isExternalSpectator && joinTokenRaw) {
       const ok = await verifySpectatorJoinTokenToMeeting(backendUrl, joinTokenRaw, meetingId);
       if (!ok) {
         return NextResponse.json(
@@ -485,6 +454,43 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           code: "observer_role_unavailable"
         },
         { status: 503 }
+      );
+    }
+  }
+
+  // External spectator: consume observerTicket only when we are ready to mint Stream token.
+  // This prevents burning a consume-once ticket on transient readiness failures (e.g. readonly role lag).
+  if (role === "spectator" && isExternalSpectator) {
+    const consumeRes = await fetch(`${backendUrl}/join/spectator/session-ticket/consume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ observerTicket: observerTicketRaw })
+    }).catch(() => null);
+
+    if (!consumeRes) {
+      return NextResponse.json(
+        { message: "Observer ticket service unavailable", code: "spectator.ticket_unavailable" },
+        { status: 503 }
+      );
+    }
+    if (!consumeRes.ok) {
+      const payload = (await consumeRes.json().catch(() => ({}))) as { error?: string };
+      const code = payload.error ?? "spectator.ticket_invalid";
+      const status = consumeRes.status === 409 ? 409 : consumeRes.status === 410 ? 410 : 403;
+      return NextResponse.json(
+        { message: "Observer ticket is invalid, expired, or already used.", code },
+        { status }
+      );
+    }
+
+    const consumed = (await consumeRes.json().catch(() => ({}))) as SpectatorConsumedTicket;
+    const ticketMeetingIdRaw = typeof consumed.meetingId === "string" ? consumed.meetingId : "";
+    const ticketMeetingId = sanitizeIdentifier(ticketMeetingIdRaw, "");
+    if (!ticketMeetingId || ticketMeetingId !== meetingId) {
+      return NextResponse.json(
+        { message: "Observer ticket does not match this meeting.", code: "spectator.ticket_mismatch" },
+        { status: 403 }
       );
     }
   }
