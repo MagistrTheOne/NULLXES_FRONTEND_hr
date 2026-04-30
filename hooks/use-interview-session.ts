@@ -52,6 +52,7 @@ export type RuntimeRecoveryState = "idle" | "recovering" | "failed";
 export type InterviewFlowPhase = "lobby" | "intro" | "questions" | "closing" | "completed";
 
 export type AgentState = "idle" | "listening" | "thinking" | "speaking";
+export type VoiceProvider = "openai" | "elevenlabs";
 
 export type TranscriptTurn = {
   role: "agent" | "candidate";
@@ -105,15 +106,20 @@ function readString(source: unknown, key: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function resolveVoiceProvider(voiceId?: string): VoiceProvider {
+  const selected = typeof voiceId === "string" ? voiceId.trim() : "";
+  // Feature flag keeps rollout controlled; voice selection decides provider when enabled.
+  const enabled = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT === "1";
+  return enabled && selected.length > 0 ? "elevenlabs" : "openai";
+}
+
 /** When true, agent speech uses ElevenLabs (text-only OpenAI responses + local playback). */
-function elevenLabsAgentReplacesOpenAiAudio(_voiceId?: string): boolean {
-  void _voiceId; // сохраняем сигнатуру для обратной совместимости call-sites
-  const mode = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT;
-  return mode === "1";
+function elevenLabsAgentReplacesOpenAiAudio(voiceId?: string): boolean {
+  return resolveVoiceProvider(voiceId) === "elevenlabs";
 }
 
 function openAiAgentResponseModalities(voiceId?: string): ("audio" | "text")[] {
-  return elevenLabsAgentReplacesOpenAiAudio(voiceId) ? ["text"] : ["audio", "text"];
+  return resolveVoiceProvider(voiceId) === "elevenlabs" ? ["text"] : ["audio", "text"];
 }
 
 function isIgnorableStatusTransitionError(error: unknown): boolean {
@@ -421,12 +427,70 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   }, []);
   const [sessionElevenLabsVoiceId, setSessionElevenLabsVoiceId] = useState(() => getDefaultElevenLabsVoiceId());
   const sessionElevenLabsVoiceIdRef = useRef(sessionElevenLabsVoiceId);
+  const voiceProviderRef = useRef<VoiceProvider>(resolveVoiceProvider(sessionElevenLabsVoiceId));
   const lastReportedVoiceIdRef = useRef<string | null>(null);
   const elevenLabsUtteranceAbortRef = useRef<AbortController | null>(null);
+  const elevenLabsQueueRef = useRef<string[]>([]);
+  const elevenLabsQueueDrainingRef = useRef(false);
+
+  const voiceProvider: VoiceProvider = useMemo(
+    () => resolveVoiceProvider(sessionElevenLabsVoiceId),
+    [sessionElevenLabsVoiceId]
+  );
 
   useEffect(() => {
     sessionElevenLabsVoiceIdRef.current = sessionElevenLabsVoiceId;
+    voiceProviderRef.current = resolveVoiceProvider(sessionElevenLabsVoiceId);
   }, [sessionElevenLabsVoiceId]);
+
+  const clearElevenLabsQueue = useCallback(() => {
+    elevenLabsQueueRef.current = [];
+    elevenLabsQueueDrainingRef.current = false;
+    clearElevenLabsQueue();
+  }, []);
+
+  const drainElevenLabsQueue = useCallback(async () => {
+    if (elevenLabsQueueDrainingRef.current) return;
+    elevenLabsQueueDrainingRef.current = true;
+    try {
+      while (elevenLabsQueueRef.current.length > 0) {
+        const text = elevenLabsQueueRef.current.shift();
+        if (!text) continue;
+        const voiceId = sessionElevenLabsVoiceIdRef.current?.trim() ?? "";
+        if (!voiceId) continue;
+        const signal = elevenLabsUtteranceAbortRef.current?.signal;
+        if (signal?.aborted) {
+          elevenLabsQueueRef.current = [];
+          break;
+        }
+        try {
+          // NOTE: MVP = one utterance per response.text.done. Sentence-boundary splitting can be added later.
+          await playAgentUtteranceWithElevenLabs(text, voiceId, { signal });
+        } catch (err) {
+          if (err instanceof DOMException && err.name === "AbortError") {
+            elevenLabsQueueRef.current = [];
+            break;
+          }
+          if (err instanceof Error && err.name === "AbortError") {
+            elevenLabsQueueRef.current = [];
+            break;
+          }
+          // Fail closed: keep text-only (no OpenAI audio in this mode), but don't crash the session.
+          console.warn("[elevenlabs-agent-tts] playback error", err);
+          // TODO(elevenlabs-tts): consider safe fallback to OpenAI audio ONLY if we can re-enable audio without double sound.
+        }
+      }
+    } finally {
+      elevenLabsQueueDrainingRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    // Switching providers mid-session should not leave stale audio playing.
+    if (voiceProvider === "openai") {
+      clearElevenLabsQueue();
+    }
+  }, [clearElevenLabsQueue, voiceProvider]);
 
   useEffect(() => {
     let cancelled = false;
@@ -627,8 +691,11 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       setAgentState("thinking");
       setFlowPhase((prev) => (prev === "lobby" ? "intro" : prev));
       if (elevenLabsAgentReplacesOpenAiAudio(sessionElevenLabsVoiceIdRef.current)) {
-        elevenLabsUtteranceAbortRef.current?.abort();
-        elevenLabsUtteranceAbortRef.current = new AbortController();
+        // One abort controller per "playback lifecycle" (cleared on stop/pause/reconnect).
+        // Do NOT abort here: we queue utterances and must not cut off the previous one.
+        if (!elevenLabsUtteranceAbortRef.current || elevenLabsUtteranceAbortRef.current.signal.aborted) {
+          elevenLabsUtteranceAbortRef.current = new AbortController();
+        }
       }
       return;
     }
@@ -668,16 +735,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
 
         const trimmed = transcript.trim();
         if (trimmed.length > 0) {
-          const signal = elevenLabsUtteranceAbortRef.current?.signal;
-          void playAgentUtteranceWithElevenLabs(trimmed, sessionElevenLabsVoiceIdRef.current, { signal }).catch((err) => {
-            if (err instanceof DOMException && err.name === "AbortError") {
-              return;
-            }
-            if (err instanceof Error && err.name === "AbortError") {
-              return;
-            }
-            console.warn("[elevenlabs-agent-tts] playback error", err);
-          });
+          // Enqueue full utterance (MVP). TODO: sentence-boundary splitting for lower latency.
+          elevenLabsQueueRef.current.push(trimmed);
+          void drainElevenLabsQueue();
         }
         return;
       }
@@ -819,8 +879,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         pendingCancelRef.current = null;
       }
       setAgentState("listening");
-      elevenLabsUtteranceAbortRef.current?.abort();
-      stopAgentElevenLabsPlayback();
+      clearElevenLabsQueue();
       return;
     }
 
@@ -843,13 +902,21 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       // We promote lobby → intro on the FIRST response.created (above).
       return;
     }
-  }, [emitFrontendTelemetry, scheduleCaptionUpdate]);
+  }, [clearElevenLabsQueue, drainElevenLabsQueue, emitFrontendTelemetry, scheduleCaptionUpdate]);
 
   const ensureClient = useCallback(() => {
     if (!rtcRef.current) {
       rtcRef.current = new WebRtcInterviewClient({
         onStateChange: setRtcState,
-        onRemoteStream: setRemoteAudioStream,
+        onRemoteStream: (stream) => {
+          // Prevent double sound: in ElevenLabs mode OpenAI should be text-only, but we also
+          // defensively avoid attaching any remote audio stream to the UI audio element.
+          if (voiceProviderRef.current === "openai") {
+            setRemoteAudioStream(stream);
+          } else {
+            setRemoteAudioStream(null);
+          }
+        },
         onOpenAiEvent: handleOpenAiEvent
       });
     } else {
@@ -997,8 +1064,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   }, [ensureClient, meetingId, phase]);
 
   useEffect(() => {
-    // Ref mirrors are mutated intentionally; this rule is overly strict for our pattern.
-    // eslint-disable-next-line react-hooks/immutability
     activeSessionIdRef.current = sessionId;
   }, [sessionId]);
 
@@ -1574,9 +1639,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           }
         }
       }
-      elevenLabsUtteranceAbortRef.current?.abort();
+      clearElevenLabsQueue();
       elevenLabsUtteranceAbortRef.current = null;
-      stopAgentElevenLabsPlayback();
       rtc?.close();
       if (activeSessionId) {
         await closeRealtimeSession(activeSessionId).catch(() => undefined);
@@ -1610,7 +1674,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       setError(err instanceof Error ? err.message : "Failed to stop session");
       return false;
     }
-  }, [activeInterviewId, emitFrontendTelemetry, flushSessionUpdatedWaiters, isCandidateFlow, meetingId, sessionId]);
+  }, [activeInterviewId, clearElevenLabsQueue, emitFrontendTelemetry, flushSessionUpdatedWaiters, isCandidateFlow, meetingId, sessionId]);
 
   const markFailed = useCallback(async () => {
     if (!meetingId) {
@@ -1661,6 +1725,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   return {
     phase,
     statusLabel,
+    voiceProvider,
     meetingId,
     sessionId,
     avatarReady,

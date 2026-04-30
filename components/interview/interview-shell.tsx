@@ -157,6 +157,7 @@ export function InterviewShell() {
     phase,
     error,
     remoteAudioStream,
+    voiceProvider,
     setObserverTalkIsolation,
     pauseAgent,
     resumeAgent,
@@ -236,8 +237,10 @@ export function InterviewShell() {
     if (!audioRef.current) {
       return;
     }
-    audioRef.current.srcObject = remoteAudioStream;
-  }, [remoteAudioStream]);
+    audioRef.current.srcObject = voiceProvider === "openai" ? remoteAudioStream : null;
+    audioRef.current.muted = voiceProvider !== "openai";
+    audioRef.current.volume = voiceProvider === "openai" ? 1 : 0;
+  }, [remoteAudioStream, voiceProvider]);
 
   const busy = phase === "starting" || phase === "stopping";
 
