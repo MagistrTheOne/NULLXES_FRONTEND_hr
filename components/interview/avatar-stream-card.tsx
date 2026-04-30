@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
  * только RunPod avatar service начнёт публиковать `agent_<sessionId>`.
  */
 const AVATAR_PLACEHOLDER_SRC = "/anna.jpg";
+const STREAM_OPENAI_AGENT_MODE_ENABLED = process.env.NEXT_PUBLIC_STREAM_OPENAI_AGENT_MODE === "1";
 
 function AvatarPlaceholder({ emphasize }: { emphasize?: boolean }) {
   return (
@@ -112,7 +113,9 @@ function AvatarCallBody({ showStreamToolbar, meetingId, onLeave }: AvatarCallBod
   return (
     <div className="stream-call-ui h-full w-full">
       <div className="stream-call-layout">
-        {avatarParticipant ? (
+        {STREAM_OPENAI_AGENT_MODE_ENABLED ? (
+          <AvatarPlaceholder />
+        ) : avatarParticipant ? (
           <ParticipantView participant={avatarParticipant} trackType="videoTrack" />
         ) : (
           // Pod ещё не опубликовал свой video-track — показываем статичный
