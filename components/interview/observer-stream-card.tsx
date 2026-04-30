@@ -17,8 +17,6 @@ import {
   Headphones,
   Loader2,
   Maximize2,
-  Mic,
-  MicOff,
   Pin,
   PinOff,
   RotateCcw,
@@ -68,6 +66,7 @@ export type ObserverConnectionStatus =
   | "error"
   | "idle_hidden";
 type ObserverConnectionPhase = "connecting" | "connected" | "reconnecting" | "failed";
+type ObserverViewMode = "waiting" | "live" | "ended";
 
 const OBSERVER_TOKEN_TIMEOUT_MS = 15_000;
 const OBSERVER_JOIN_TIMEOUT_MS = 20_000;
@@ -629,7 +628,6 @@ export function ObserverStreamCard({
   const [hasParticipants, setHasParticipants] = useState<boolean | null>(null);
   const [selfPreviewStream, setSelfPreviewStream] = useState<MediaStream | null>(null);
   const [selfCameraEnabled, setSelfCameraEnabled] = useState(true);
-  const [selfMicEnabled, setSelfMicEnabled] = useState(true);
   const [selfPreviewError, setSelfPreviewError] = useState<string | null>(null);
   const [playbackMuted, setPlaybackMuted] = useState(mutePlayback);
   const [focusCandidateOnly, setFocusCandidateOnly] = useState(false);
@@ -655,6 +653,11 @@ export function ObserverStreamCard({
   const [bookmarksOpen, setBookmarksOpen] = useState(true);
 
   const ended = Boolean(sessionEnded) || uiState === "completed";
+  const viewMode: ObserverViewMode = useMemo(() => {
+    if (ended) return "ended";
+    if (client && call && localUserId) return "live";
+    return "waiting";
+  }, [call, client, ended, localUserId]);
   const canConnect =
     enabled &&
     visible &&
@@ -865,22 +868,19 @@ export function ObserverStreamCard({
       stream.getVideoTracks().forEach((track) => {
         track.enabled = selfCameraEnabled;
       });
-      stream.getAudioTracks().forEach((track) => {
-        track.enabled = selfMicEnabled;
-      });
       setSelfPreviewStream(stream);
     } catch (error) {
       // Self-preview is optional in observer mode; do not block session.
       const message = error instanceof Error ? error.message : "";
       if (message.toLowerCase().includes("notallowed")) {
-        setSelfPreviewError("Нет доступа к камере/микрофону. Разрешите доступ в браузере.");
+        setSelfPreviewError("Нет доступа к камере. Разрешите доступ в браузере.");
       } else if (message.toLowerCase().includes("notfound")) {
-        setSelfPreviewError("Камера или микрофон не найдены.");
+        setSelfPreviewError("Камера не найдена.");
       } else {
         setSelfPreviewError("Self-preview недоступен. Можно продолжать наблюдение без локального видео.");
       }
     }
-  }, [selfCameraEnabled, selfMicEnabled, selfPreviewStream, showSelfPreview]);
+  }, [selfCameraEnabled, selfPreviewStream, showSelfPreview]);
 
   useEffect(() => {
     if (showSelfPreview) {
@@ -909,10 +909,7 @@ export function ObserverStreamCard({
     selfPreviewStream.getVideoTracks().forEach((track) => {
       track.enabled = selfCameraEnabled;
     });
-    selfPreviewStream.getAudioTracks().forEach((track) => {
-      track.enabled = selfMicEnabled;
-    });
-  }, [selfCameraEnabled, selfMicEnabled, selfPreviewStream]);
+  }, [selfCameraEnabled, selfPreviewStream]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1135,6 +1132,11 @@ export function ObserverStreamCard({
           }
 
           const payload = (await response.json()) as StreamTokenResponse;
+          // TODO(stream-auth): Stream рекомендует `tokenProvider` (auto-refresh) для long-lived клиентов.
+          // Сейчас у нас одноразовый `spectatorObserverTicket` (consume-once), поэтому нельзя просто
+          // переиспользовать его в tokenProvider для повторного обновления токена.
+          // Правильный будущий вариант: backend endpoint для observer refresh, который выдаёт новый Stream token
+          // без повторного consume observerTicket (например, через серверную spectator-session + refresh).
           // См. avatar-stream-card: переопределяем axios-timeout Stream SDK
           // с дефолтных 5с на 60с, чтобы observer не падал посреди сессии
           // сообщением «timeout of 5000ms exceeded».
@@ -1350,7 +1352,7 @@ export function ObserverStreamCard({
       <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
         <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{participantName}</p>
         <div className="flex items-center gap-2">
-          {silenceIndicatorEnabled && isSilent ? (
+          {viewMode === "live" && silenceIndicatorEnabled && isSilent ? (
             <Badge className="animate-pulse bg-amber-100 text-amber-900">Тишина {Math.floor(silenceMs / 1000)}с</Badge>
           ) : null}
           <InterviewStatusBadge status={videoStatusView} />
@@ -1362,143 +1364,176 @@ export function ObserverStreamCard({
           </Badge>
         </div>
       </div>
-      {allowTalkToggle && visible ? <MicIndicator active={talkMode === "on" && Boolean(call)} /> : null}
-      <div className="flex min-h-10 flex-wrap gap-2">
-        <Button
-          type="button"
-          variant={audioOnlyMode ? "secondary" : "outline"}
-          className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-          onClick={() => setAudioOnlyMode((prev) => !prev)}
-          title="Скрыть видео и оставить только аудио дорожки"
-        >
-          <Headphones className="mr-2 h-4 w-4" />
-          Только аудио
-        </Button>
-        <Button
-          type="button"
-          variant={silenceIndicatorEnabled ? "outline" : "secondary"}
-          className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-          onClick={() => setSilenceIndicatorEnabled((prev) => !prev)}
-          title="Вкл/выкл индикатор длительной тишины"
-        >
-          <BellOff className="mr-2 h-4 w-4" />
-          Тишина
-        </Button>
-        <ObserverPresencePopover events={presenceEvents} />
-        <Button
-          type="button"
-          variant={bookmarksOpen ? "secondary" : "outline"}
-          className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-          onClick={() => setBookmarksOpen((prev) => !prev)}
-          title="Открыть таймлайн заметок (M/N/S)"
-        >
-          <Bookmark className="mr-2 h-4 w-4" />
-          Метки
-        </Button>
-        {allowVisibilityToggle ? (
-          <Button
-            type="button"
-            variant="secondary"
-            className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2 disabled:opacity-50"
-            disabled={ended}
-            onClick={() => onVisibleChange?.(!visible)}
-          >
-            {visible ? "Скрыть видео" : "Показать видео"}
-          </Button>
-        ) : null}
-        {allowTalkToggle ? (
-          <Button
-            type="button"
-            variant={talkMode === "on" ? "destructive" : "outline"}
-            className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2 disabled:opacity-50"
-            disabled={!call || ended}
-            onClick={() => onTalkModeChange?.(talkMode === "on" ? "off" : "on")}
-          >
-            {talkMode === "on" ? "Выключить микрофон" : "Включить микрофон"}
-          </Button>
-        ) : null}
-        {call ? (
-          <>
+
+      {viewMode === "waiting" ? (
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-700">Ожидание запуска</p>
+            <p className="mt-0.5 text-[11px] leading-snug text-slate-600">Видео подключится автоматически после старта интервью.</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <ObserverPresencePopover events={presenceEvents} />
             <Button
               type="button"
-              variant={playbackMuted ? "secondary" : "outline"}
-              className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-              onClick={() => setPlaybackMuted((prev) => !prev)}
-              title={playbackMuted ? "Включить звук воспроизведения" : "Выключить звук воспроизведения"}
+              variant={bookmarksOpen ? "secondary" : "outline"}
+              className="h-9 min-h-9 rounded-full px-3 text-xs"
+              onClick={() => setBookmarksOpen((prev) => !prev)}
+              title="Открыть таймлайн заметок (M/N/S)"
+              disabled={!call}
             >
-              {playbackMuted ? <VolumeX className="mr-2 h-4 w-4" /> : <Volume2 className="mr-2 h-4 w-4" />}
-              {playbackMuted ? "Звук: выкл" : "Звук: вкл"}
+              <Bookmark className="mr-1 h-4 w-4" aria-hidden />
+              <span className="hidden sm:inline">Метки</span>
             </Button>
-            {!spectatorDashboardLayout ? (
+            {!call && canConnect ? (
+              <Button
+                type="button"
+                className="h-9 min-h-9 rounded-full px-3 text-xs"
+                onClick={() => void startStream()}
+                disabled={busy}
+                title={busy ? "Выполняется подключение" : "Подключить наблюдателя к активной сессии"}
+              >
+                <Video className="mr-1 h-4 w-4" aria-hidden />
+                <span className="hidden sm:inline">Подключиться</span>
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {viewMode === "ended" ? (
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-700">Сессия завершена</p>
+            <p className="mt-0.5 text-[11px] leading-snug text-slate-600">Повторное подключение недоступно.</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <ObserverPresencePopover events={presenceEvents} />
+            <Button
+              type="button"
+              variant={bookmarksOpen ? "secondary" : "outline"}
+              className="h-9 min-h-9 rounded-full px-3 text-xs"
+              onClick={() => setBookmarksOpen((prev) => !prev)}
+              title="Открыть таймлайн заметок (M/N/S)"
+              disabled={!call}
+            >
+              <Bookmark className="mr-1 h-4 w-4" aria-hidden />
+              <span className="hidden sm:inline">Метки</span>
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {viewMode === "live" ? (
+        <>
+          {allowTalkToggle && visible ? <MicIndicator active={talkMode === "on" && Boolean(call)} /> : null}
+          <div className="flex min-h-9 flex-wrap gap-1.5">
+            <Button
+              type="button"
+              variant={audioOnlyMode ? "secondary" : "outline"}
+              className="h-9 min-h-9 rounded-full px-3 text-xs focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+              onClick={() => setAudioOnlyMode((prev) => !prev)}
+              title="Скрыть видео и оставить только аудио дорожки"
+            >
+              <Headphones className="mr-1 h-4 w-4" aria-hidden />
+              <span className="hidden sm:inline">Аудио</span>
+            </Button>
+            <Button
+              type="button"
+              variant={silenceIndicatorEnabled ? "outline" : "secondary"}
+              className="h-9 min-h-9 rounded-full px-3 text-xs focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+              onClick={() => setSilenceIndicatorEnabled((prev) => !prev)}
+              title="Вкл/выкл индикатор длительной тишины"
+            >
+              <BellOff className="mr-1 h-4 w-4" aria-hidden />
+              <span className="hidden sm:inline">Тишина</span>
+            </Button>
+            <ObserverPresencePopover events={presenceEvents} />
+            <Button
+              type="button"
+              variant={bookmarksOpen ? "secondary" : "outline"}
+              className="h-9 min-h-9 rounded-full px-3 text-xs focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+              onClick={() => setBookmarksOpen((prev) => !prev)}
+              title="Открыть таймлайн заметок (M/N/S)"
+            >
+              <Bookmark className="mr-1 h-4 w-4" aria-hidden />
+              <span className="hidden sm:inline">Метки</span>
+            </Button>
+            {call ? (
               <>
                 <Button
                   type="button"
-                  variant={showSingleFeedMode ? "secondary" : "outline"}
-                  className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-                  onClick={() => setFocusCandidateOnly((prev) => !prev)}
-                  title="Переключить раскладку участников"
+                  variant={playbackMuted ? "secondary" : "outline"}
+                  className="h-9 min-h-9 rounded-full px-3 text-xs focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+                  onClick={() => setPlaybackMuted((prev) => !prev)}
+                  title={playbackMuted ? "Включить звук воспроизведения" : "Выключить звук воспроизведения"}
                 >
-                  {showSingleFeedMode ? <RotateCcw className="mr-2 h-4 w-4" /> : <Maximize2 className="mr-2 h-4 w-4" />}
-                  {showSingleFeedMode ? "Показать всех" : "Фокус на кандидате"}
+                  {playbackMuted ? (
+                    <VolumeX className="mr-1 h-4 w-4" aria-hidden />
+                  ) : (
+                    <Volume2 className="mr-1 h-4 w-4" aria-hidden />
+                  )}
+                  <span className="hidden sm:inline">Звук</span>
                 </Button>
+                {!spectatorDashboardLayout ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant={showSingleFeedMode ? "secondary" : "outline"}
+                      className="h-9 min-h-9 rounded-full px-3 text-xs focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+                      onClick={() => setFocusCandidateOnly((prev) => !prev)}
+                      title="Переключить раскладку участников"
+                    >
+                      {showSingleFeedMode ? (
+                        <RotateCcw className="mr-1 h-4 w-4" aria-hidden />
+                      ) : (
+                        <Maximize2 className="mr-1 h-4 w-4" aria-hidden />
+                      )}
+                      <span className="hidden sm:inline">{showSingleFeedMode ? "Все" : "Фокус"}</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9 min-h-9 rounded-full px-3 text-xs focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+                      onClick={toggleFullscreen}
+                      title="Открыть полноэкранный режим"
+                    >
+                      <Maximize2 className="mr-1 h-4 w-4" aria-hidden />
+                      <span className="hidden sm:inline">Экран</span>
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9 min-h-9 rounded-full px-3 text-xs focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+                    onClick={toggleFullscreen}
+                    title="Полноэкранный режим (кандидат + HR)"
+                  >
+                    <Maximize2 className="mr-1 h-4 w-4" aria-hidden />
+                    <span className="hidden sm:inline">Экран</span>
+                  </Button>
+                )}
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-                  onClick={toggleFullscreen}
-                  title="Открыть полноэкранный режим"
+                  className="h-9 min-h-9 rounded-full px-3 text-xs focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+                  onClick={() => {
+                    void disconnectStream().then(() => {
+                      autoJoinAttemptForRef.current = null;
+                    });
+                  }}
+                  disabled={busy || ended}
+                  title="Переподключиться"
+                  aria-label="Переподключиться"
                 >
-                  <Maximize2 className="mr-2 h-4 w-4" />
-                  Fullscreen
+                  <RotateCcw className="mr-1 h-4 w-4" aria-hidden />
+                  <span className="hidden sm:inline">Reconnect</span>
                 </Button>
               </>
-            ) : (
-              <Button
-                type="button"
-                variant="outline"
-                className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-                onClick={toggleFullscreen}
-                title="Полноэкранный режим (кандидат + HR)"
-              >
-                <Maximize2 className="mr-2 h-4 w-4" />
-                Fullscreen
-              </Button>
-            )}
-          </>
-        ) : null}
-        {!call && canConnect ? (
-          <Button
-            type="button"
-            className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-            onClick={() => void startStream()}
-            disabled={busy || ended}
-            title={
-              ended
-                ? "Сессия завершена"
-                : busy
-                  ? "Выполняется подключение"
-                  : "Подключить наблюдателя к активной сессии"
-            }
-          >
-            Подключиться
-          </Button>
-        ) : null}
-        {call ? (
-          <Button
-            type="button"
-            variant="outline"
-            className="h-10 min-h-10 rounded-full px-4 focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-            onClick={() => {
-              void disconnectStream().then(() => {
-                autoJoinAttemptForRef.current = null;
-              });
-            }}
-            disabled={busy || ended}
-          >
-            Reconnect
-          </Button>
-        ) : null}
-      </div>
+            ) : null}
+          </div>
+        </>
+      ) : null}
     </>
   );
 
@@ -1553,6 +1588,7 @@ export function ObserverStreamCard({
           <div className="flex h-24 w-full items-center justify-center text-xs text-slate-300">Камера выключена</div>
         )}
       </div>
+      <p className="mt-2 text-center text-[10px] leading-snug text-slate-300">Локальный preview · не транслируется</p>
       <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
         <Button
           type="button"
@@ -1564,17 +1600,6 @@ export function ObserverStreamCard({
         >
           {selfCameraEnabled ? <Video className="mr-1 h-3.5 w-3.5" /> : <VideoOff className="mr-1 h-3.5 w-3.5" />}
           {selfCameraEnabled ? "Камера: вкл" : "Камера: выкл"}
-        </Button>
-        <Button
-          type="button"
-          variant={selfMicEnabled ? "default" : "secondary"}
-          className="h-9 rounded-full px-3 text-xs"
-          disabled={!selfPreviewStream}
-          onClick={() => setSelfMicEnabled((prev) => !prev)}
-          title={selfMicEnabled ? "Выключить микрофон" : "Включить микрофон"}
-        >
-          {selfMicEnabled ? <Mic className="mr-1 h-3.5 w-3.5" /> : <MicOff className="mr-1 h-3.5 w-3.5" />}
-          {selfMicEnabled ? "Микрофон: вкл" : "Микрофон: выкл"}
         </Button>
         {selfPreviewError ? (
           <Button
@@ -1717,7 +1742,11 @@ export function ObserverStreamCard({
         <div className="rounded-2xl border-0 bg-[#d9dee7] p-3 shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]">
           {observerToolbar}
         </div>
-        {error ? <p className="w-full rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+        {error ? (
+          <p className="mx-auto w-full max-w-[720px] rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">
+            {error}
+          </p>
+        ) : null}
       </div>
     );
   }

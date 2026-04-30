@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Download, RefreshCw } from "lucide-react";
+import { CirclePlay, Download, RefreshCw, Square } from "lucide-react";
 import { useInterviewSession, type InterviewStartContext } from "@/hooks/use-interview-session";
 import {
   decideCandidateAdmission,
@@ -353,7 +353,11 @@ export function InterviewShell() {
     (selectedRow?.nullxesStatus ?? selectedInterviewDetailMatched?.projection.nullxesStatus) === "in_meeting";
   const selectedNullxesStatus = selectedRow?.nullxesStatus ?? selectedInterviewDetailMatched?.projection.nullxesStatus;
   const selectedJobAiStatus = selectedRow?.jobAiStatus ?? selectedInterviewDetailMatched?.projection.jobAiStatus;
-  const completedInterviewLocked = selectedNullxesStatus === "completed" || selectedJobAiStatus === "completed";
+  const completedInterviewLocked =
+    selectedNullxesStatus === "completed" ||
+    selectedJobAiStatus === "completed" ||
+    selectedNullxesStatus === "stopped_during_meeting" ||
+    selectedJobAiStatus === "stopped_during_meeting";
   /** Одинаковый «арбитр» для трёх Stream-колонок: не поднимаем видео до meeting+session, чтобы кандидат и HR не расходились по фазе. */
   const streamSurfaceEnabled =
     phase === "connected" && !completedInterviewLocked && Boolean(recoveredMeetingId && recoveredSessionId);
@@ -1135,9 +1139,28 @@ export function InterviewShell() {
 
         </>
         {recoveredMeetingId && selectedInterviewId ? (
-          <div className="rounded-xl border border-slate-200 bg-white/70 p-2.5 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-slate-800">Запись собеседования</p>
+          <div className="w-full max-w-[420px] rounded-2xl border border-white/40 bg-[#d9dee7]/40 p-2 shadow-sm">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-600">Запись</p>
+                <p className="mt-0.5 truncate text-xs text-slate-700">
+                  {recording?.configured === false
+                    ? "Недоступна"
+                    : recording?.state === "recording"
+                      ? "Идёт запись"
+                      : recording?.state === "ready"
+                        ? `Готово · файлов: ${recording.assets?.length ?? 0}`
+                        : recording?.state === "starting"
+                          ? "Запуск…"
+                          : recording?.state === "stopping"
+                            ? "Остановка…"
+                            : recording?.state === "failed"
+                              ? "Ошибка"
+                              : recording?.assets && recording.assets.length > 0
+                                ? `Файлов: ${recording.assets.length}`
+                                : "Нет данных"}
+                </p>
+              </div>
               <span
                 className={cn(
                   "inline-block h-2.5 w-2.5 rounded-full ring-2 ring-white",
@@ -1163,71 +1186,69 @@ export function InterviewShell() {
                 }
               />
             </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {recordingCanMutate ? (
+            <div className="mt-2 flex items-center gap-1.5">
+              {recordingCanMutate && !completedInterviewLocked ? (
                 <>
                   <button
                     type="button"
-                    className="h-9 rounded-lg border border-emerald-300 bg-emerald-600 px-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-emerald-200/70 bg-white/70 text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => void runRecordingAction("start")}
                     disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
+                    title="Запись: старт"
+                    aria-label="Запись: старт"
                   >
-                    Старт
+                    <CirclePlay className="h-4 w-4" aria-hidden />
                   </button>
                   <button
                     type="button"
-                    className="h-9 rounded-lg border border-amber-300 bg-amber-500 px-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-amber-200/70 bg-white/70 text-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => void runRecordingAction("stop")}
                     disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
+                    title="Запись: стоп"
+                    aria-label="Запись: стоп"
                   >
-                    Стоп
+                    <Square className="h-3.5 w-3.5 fill-current" aria-hidden />
                   </button>
                 </>
               ) : null}
               <button
                 type="button"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-300/70 bg-white/70 text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => void runRecordingAction("download")}
                 disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
-                title="Скачать запись"
-                aria-label="Скачать запись"
+                title="Запись: скачать"
+                aria-label="Запись: скачать"
               >
-                <Download className="h-4 w-4" />
+                <Download className="h-4 w-4" aria-hidden />
               </button>
               <button
                 type="button"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-300/70 bg-white/70 text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => void refreshRecording()}
                 disabled={recordingBusy !== null || !recoveredMeetingId}
-                title="Обновить статус записи"
-                aria-label="Обновить статус записи"
+                title="Запись: обновить"
+                aria-label="Запись: обновить"
               >
-                <RefreshCw className="h-4 w-4" />
+                <RefreshCw className="h-4 w-4" aria-hidden />
               </button>
             </div>
             {recordingError ? (
-              <p className="mt-1.5 text-xs text-rose-700">{recordingError}</p>
-            ) : recording?.assets && recording.assets.length > 0 ? (
-              <p className="mt-1.5 text-xs text-slate-600">
-                Доступно файлов: <span className="font-semibold">{recording.assets.length}</span>
-              </p>
-            ) : (
-              <p className="mt-1.5 text-xs text-slate-500">
-                После остановки записи подождите обработку, затем используйте «Скачать запись».
-              </p>
-            )}
+              <p className="mt-1.5 line-clamp-1 text-xs text-rose-700">{recordingError}</p>
+            ) : null}
           </div>
         ) : null}
         {error ? (
-          <p className="rounded-xl bg-rose-100 px-4 py-2 text-sm text-rose-700 shadow-sm">{error}</p>
+          <p className="mx-auto w-full max-w-[720px] rounded-xl bg-rose-100 px-3 py-2 text-sm text-rose-700 shadow-sm">
+            {error}
+          </p>
         ) : null}
         {rowsWarning ? (
-          <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-sm">
+          <p className="mx-auto w-full max-w-[720px] rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 shadow-sm">
             {rowsWarning}
           </p>
         ) : null}
         {runtimeRecoveryState === "recovering" ? (
-          <p className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-900 shadow-sm">
+          <p className="mx-auto w-full max-w-[720px] rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 shadow-sm">
             Восстанавливаем runtime после обновления страницы. Подключение может занять несколько секунд.
           </p>
         ) : null}

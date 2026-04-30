@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Copy, FilterX, Loader2, Mic2, RotateCw, Square, Volume2 } from "lucide-react";
+import { ChevronDown, Copy, FilterX, Loader2, Mic2, Pencil, RotateCw, Square, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -307,12 +307,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
 
   return (
     <TooltipProvider delay={400}>
-      <div
-        className={cn(
-          "flex min-w-0 flex-col gap-2 rounded-xl border border-sky-200/40 bg-linear-to-br from-white via-white to-sky-50/40 p-2.5 text-xs text-slate-600 shadow-sm ring-1 ring-white/60",
-          className
-        )}
-      >
+      <div className={cn("flex min-w-0 flex-col gap-2 rounded-xl border border-slate-200/70 bg-white/50 p-2 text-xs text-slate-600 shadow-sm", className)}>
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
           <div className="flex min-w-0 flex-1 gap-2">
             <Tooltip>
@@ -328,11 +323,11 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
             </Tooltip>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[13px] font-semibold tracking-tight text-slate-800">JobAI Voice</span>
+                <span className="text-[13px] font-semibold tracking-tight text-slate-800">Голос ассистента</span>
               </div>
               {!editing ? (
-                <p className="mt-0.5 line-clamp-1 text-[10px] leading-tight text-slate-500">
-                  Тембр озвучки ассистента для этого интервью.
+                <p className="mt-0.5 line-clamp-1 text-[11px] leading-tight text-slate-600" title={committedLabel}>
+                  {committedLabel || "Сохранённый"}
                 </p>
               ) : (
                 <p className="mt-0.5 line-clamp-1 text-[10px] leading-tight text-slate-500">
@@ -347,10 +342,11 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-9 min-h-9 flex-1 rounded-lg px-2.5 text-[11px] sm:flex-initial"
+                className="h-9 min-h-9 flex-1 gap-1.5 rounded-lg px-2.5 text-[11px] sm:flex-initial"
                 onClick={() => setEditing(true)}
               >
-                Выбрать голос
+                <Pencil className="size-3.5 shrink-0" aria-hidden />
+                Изменить
               </Button>
             </div>
           ) : (
@@ -392,9 +388,11 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
         </div>
 
         {!editing ? (
-          <div className="rounded-lg border border-slate-200/80 bg-white/80 px-2.5 py-2 shadow-inner">
-            <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Сейчас</p>
-            <p className="mt-0.5 truncate text-sm font-semibold text-slate-800" title={committedLabel}>
+          <div className="flex items-center gap-2 rounded-lg border border-slate-200/70 bg-white/70 px-2.5 py-2">
+            <Badge variant="secondary" className="rounded-full px-2 text-[10px] font-normal text-slate-600">
+              Сохранённый
+            </Badge>
+            <p className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800" title={committedLabel}>
               {committedLabel}
             </p>
           </div>

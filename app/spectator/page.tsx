@@ -36,6 +36,7 @@ const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
 
 const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
 const ACTIVE_MEETING_STATUSES = new Set(["starting", "in_meeting"]);
+const TERMINAL_MEETING_STATUSES = new Set(["completed", "stopped_during_meeting"]);
 const SPECTATOR_SSE_MAX_RETRIES = 5;
 const SPECTATOR_SSE_SLOW_RETRY_MS = 45_000;
 
@@ -289,6 +290,9 @@ function SpectatorBody() {
     .join(" ")
     .trim();
   const companyName = detail?.projection.companyName ?? "";
+  const terminalByProjection =
+    TERMINAL_MEETING_STATUSES.has(String(detail?.projection.nullxesStatus ?? "")) ||
+    TERMINAL_MEETING_STATUSES.has(String(detail?.projection.jobAiStatus ?? ""));
   const projectionActive = ACTIVE_MEETING_STATUSES.has(String(detail?.projection.nullxesStatus ?? ""));
   const runtimeMeetingId = normalizeMeetingId(runtimeSnapshot?.meetingId);
   const runtimeMatchesMeeting = Boolean(effectiveMeetingId && runtimeMeetingId === effectiveMeetingId);
@@ -302,8 +306,11 @@ function SpectatorBody() {
   const resolvedStreamCallId = runtimeReady ? runtimeStreamCallIdRaw : "";
   const resolvedStreamCallType = runtimeReady ? runtimeStreamCallTypeRaw || "default" : "";
   // Spectator joins only after runtime confirms the exact active meeting/call.
-  const canConnect = Boolean(effectiveMeetingId) && runtimeReady;
+  const canConnect = Boolean(effectiveMeetingId) && runtimeReady && !terminalByProjection;
   const spectatorWaitingReason = useMemo(() => {
+    if (terminalByProjection) {
+      return "Интервью завершено. Повторное подключение недоступно.";
+    }
     if (!effectiveMeetingId) {
       return "Ожидаем назначение meetingId от runtime. Интервью ещё не перешло в активную фазу.";
     }
@@ -320,7 +327,7 @@ function SpectatorBody() {
       return "Runtime найден, ждём готовность живой сессии перед подключением наблюдателя.";
     }
     return null;
-  }, [effectiveMeetingId, projectionActive, runtimeActive, runtimeMatchesMeeting, runtimeReady, runtimeSnapshot]);
+  }, [effectiveMeetingId, projectionActive, runtimeActive, runtimeMatchesMeeting, runtimeReady, runtimeSnapshot, terminalByProjection]);
 
   const sseAttemptRef = useRef(0);
   const sseSlowModeRef = useRef(false);
@@ -428,12 +435,40 @@ function SpectatorBody() {
             </div>
 
             {error ? (
-              <p className="rounded-lg bg-rose-100 px-3 py-2 text-rose-700">{error}</p>
+              <div className="w-full max-w-[720px] rounded-lg bg-rose-100 px-3 py-2 text-rose-700">
+                <p className="text-sm">{error}</p>
+                {jobAiId ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 h-8 rounded-md px-2 text-[11px]"
+                    onClick={() => {
+                      void getInterviewById(jobAiId, true).then(setDetail).catch(() => undefined);
+                    }}
+                  >
+                    Повторить
+                  </Button>
+                ) : null}
+              </div>
             ) : null}
             {!canConnect ? (
-              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
-                Интервью ещё не запущено. Видео подключится автоматически после старта.
-              </p>
+              <div className="w-full max-w-[720px] rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                <p className="text-sm">{spectatorWaitingReason ?? "Ожидание запуска."}</p>
+                {jobAiId ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 h-8 rounded-md px-2 text-[11px]"
+                    onClick={() => {
+                      void getInterviewById(jobAiId, true).then(setDetail).catch(() => undefined);
+                    }}
+                  >
+                    Повторить
+                  </Button>
+                ) : null}
+              </div>
             ) : null}
 
             {/* Actions */}
