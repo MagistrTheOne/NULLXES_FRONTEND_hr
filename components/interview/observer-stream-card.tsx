@@ -102,6 +102,23 @@ function normalizeObserverStreamError(message: string): string {
   return message;
 }
 
+function isObserverTransientMessage(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("observer_role_unavailable") ||
+    lower.includes("readonly role") ||
+    lower.includes("observer readonly role") ||
+    lower.includes("stream.binding_missing") ||
+    lower.includes("meeting.not_active") ||
+    lower.includes("runtime.not_ready") ||
+    lower.includes("timeout") ||
+    lower.includes("timed out") ||
+    lower.includes("failed to fetch") ||
+    lower.includes("network") ||
+    lower.includes("abort")
+  );
+}
+
 type PipPosition = { x: number; y: number };
 
 function clampPipPosition(position: PipPosition, root: HTMLElement, pip: HTMLElement): PipPosition {
@@ -628,6 +645,7 @@ export function ObserverStreamCard({
   const [localUserId, setLocalUserId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [transientStatus, setTransientStatus] = useState<string | null>(null);
   const [hasParticipants, setHasParticipants] = useState<boolean | null>(null);
   const [selfPreviewStream, setSelfPreviewStream] = useState<MediaStream | null>(null);
   const [selfCameraEnabled, setSelfCameraEnabled] = useState(true);
@@ -725,6 +743,9 @@ export function ObserverStreamCard({
     if (ended) {
       return "Сессия завершена. Повторное подключение недоступно.";
     }
+    if (transientStatus) {
+      return transientStatus;
+    }
     if (!meetingId || !enabled) {
       return waitingReason ?? "Интервью еще не запущено. Подключение доступно после активации сессии кандидата.";
     }
@@ -750,7 +771,7 @@ export function ObserverStreamCard({
       return "Подключение к звонку…";
     }
     return waitingReason ?? "Ожидание запуска. Подключение выполнится автоматически, когда сессия будет доступна.";
-  }, [busy, call, connectionPhase, enabled, ended, error, meetingId, status, streamCallId, streamCallType, waitingReason]);
+  }, [busy, call, connectionPhase, enabled, ended, error, meetingId, status, streamCallId, streamCallType, transientStatus, waitingReason]);
 
   const statusBadgeLabel = useMemo(() => {
     if (ended) return "Завершено";
@@ -1060,6 +1081,7 @@ export function ObserverStreamCard({
     // If credentials/binding change after an error (e.g. observerTicket refreshed),
     // allow auto-join to retry without forcing user interaction.
     setError(null);
+    setTransientStatus(null);
     autoJoinAttemptForRef.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetingId, streamCallId, streamCallType, spectatorJoinToken, spectatorObserverTicket, viewerKind]);
@@ -1082,6 +1104,7 @@ export function ObserverStreamCard({
     connectInFlightRef.current = true;
     setBusy(true);
     setError(null);
+    setTransientStatus(null);
     setConnectionPhase(call ? "reconnecting" : "connecting");
     const epoch = ++connectEpochRef.current;
     // Runtime command is advisory; never block Stream join on it.
@@ -1203,6 +1226,7 @@ export function ObserverStreamCard({
           setCall(streamCall);
           setLocalUserId(payload.user.id);
           setHasParticipants(null);
+          setTransientStatus(null);
           emitObserverAuditEvent("observer_joined", {
             userId: payload.user.id,
             callId: payload.callId,
@@ -1254,13 +1278,28 @@ export function ObserverStreamCard({
       }
       const msgRaw = err instanceof Error ? err.message : "Failed to start observer stream";
       const msg = normalizeObserverStreamError(msgRaw);
+      if (isObserverTransientMessage(msg)) {
+        // Transient failures must not block auto-join via `error` state.
+        setError(null);
+        setTransientStatus(
+          msg.includes("observer_role_unavailable") ||
+            msg.toLowerCase().includes("readonly role") ||
+            msg.toLowerCase().includes("observer readonly role")
+            ? "Подготавливаем режим наблюдателя…"
+            : msg
+        );
+        setConnectionPhase(call ? "reconnecting" : "connecting");
+        pushEvent(`Переходное состояние наблюдателя: ${msg}`);
+        autoJoinAttemptForRef.current = null;
+        return;
+      }
+      setTransientStatus(null);
       setError(msg);
       setConnectionPhase("failed");
       if (!suppressErrorToasts) {
         toast.error("Видео наблюдателя", { description: msg });
       }
       pushEvent(`Ошибка подключения наблюдателя: ${msg}`);
-      // Let auto-join attempt again on next render cycle after transient failures.
       autoJoinAttemptForRef.current = null;
     } finally {
       connectInFlightRef.current = false;
@@ -1288,16 +1327,31 @@ export function ObserverStreamCard({
   ]);
 
   useEffect(() => {
-    if (!canConnect || call || busy || error) {
-      return;
-    }
     const autoJoinKey = `${meetingId ?? "no-meeting"}:${streamCallType ?? "no-type"}:${streamCallId ?? "no-call"}:${spectatorJoinToken ?? ""}:${spectatorObserverTicket ?? ""}`;
+    if (process.env.NODE_ENV !== "production") {
+      console.info("[observer-autojoin-state]", {
+        canConnect,
+        hasCall: Boolean(call),
+        busy,
+        hasError: Boolean(error),
+        error,
+        meetingId,
+        hasStreamCallId: Boolean(streamCallId),
+        hasStreamCallType: Boolean(streamCallType),
+        viewerKind,
+        hasJoinToken: Boolean(spectatorJoinToken),
+        hasObserverTicket: Boolean(spectatorObserverTicket),
+        autoJoinKey,
+        lastAutoJoinKey: autoJoinAttemptForRef.current
+      });
+    }
+    if (!canConnect || call || busy || error) return;
     if (autoJoinAttemptForRef.current === autoJoinKey) {
       return;
     }
     autoJoinAttemptForRef.current = autoJoinKey;
     void startStream();
-  }, [busy, call, canConnect, error, meetingId, spectatorJoinToken, spectatorObserverTicket, startStream, streamCallId, streamCallType]);
+  }, [busy, call, canConnect, error, meetingId, spectatorJoinToken, spectatorObserverTicket, startStream, streamCallId, streamCallType, viewerKind]);
 
   useEffect(() => {
     if (canConnect) {
@@ -1412,10 +1466,18 @@ export function ObserverStreamCard({
         <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
             <p className="text-xs font-medium text-slate-700">
-              {canConnect || busy ? "Подключаем наблюдателя" : waitingReason ? "Ожидание" : "Ожидание запуска"}
+              {transientStatus
+                ? "Подключаем наблюдателя…"
+                : canConnect && busy
+                  ? "Подключаем наблюдателя…"
+                  : canConnect && !busy && !call
+                    ? "Готово к подключению"
+                    : waitingReason
+                      ? "Ожидание"
+                      : "Ожидание запуска"}
             </p>
             <p className="mt-0.5 text-[11px] leading-snug text-slate-600">
-              {statusHint || waitingReason || "Видео подключится автоматически после старта интервью."}
+              {transientStatus || statusHint || waitingReason || "Видео подключится автоматически после старта интервью."}
             </p>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -1435,7 +1497,12 @@ export function ObserverStreamCard({
               <Button
                 type="button"
                 className="h-9 min-h-9 rounded-full px-3 text-xs"
-                onClick={() => void startStream()}
+                onClick={() => {
+                  setError(null);
+                  setTransientStatus(null);
+                  autoJoinAttemptForRef.current = null;
+                  void startStream();
+                }}
                 disabled={busy}
                 title={busy ? "Выполняется подключение" : "Подключить наблюдателя к активной сессии"}
               >
