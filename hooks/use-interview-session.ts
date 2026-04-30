@@ -540,10 +540,12 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
 
   useEffect(() => {
     if (process.env.NODE_ENV === "production") return;
+    const nodeEnv = process.env.NODE_ENV;
     const flag = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT;
+    const allowProd = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT_ALLOW_PROD === "1";
     const voiceId = sessionElevenLabsVoiceId.trim();
     const provider = resolveVoiceProvider(voiceId, forceOpenAiVoiceOutput);
-    console.info("[VoiceProvider]", { flag, hasVoiceId: Boolean(voiceId), provider });
+    console.info("[VoiceProvider]", { nodeEnv, flag, allowProd, hasVoiceId: Boolean(voiceId), provider });
   }, [forceOpenAiVoiceOutput, sessionElevenLabsVoiceId]);
 
   const clearElevenLabsQueue = useCallback(() => {

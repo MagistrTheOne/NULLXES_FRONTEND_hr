@@ -561,6 +561,8 @@ type ObserverStreamCardProps = {
   meetingId: string | null;
   streamCallId?: string | null;
   streamCallType?: string | null;
+  /** Internal marker for backend token issuance routing. */
+  viewerKind?: "internal_observer_dashboard" | null;
   enabled: boolean;
   visible: boolean;
   talkMode: ObserverTalkMode;
@@ -599,6 +601,7 @@ export function ObserverStreamCard({
   meetingId,
   streamCallId = null,
   streamCallType = null,
+  viewerKind = null,
   enabled,
   visible,
   talkMode,
@@ -653,6 +656,7 @@ export function ObserverStreamCard({
   const [bookmarksOpen, setBookmarksOpen] = useState(true);
 
   const ended = Boolean(sessionEnded) || uiState === "completed";
+  const suppressErrorToasts = viewerKind === "internal_observer_dashboard";
   const viewMode: ObserverViewMode = useMemo(() => {
     if (ended) return "ended";
     if (client && call && localUserId) return "live";
@@ -1100,6 +1104,7 @@ export function ObserverStreamCard({
               signal: tokenAbort.signal,
               body: JSON.stringify({
                 role: "spectator",
+                ...(viewerKind ? { viewerKind } : {}),
                 meetingId,
                 callId: streamCallId,
                 callType: streamCallType,
@@ -1119,6 +1124,12 @@ export function ObserverStreamCard({
             const payload = (await response.json().catch(() => ({}))) as StreamTokenErrorPayload;
             if (response.status === 409 && payload.code === "meeting.not_active") {
               throw new Error("meeting.not_active");
+            }
+            if (response.status === 409 && payload.code === "stream.binding_missing") {
+              throw new Error("stream.binding_missing");
+            }
+            if (response.status === 503 && payload.code === "observer_role_unavailable" && suppressErrorToasts) {
+              throw new Error("observer_role_unavailable");
             }
             if (!refreshedTicketOnce && isObserverTicketError(payload)) {
               refreshedTicketOnce = true;
@@ -1192,12 +1203,18 @@ export function ObserverStreamCard({
             lower.includes("abort") ||
             lower.includes("observer.ticket.refreshed_retry") ||
             lower.includes("meeting.not_active") ||
+            lower.includes("stream.binding_missing") ||
+            (suppressErrorToasts && lower.includes("observer_role_unavailable")) ||
             lower.includes("video") ||
             lower.includes("media") ||
             lower.includes("сессия не активна");
           if (!transient || attempt >= OBSERVER_MAX_ATTEMPTS) {
             if (lower.includes("meeting.not_active") || lower.includes("сессия не активна")) {
               throw new Error("Сессия еще запускается. Повторите подключение через 2-3 секунды.");
+            }
+            if (lower.includes("stream.binding_missing") && suppressErrorToasts) {
+              // Internal dashboard: treat as waiting state, no hard failure toast.
+              throw new Error("Ждём конфигурацию Stream call.");
             }
             throw lastError;
           }
@@ -1217,7 +1234,9 @@ export function ObserverStreamCard({
       const msg = normalizeObserverStreamError(msgRaw);
       setError(msg);
       setConnectionPhase("failed");
-      toast.error("Видео наблюдателя", { description: msg });
+      if (!suppressErrorToasts) {
+        toast.error("Видео наблюдателя", { description: msg });
+      }
       pushEvent(`Ошибка подключения наблюдателя: ${msg}`);
       // Let auto-join attempt again on next render cycle after transient failures.
       autoJoinAttemptForRef.current = null;
@@ -1241,7 +1260,9 @@ export function ObserverStreamCard({
     tabId,
     call,
     pushEvent,
-    emitObserverAuditEvent
+    emitObserverAuditEvent,
+    suppressErrorToasts,
+    viewerKind
   ]);
 
   useEffect(() => {

@@ -208,7 +208,9 @@ function isAbortError(e: unknown): boolean {
 }
 
 export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }: Props) {
-  const elevenLabsEnabled = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT === "1";
+  const flagEnabled = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT === "1";
+  const isProd = process.env.NODE_ENV === "production";
+  const elevenLabsEnabled = flagEnabled && !isProd;
   const [editing, setEditing] = useState(false);
   const [draftVoiceId, setDraftVoiceId] = useState(committedVoiceId);
   const [search, setSearch] = useState("");
@@ -498,11 +500,11 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                 <span className="text-[13px] font-semibold tracking-tight text-slate-800">Голос ассистента</span>
                 {!elevenLabsEnabled ? (
                   <Badge variant="secondary" className="h-5 px-1.5 text-[10px] font-semibold">
-                    ElevenLabs выключен
+                    Отключено
                   </Badge>
                 ) : (
                   <Badge variant="secondary" className="h-5 px-1.5 text-[10px] font-semibold">
-                    Dev mode
+                    DEV only
                   </Badge>
                 )}
               </div>
@@ -530,7 +532,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                   )}
                   {!elevenLabsEnabled ? (
                     <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-slate-500">
-                      Голос ElevenLabs применяется только в dev-режиме (feature flag).
+                      Сохранённый голос не применяется в текущем режиме. Сейчас используется голос OpenAI Realtime.
                     </p>
                   ) : null}
                 </div>

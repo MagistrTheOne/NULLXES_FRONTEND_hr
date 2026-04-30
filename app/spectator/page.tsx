@@ -633,6 +633,7 @@ function SpectatorBody() {
               meetingId={effectiveMeetingId}
               streamCallId={resolvedStreamCallId || null}
               streamCallType={resolvedStreamCallType || null}
+              viewerKind={isInternalObserverDashboard ? "internal_observer_dashboard" : undefined}
               enabled={canConnect}
               visible
               talkMode={observerControl.talk}
