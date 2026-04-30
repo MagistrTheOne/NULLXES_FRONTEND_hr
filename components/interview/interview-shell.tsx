@@ -8,7 +8,6 @@ import {
   decideCandidateAdmission,
   getMeetingRecording,
   getMeetingRecordingDownload,
-  getRuntimeSnapshot,
   getCandidateAdmissionStatus,
   getInterviewById,
   issueCandidateJoinLink,
@@ -20,8 +19,7 @@ import {
   type CandidateAdmissionStatus,
   type InterviewDetail,
   type InterviewListRow,
-  type JoinLinkIssued,
-  type RuntimeSnapshot
+  type JoinLinkIssued
 } from "@/lib/api";
 import { extractCoreFieldsFromInterviewRaw } from "@/lib/interview-detail-fields";
 import { normalizeInterviewListRows } from "@/lib/normalize-interview-list-row";
@@ -102,7 +100,6 @@ const OBSERVER_PANEL_ENABLED =
  */
 const HR_INSIGHT_PANEL_ENABLED =
   process.env.NEXT_PUBLIC_ENABLE_HR_INSIGHT_PANEL === "1";
-const STREAM_OPENAI_AGENT_MODE_ENABLED = process.env.NEXT_PUBLIC_STREAM_OPENAI_AGENT_MODE === "1";
 const INTERVIEWS_PAGE_SIZE = 8;
 const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
   visibility: "visible",
@@ -195,7 +192,6 @@ export function InterviewShell() {
   const [recording, setRecording] = useState<MeetingRecordingSnapshot | null>(null);
   const [recordingBusy, setRecordingBusy] = useState<"start" | "stop" | "sync" | "download" | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
-  const [runtimeSnapshot, setRuntimeSnapshot] = useState<RuntimeSnapshot | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [observerControl, setObserverControl] = useState<ObserverControlState>(DEFAULT_OBSERVER_CONTROL);
   const [candidateAdmission, setCandidateAdmission] = useState<CandidateAdmissionStatus | null>(null);
@@ -389,19 +385,6 @@ export function InterviewShell() {
     }
   }, [recoveredMeetingId]);
 
-  const refreshRuntimeSnapshot = useCallback(async () => {
-    if (!recoveredMeetingId) {
-      setRuntimeSnapshot(null);
-      return;
-    }
-    try {
-      const snapshot = await getRuntimeSnapshot(recoveredMeetingId);
-      setRuntimeSnapshot(snapshot);
-    } catch {
-      // Best-effort only; debug badge must not break interview UX.
-    }
-  }, [recoveredMeetingId]);
-
   const runRecordingAction = useCallback(
     async (kind: "start" | "stop" | "sync" | "download"): Promise<void> => {
       if (!recoveredMeetingId || !selectedInterviewId) return;
@@ -458,13 +441,11 @@ export function InterviewShell() {
       return;
     }
     void refreshRecording();
-    void refreshRuntimeSnapshot();
     const timer = window.setInterval(() => {
       void refreshRecording();
-      void refreshRuntimeSnapshot();
     }, 8000);
     return () => window.clearInterval(timer);
-  }, [canControlRecording, refreshRecording, refreshRuntimeSnapshot]);
+  }, [canControlRecording, refreshRecording]);
 
   useEffect(() => {
     if (!streamSurfaceEnabled) {
@@ -1204,21 +1185,6 @@ export function InterviewShell() {
         </>
         {recoveredMeetingId ? (
           <div className="flex flex-wrap items-center gap-2">
-            <span
-              className={cn(
-                "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-sm",
-                STREAM_OPENAI_AGENT_MODE_ENABLED
-                  ? "border-emerald-300/80 bg-emerald-50 text-emerald-900"
-                  : "border-slate-300/70 bg-white/70 text-slate-700"
-              )}
-              title={
-                STREAM_OPENAI_AGENT_MODE_ENABLED
-                  ? "Frontend не запускает browser speaking agent. Ожидается backend Stream OpenAI participant."
-                  : "Агент работает через browser OpenAI Realtime (WebRTC) и озвучивает ответы на клиенте."
-              }
-            >
-              Agent: {STREAM_OPENAI_AGENT_MODE_ENABLED ? "Stream OpenAI" : "Browser Realtime"}
-            </span>
             {recording?.diagnostics?.warning ? (
               <span className="rounded-full border border-amber-300/80 bg-amber-50 px-3 py-1 text-[11px] font-medium text-amber-900 shadow-sm">
                 rec_warning={recording.diagnostics.warning}
