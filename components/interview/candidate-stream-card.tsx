@@ -777,14 +777,24 @@ export function CandidateStreamCard({
           ) : (
             <>
               <p className="text-sm font-medium text-slate-700">Видео не подключено</p>
-              {previewStream ? (
-                <video
-                  ref={previewVideoRef}
-                  className="mt-1 max-h-36 w-full max-w-[280px] rounded-lg border border-slate-200 bg-black object-cover shadow-sm"
-                  playsInline
-                  muted
-                  autoPlay
-                />
+              {requireMediaCheckBeforeConnect ? (
+                <div className="mt-1 w-full max-w-[340px]">
+                  <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-950 shadow-sm">
+                    {previewStream ? (
+                      <video
+                        ref={previewVideoRef}
+                        className="absolute inset-0 h-full w-full object-cover"
+                        playsInline
+                        muted
+                        autoPlay
+                      />
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center px-3 text-center text-xs text-slate-200/90">
+                        Нажмите «Проверить камеру и микрофон», чтобы увидеть превью
+                      </div>
+                    )}
+                  </div>
+                </div>
               ) : null}
               <p className="max-w-[280px] text-sm text-slate-600">
                 {requireMediaCheckBeforeConnect
