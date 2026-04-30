@@ -439,7 +439,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
 
   const committedLabel = useMemo(() => {
     const id = committedVoiceId.trim();
-    if (!id) return "—";
+    if (!id) return "";
     const hit = voices.find((v) => v.voiceId === id);
     if (hit) return getVoiceDisplayName(hit);
     return "Сохранённый голос";
@@ -497,9 +497,28 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
                 <span className="text-[13px] font-semibold tracking-tight text-slate-800">Голос ассистента</span>
               </div>
               {!editing ? (
-                <p className="mt-0.5 line-clamp-1 text-[11px] leading-tight text-slate-600" title={committedLabel}>
-                  {committedLabel || "Сохранённый"}
-                </p>
+                <div className="mt-0.5 space-y-0.5">
+                  <p className="text-[10px] font-medium text-slate-500">Сохранённый · ElevenLabs</p>
+                  {committedVoiceId.trim() ? (
+                    <>
+                      <p className="line-clamp-1 text-[12px] font-semibold leading-tight text-slate-800" title={committedMeta?.display ?? committedLabel}>
+                        {committedMeta?.display ?? committedLabel}
+                      </p>
+                      {committedMeta?.secondary ? (
+                        <p className="line-clamp-1 text-[10px] leading-tight text-slate-500" title={committedMeta.secondary}>
+                          {committedMeta.secondary}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <p className="line-clamp-1 text-[12px] font-semibold leading-tight text-slate-800">Голос не выбран</p>
+                      <p className="line-clamp-1 text-[10px] leading-tight text-slate-500">
+                        Выберите голос для озвучки HR-ассистента.
+                      </p>
+                    </>
+                  )}
+                </div>
               ) : (
                 <p className="mt-0.5 line-clamp-1 text-[10px] leading-tight text-slate-500">
                   Поиск в одном поле → демо → «Сохранить».
@@ -511,9 +530,9 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
             <div className="flex w-full shrink-0 gap-1.5 sm:ml-auto sm:w-auto">
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                className="h-9 min-h-9 flex-1 gap-1.5 rounded-lg px-2.5 text-[11px] sm:flex-initial"
+                className="h-9 min-h-9 flex-1 gap-1.5 rounded-lg px-2.5 text-[11px] text-slate-700 hover:bg-white/50 sm:flex-initial"
                 onClick={() => setEditing(true)}
               >
                 <Pencil className="size-3.5 shrink-0" aria-hidden />
@@ -558,21 +577,7 @@ export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }:
           )}
         </div>
 
-        {!editing ? (
-          <div className="flex items-center gap-2 rounded-lg border border-slate-200/70 bg-white/70 px-2.5 py-2">
-            <Badge variant="secondary" className="rounded-full px-2 text-[10px] font-normal text-slate-600">
-              Сохранённый
-            </Badge>
-            <p className="min-w-0 flex-1 truncate text-xs font-medium text-slate-800" title={committedLabel}>
-              {committedLabel}
-            </p>
-            {committedMeta?.secondary ? (
-              <p className="hidden min-w-0 max-w-[220px] truncate text-[10px] text-slate-500 sm:block" title={committedMeta.secondary}>
-                {committedMeta.secondary}
-              </p>
-            ) : null}
-          </div>
-        ) : (
+        {!editing ? null : (
           <div className="space-y-2">
             <div className="flex gap-1.5">
               <div ref={comboboxAnchorRef} className="min-w-0 flex-1">

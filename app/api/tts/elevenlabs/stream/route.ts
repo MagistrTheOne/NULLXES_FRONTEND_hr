@@ -3,11 +3,15 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { resolveElevenLabsVoiceId, type MiraVoicePresetId } from "@/lib/interview-voice-presets";
 
+const ELEVENLABS_DEFAULT_MODEL_ID =
+  process.env.ELEVENLABS_TTS_MODEL_ID?.trim() || "eleven_flash_v2_5";
+
 const bodySchema = z.object({
   text: z.string().min(1).max(8000),
   /** Direct ElevenLabs `voice_id` from /api/elevenlabs/voices or the dashboard. */
   voiceId: z.string().min(8).max(128).optional(),
-  voiceKey: z.enum(["mira_core", "mira_soft", "mira_strict"]).optional()
+  voiceKey: z.enum(["mira_core", "mira_soft", "mira_strict"]).optional(),
+  modelId: z.string().min(3).max(64).optional()
 });
 
 /**
@@ -36,12 +40,13 @@ export async function POST(req: NextRequest) {
   const voiceId: string = trimmedVoiceId?.length
     ? trimmedVoiceId
     : resolveElevenLabsVoiceId((parsed.data.voiceKey ?? "mira_core") as MiraVoicePresetId);
+  const modelId = parsed.data.modelId?.trim() || ELEVENLABS_DEFAULT_MODEL_ID;
 
   const client = new ElevenLabsClient({ apiKey });
 
   try {
     const audioStream = await client.textToSpeech.stream(voiceId, {
-      modelId: "eleven_flash_v2_5",
+      modelId,
       text: parsed.data.text,
       outputFormat: "mp3_22050_32",
       optimizeStreamingLatency: 3

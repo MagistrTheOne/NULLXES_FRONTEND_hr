@@ -1071,7 +1071,7 @@ export function InterviewShell() {
   ]);
 
   return (
-    <div className="min-h-screen w-full min-w-0 bg-[#dfe4ec] px-3 py-5 sm:px-5 sm:py-7 md:px-8 md:py-8 lg:px-10">
+    <div className="min-h-screen w-full min-w-0 bg-[#e9edf4] px-3 py-5 text-slate-800 sm:px-5 sm:py-7 md:px-8 md:py-8 lg:px-10">
       <div className="mx-auto flex w-full min-w-0 max-w-[1280px] flex-col gap-8 sm:gap-10">
         {isCandidateFlow && !requestedInterviewId ? (
           <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-sm">
@@ -1142,10 +1142,10 @@ export function InterviewShell() {
 
         </>
         {recoveredMeetingId && selectedInterviewId ? (
-          <div className="w-full max-w-[420px] rounded-2xl border border-white/40 bg-[#d9dee7]/40 p-2 shadow-sm">
+          <div className="w-full max-w-[420px] rounded-2xl border border-white/60 bg-[#dce2eb]/70 p-2 shadow-sm">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-600">Запись</p>
+                <p className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">ЗАПИСЬ</p>
                 <p className="mt-0.5 truncate text-xs text-slate-700">
                   {recording?.configured === false
                     ? "Недоступна"
@@ -1166,7 +1166,7 @@ export function InterviewShell() {
               </div>
               <span
                 className={cn(
-                  "inline-block h-2.5 w-2.5 rounded-full ring-2 ring-white",
+                  "inline-block h-2 w-2 rounded-full ring-2 ring-white/80",
                   recording?.configured === false
                     ? "bg-slate-400"
                     : recording?.state === "ready" || recording?.state === "recording"
@@ -1194,7 +1194,7 @@ export function InterviewShell() {
                 <>
                   <button
                     type="button"
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-emerald-200/70 bg-white/70 text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-emerald-200/70 bg-white/55 text-emerald-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => void runRecordingAction("start")}
                     disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
                     title="Запись: старт"
@@ -1204,7 +1204,7 @@ export function InterviewShell() {
                   </button>
                   <button
                     type="button"
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-amber-200/70 bg-white/70 text-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-amber-200/70 bg-white/55 text-amber-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => void runRecordingAction("stop")}
                     disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
                     title="Запись: стоп"
@@ -1216,7 +1216,7 @@ export function InterviewShell() {
               ) : null}
               <button
                 type="button"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-300/70 bg-white/70 text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-white/60 bg-white/55 text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => void runRecordingAction("download")}
                 disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
                 title="Запись: скачать"
@@ -1226,7 +1226,7 @@ export function InterviewShell() {
               </button>
               <button
                 type="button"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-300/70 bg-white/70 text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-white/60 bg-white/55 text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => void refreshRecording()}
                 disabled={recordingBusy !== null || !recoveredMeetingId}
                 title="Запись: обновить"
