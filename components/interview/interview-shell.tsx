@@ -8,6 +8,7 @@ import {
   decideCandidateAdmission,
   getMeetingRecording,
   getMeetingRecordingDownload,
+  getRuntimeSnapshot,
   getCandidateAdmissionStatus,
   getInterviewById,
   issueCandidateJoinLink,
@@ -19,7 +20,8 @@ import {
   type CandidateAdmissionStatus,
   type InterviewDetail,
   type InterviewListRow,
-  type JoinLinkIssued
+  type JoinLinkIssued,
+  type RuntimeSnapshot
 } from "@/lib/api";
 import { extractCoreFieldsFromInterviewRaw } from "@/lib/interview-detail-fields";
 import { normalizeInterviewListRows } from "@/lib/normalize-interview-list-row";
@@ -100,6 +102,7 @@ const OBSERVER_PANEL_ENABLED =
  */
 const HR_INSIGHT_PANEL_ENABLED =
   process.env.NEXT_PUBLIC_ENABLE_HR_INSIGHT_PANEL === "1";
+const STREAM_OPENAI_AGENT_MODE_ENABLED = process.env.NEXT_PUBLIC_STREAM_OPENAI_AGENT_MODE === "1";
 const INTERVIEWS_PAGE_SIZE = 8;
 const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
   visibility: "visible",
@@ -192,6 +195,7 @@ export function InterviewShell() {
   const [recording, setRecording] = useState<MeetingRecordingSnapshot | null>(null);
   const [recordingBusy, setRecordingBusy] = useState<"start" | "stop" | "sync" | "download" | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [runtimeSnapshot, setRuntimeSnapshot] = useState<RuntimeSnapshot | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [observerControl, setObserverControl] = useState<ObserverControlState>(DEFAULT_OBSERVER_CONTROL);
   const [candidateAdmission, setCandidateAdmission] = useState<CandidateAdmissionStatus | null>(null);
@@ -213,6 +217,7 @@ export function InterviewShell() {
   const [connectionQuality, setConnectionQuality] = useState<ConnectionQualityReading | null>(null);
   const poorSinceMsRef = useRef<number | null>(null);
   const lastPoorToastAtMsRef = useRef<number>(0);
+  const lastQuestionStateLogRef = useRef<string>("");
   /** Avoid infinite render loops: child pushes quality every Stream tick with a new object ref. */
   const reportCandidateConnectionQuality = useCallback((reading: ConnectionQualityReading) => {
     setConnectionQuality((prev) => {
@@ -384,6 +389,19 @@ export function InterviewShell() {
     }
   }, [recoveredMeetingId]);
 
+  const refreshRuntimeSnapshot = useCallback(async () => {
+    if (!recoveredMeetingId) {
+      setRuntimeSnapshot(null);
+      return;
+    }
+    try {
+      const snapshot = await getRuntimeSnapshot(recoveredMeetingId);
+      setRuntimeSnapshot(snapshot);
+    } catch {
+      // Best-effort only; debug badge must not break interview UX.
+    }
+  }, [recoveredMeetingId]);
+
   const runRecordingAction = useCallback(
     async (kind: "start" | "stop" | "sync" | "download"): Promise<void> => {
       if (!recoveredMeetingId || !selectedInterviewId) return;
@@ -440,11 +458,13 @@ export function InterviewShell() {
       return;
     }
     void refreshRecording();
+    void refreshRuntimeSnapshot();
     const timer = window.setInterval(() => {
       void refreshRecording();
+      void refreshRuntimeSnapshot();
     }, 8000);
     return () => window.clearInterval(timer);
-  }, [canControlRecording, refreshRecording]);
+  }, [canControlRecording, refreshRecording, refreshRuntimeSnapshot]);
 
   useEffect(() => {
     if (!streamSurfaceEnabled) {
@@ -572,6 +592,47 @@ export function InterviewShell() {
       specialtyName: ext.specialtyName ?? (typeof inv?.specialty === "object" && inv?.specialty ? inv.specialty.name : undefined)
     };
   }, [candidateFio, selectedInterviewDetailMatched, selectedRow]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+
+    const orders = (interviewStartContext?.questions ?? [])
+      .slice()
+      .sort((a, b) => a.order - b.order)
+      .map((q) => q.order);
+    const totalQuestions = interviewStartContext?.questions?.length ?? 0;
+    const currentQuestionIndex =
+      flowPhase === "questions" && totalQuestions > 0 ? Math.min(Math.max(questionsAsked, 0), totalQuestions - 1) : null;
+    const safeAsked =
+      flowPhase === "questions" && totalQuestions > 0
+        ? Math.min(Math.max(questionsAsked, 0) + 1, totalQuestions)
+        : null;
+    const displayedLabel =
+      flowPhase === "intro"
+        ? "Знакомство"
+        : flowPhase === "closing"
+          ? "Заключительная часть"
+          : safeAsked && totalQuestions > 0
+            ? `Вопрос ${safeAsked} из ${totalQuestions}`
+            : flowPhase === "completed"
+              ? null
+              : "Интервью идёт";
+
+    const payload = {
+      phase,
+      flowPhase,
+      order: currentQuestionIndex !== null ? (orders[currentQuestionIndex] ?? null) : null,
+      currentQuestionIndex,
+      totalQuestions,
+      displayedLabel
+    };
+
+    const key = JSON.stringify(payload);
+    if (lastQuestionStateLogRef.current !== key) {
+      lastQuestionStateLogRef.current = key;
+      console.info("[interview-question-state]", payload);
+    }
+  }, [flowPhase, interviewStartContext, phase, questionsAsked]);
 
   useEffect(() => {
     if (!isInterviewContextDebugEnabled() || !selectedInterviewDetailMatched) {
@@ -1141,6 +1202,40 @@ export function InterviewShell() {
         />
 
         </>
+        {recoveredMeetingId ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={cn(
+                "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-sm",
+                STREAM_OPENAI_AGENT_MODE_ENABLED
+                  ? "border-emerald-300/80 bg-emerald-50 text-emerald-900"
+                  : "border-slate-300/70 bg-white/70 text-slate-700"
+              )}
+              title={
+                STREAM_OPENAI_AGENT_MODE_ENABLED
+                  ? "Frontend не запускает browser speaking agent. Ожидается backend Stream OpenAI participant."
+                  : "Агент работает через browser OpenAI Realtime (WebRTC) и озвучивает ответы на клиенте."
+              }
+            >
+              Agent: {STREAM_OPENAI_AGENT_MODE_ENABLED ? "Stream OpenAI" : "Browser Realtime"}
+            </span>
+            {STREAM_OPENAI_AGENT_MODE_ENABLED ? (
+              <span className="rounded-full border border-slate-300/70 bg-white/70 px-3 py-1 text-[11px] font-medium text-slate-700 shadow-sm">
+                state=
+                {safeText((runtimeSnapshot?.meeting?.metadata as Record<string, unknown> | undefined)?.agent_state) ||
+                "unknown"}
+                {safeText((runtimeSnapshot?.meeting?.metadata as Record<string, unknown> | undefined)?.agent_user_id)
+                  ? ` · user=${safeText((runtimeSnapshot?.meeting?.metadata as Record<string, unknown> | undefined)?.agent_user_id)}`
+                  : ""}
+              </span>
+            ) : null}
+            {recording?.diagnostics?.warning ? (
+              <span className="rounded-full border border-amber-300/80 bg-amber-50 px-3 py-1 text-[11px] font-medium text-amber-900 shadow-sm">
+                rec_warning={recording.diagnostics.warning}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         {recoveredMeetingId && selectedInterviewId ? (
           <div className="w-full max-w-[420px] rounded-2xl border border-white/60 bg-[#dce2eb]/70 p-2 shadow-sm">
             <div className="flex items-center justify-between gap-2">

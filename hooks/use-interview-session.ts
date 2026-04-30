@@ -472,6 +472,8 @@ export type InterviewSessionStopOptions = {
   finalStatus?: "completed" | "stopped_during_meeting";
 };
 
+const STREAM_OPENAI_AGENT_MODE_ENABLED = process.env.NEXT_PUBLIC_STREAM_OPENAI_AGENT_MODE === "1";
+
 export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   const isCandidateFlow = options?.isCandidateFlow ?? false;
   const [phase, setPhase] = useState<InterviewPhase>("idle");
@@ -1071,6 +1073,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       if (!greetingDoneRef.current) {
         greetingDoneRef.current = true;
         setFlowPhase("questions");
+        // Defensive reset: on reconnect/restore some "response.done" events may arrive
+        // out-of-order, and we never want the first displayed question label to jump.
+        setQuestionsAsked(0);
       } else {
         setQuestionsAsked((prev) => prev + 1);
       }
@@ -1261,7 +1266,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
             sessionElevenLabsVoiceIdRef.current,
             forceOpenAiVoiceOutputRef.current
           ),
-          instructions: "Продолжи интервью с текущего места и задай следующий уместный вопрос."
+          instructions:
+            "Возобновляем после паузы. Продолжай интервью с текущего места: НЕ повторяй приветствие и НЕ возвращайся к intro. " +
+            "Не объявляй номер вопроса вслух. Просто задай следующий вопрос по списку и продолжай в том же тоне."
         }
       });
     } catch {
@@ -1671,6 +1678,15 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       const connected = await rtc.connect();
       setSessionId(connected.sessionId);
 
+      if (STREAM_OPENAI_AGENT_MODE_ENABLED) {
+        // Phase 2 guard: in Stream OpenAI agent mode the browser must NOT act as a speaking agent.
+        // We still establish a gateway sessionId for orchestration / Stream tokens, but we disable
+        // browser audio input and skip response.create / greeting.
+        rtc.setAudioInputEnabled(false);
+        setAgentInputEnabled(false);
+        setAgentState("idle");
+      }
+
       if (options?.interviewId) {
         await linkInterviewSession({
           interviewId: options.interviewId,
@@ -1699,18 +1715,20 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           triggerSource
         })
       );
-      await postIntroResponseToRtc(
-        rtc,
-        effectiveContext,
-        "first",
-        effectivePromptSettings,
-        sessionElevenLabsVoiceIdRef.current,
-        forceOpenAiVoiceOutputRef.current,
-        {
-        getSessionUpdatedVersion,
-        waitForSessionUpdatedAck
-        }
-      );
+      if (!STREAM_OPENAI_AGENT_MODE_ENABLED) {
+        await postIntroResponseToRtc(
+          rtc,
+          effectiveContext,
+          "first",
+          effectivePromptSettings,
+          sessionElevenLabsVoiceIdRef.current,
+          forceOpenAiVoiceOutputRef.current,
+          {
+            getSessionUpdatedVersion,
+            waitForSessionUpdatedAck
+          }
+        );
+      }
 
       setPhase("connected");
       setRuntimeRecoveryState("idle");

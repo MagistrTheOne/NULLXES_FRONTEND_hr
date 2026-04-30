@@ -507,6 +507,28 @@ export type MeetingRecordingSnapshot = {
   callId: string;
   activeRecordingId?: string;
   assets?: MeetingRecordingAsset[];
+  diagnostics?: {
+    streamRecordingUrl?: string | null;
+    recordingStartAttempts?: number | null;
+    lastRecordingError?: string | null;
+    recordingState?: string | null;
+    warning?: string | null;
+    agent?: {
+      present?: boolean | null;
+      hasAudio?: boolean | null;
+      hasVideo?: boolean | null;
+    };
+    candidate?: {
+      present?: boolean | null;
+      hasAudio?: boolean | null;
+      hasVideo?: boolean | null;
+    };
+    agentHasAudio?: boolean | null;
+    agentHasVideo?: boolean | null;
+    candidateHasAudio?: boolean | null;
+    candidateHasVideo?: boolean | null;
+    agentAudioTrackMissingWarning?: string | null;
+  };
 };
 
 export type RuntimeCommandType =

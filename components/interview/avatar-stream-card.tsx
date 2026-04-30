@@ -482,7 +482,7 @@ export function AvatarStreamCard({
                 onClick={onStopAI}
                 className="h-10 min-h-10 w-full rounded-xl border border-rose-300/80 bg-rose-600 px-4 text-sm font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.15)] transition hover:bg-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Остановить бота
+                Завершить интервью
               </button>
             ) : ended ? (
               <p className="w-full text-xs text-slate-600">Интервью завершено, управление отключено.</p>
