@@ -35,7 +35,9 @@ const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
 };
 
 const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
-const ACTIVE_MEETING_STATUSES = new Set(["starting", "in_meeting"]);
+// "Live" statuses can differ between projection/runtime snapshots.
+// Keep the gate permissive as long as Stream binding exists and session is not terminal.
+const ACTIVE_MEETING_STATUSES = new Set(["starting", "in_meeting", "active", "live", "meeting_in_progress"]);
 const TERMINAL_MEETING_STATUSES = new Set(["completed", "stopped_during_meeting"]);
 const SPECTATOR_SSE_MAX_RETRIES = 5;
 const SPECTATOR_SSE_SLOW_RETRY_MS = 45_000;
@@ -295,7 +297,8 @@ function SpectatorBody() {
   const terminalByProjection =
     TERMINAL_MEETING_STATUSES.has(String(detail?.projection.nullxesStatus ?? "")) ||
     TERMINAL_MEETING_STATUSES.has(String(detail?.projection.jobAiStatus ?? ""));
-  const projectionActive = ACTIVE_MEETING_STATUSES.has(String(detail?.projection.nullxesStatus ?? ""));
+  const projectionStatus = String(detail?.projection.nullxesStatus ?? "");
+  const projectionActive = ACTIVE_MEETING_STATUSES.has(projectionStatus);
   const runtimeMeetingId = normalizeMeetingId(runtimeSnapshot?.meetingId);
   const runtimeMatchesMeeting = Boolean(effectiveMeetingId && runtimeMeetingId === effectiveMeetingId);
   const runtimeActive =
@@ -312,7 +315,6 @@ function SpectatorBody() {
   const canConnect =
     Boolean(effectiveMeetingId) &&
     runtimeMatchesMeeting &&
-    (projectionActive || runtimeActive) &&
     hasTrustedStreamBinding &&
     !terminalByProjection;
   const spectatorWaitingReason = useMemo(() => {
@@ -328,11 +330,12 @@ function SpectatorBody() {
     if (!runtimeMatchesMeeting) {
       return "Runtime обновляется, ждём подтверждение актуальной сессии наблюдения.";
     }
-    if (!projectionActive && !runtimeActive) {
-      return "meeting найден, но статус ещё не активен. Ждём, пока кандидат/HR поднимут живую сессию.";
-    }
     if (!hasTrustedStreamBinding) {
       return "Сессия активна. Ждём конфигурацию Stream call.";
+    }
+    if (!projectionActive && !runtimeActive) {
+      // Binding exists; allow connect even if status signal lags.
+      return "Подключаем наблюдателя…";
     }
     return null;
   }, [
@@ -350,11 +353,13 @@ function SpectatorBody() {
     console.info("[spectator-orchestration]", {
       jobAiId,
       nullxesStatus: String(detail?.projection.nullxesStatus ?? ""),
+      projectionStatus,
       activeMeetingId: effectiveMeetingId,
       streamCallId: resolvedStreamCallId || null,
       streamCallType: resolvedStreamCallType || null,
       runtimeHealthReady,
       runtimeReady: runtimeHealthReady,
+      runtimeStatus: String(runtimeSnapshot?.meeting?.status ?? ""),
       sessionEnded: terminalByProjection,
       observerCanConnect: canConnect,
       waitingReason: spectatorWaitingReason,
@@ -368,9 +373,11 @@ function SpectatorBody() {
     isInternalObserverDashboard,
     isSignedSpectator,
     jobAiId,
+    projectionStatus,
     resolvedStreamCallId,
     resolvedStreamCallType,
     runtimeHealthReady,
+    runtimeSnapshot?.meeting?.status,
     spectatorWaitingReason,
     terminalByProjection
   ]);
