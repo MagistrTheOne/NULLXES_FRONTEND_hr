@@ -68,10 +68,11 @@ export type ObserverConnectionStatus =
 type ObserverConnectionPhase = "connecting" | "connected" | "reconnecting" | "failed";
 type ObserverViewMode = "waiting" | "live" | "ended";
 
-const OBSERVER_TOKEN_TIMEOUT_MS = 15_000;
-const OBSERVER_JOIN_TIMEOUT_MS = 20_000;
-const OBSERVER_MAX_ATTEMPTS = 4;
-const OBSERVER_RETRY_BACKOFF_MS = 800;
+const OBSERVER_TOKEN_TIMEOUT_MS = 20_000;
+// Stream SFU join for readonly spectators can take longer (role propagation + SFU WS).
+const OBSERVER_JOIN_TIMEOUT_MS = 45_000;
+const OBSERVER_MAX_ATTEMPTS = 6;
+const OBSERVER_RETRY_BACKOFF_MS = 1_200;
 const OBSERVER_RECONNECT_LOCK_MS = 1_500;
 const OBSERVER_NO_PARTICIPANTS_GRACE_MS = 7_000;
 const OBSERVER_NO_PARTICIPANTS_RECONNECT_MAX = 3;
@@ -1282,8 +1283,10 @@ export function ObserverStreamCard({
             }
             throw lastError;
           }
-          const backoffMs = OBSERVER_RETRY_BACKOFF_MS * 2 ** (attempt - 1);
-          await wait(backoffMs);
+          const baseBackoffMs = OBSERVER_RETRY_BACKOFF_MS * 2 ** (attempt - 1);
+          const cappedBackoffMs = Math.min(baseBackoffMs, 15_000);
+          const jitterMs = Math.floor(Math.random() * 350);
+          await wait(cappedBackoffMs + jitterMs);
         }
       }
 
