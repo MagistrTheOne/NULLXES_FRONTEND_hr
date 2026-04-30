@@ -210,7 +210,8 @@ function isAbortError(e: unknown): boolean {
 export function HrElevenLabsVoicePicker({ committedVoiceId, onSave, className }: Props) {
   const flagEnabled = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT === "1";
   const isProd = process.env.NODE_ENV === "production";
-  const elevenLabsEnabled = flagEnabled && !isProd;
+  const allowProd = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT_ALLOW_PROD === "1";
+  const elevenLabsEnabled = flagEnabled && (!isProd || allowProd);
   const [editing, setEditing] = useState(false);
   const [draftVoiceId, setDraftVoiceId] = useState(committedVoiceId);
   const [search, setSearch] = useState("");
