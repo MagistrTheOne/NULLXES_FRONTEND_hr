@@ -309,7 +309,7 @@ function ObserverSplitDashboard({
                 <Badge variant="secondary">{candidateParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
               </div>
             ) : (
-              <ParticipantView participant={candidateParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+              <ParticipantView participant={candidateParticipant} trackType="videoTrack" />
             )
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание кандидата</div>
@@ -337,7 +337,7 @@ function ObserverSplitDashboard({
               <Badge variant="secondary">{agentParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
             </div>
           ) : (
-            <ParticipantView participant={agentParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+            <ParticipantView participant={agentParticipant} trackType="videoTrack" />
           )
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание HR аватара</div>
@@ -391,7 +391,7 @@ function ObserverCallBody({
                   <Badge variant="secondary">{candidateParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
                 </div>
               ) : (
-                <ParticipantView participant={candidateParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+                <ParticipantView participant={candidateParticipant} trackType="videoTrack" />
               )
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание кандидата</div>
@@ -413,7 +413,7 @@ function ObserverCallBody({
                 <Badge variant="secondary">{agentParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
               </div>
             ) : (
-              <ParticipantView participant={agentParticipant} trackType="videoTrack" ParticipantViewUI={() => null} />
+              <ParticipantView participant={agentParticipant} trackType="videoTrack" />
             )
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание HR аватара</div>
