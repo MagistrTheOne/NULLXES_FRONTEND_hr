@@ -106,20 +106,95 @@ function readString(source: unknown, key: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function resolveVoiceProvider(voiceId?: string): VoiceProvider {
+type RealtimeAnyEvent = { type?: unknown; payload?: unknown };
+
+function extractAssistantTextFromRealtimeEvent(event: RealtimeAnyEvent): string | null {
+  const payload = event?.payload;
+  const trimOrNull = (value: unknown): string | null => {
+    if (typeof value !== "string") return null;
+    const t = value.trim();
+    return t.length > 0 ? t : null;
+  };
+
+  const maybeText = (obj: unknown): string | null => {
+    if (!obj || typeof obj !== "object") return null;
+    const rec = obj as Record<string, unknown>;
+    return (
+      trimOrNull(rec.delta) ??
+      trimOrNull(rec.text) ??
+      trimOrNull(rec.transcript) ??
+      (rec.part && typeof rec.part === "object"
+        ? trimOrNull((rec.part as Record<string, unknown>).text) ?? trimOrNull((rec.part as Record<string, unknown>).transcript)
+        : null)
+    );
+  };
+
+  // Direct string fields first (delta/text/transcript/part.text).
+  const direct = maybeText(payload);
+  if (direct) return direct;
+
+  // item.content[] shape (ignore user role).
+  if (payload && typeof payload === "object") {
+    const rec = payload as Record<string, unknown>;
+    const item = rec.item;
+    if (item && typeof item === "object") {
+      const itemRec = item as Record<string, unknown>;
+      const role = typeof itemRec.role === "string" ? itemRec.role : null;
+      if (role === "user") return null;
+      const content = itemRec.content;
+      if (Array.isArray(content)) {
+        for (const part of content) {
+          if (!part || typeof part !== "object") continue;
+          const p = part as Record<string, unknown>;
+          const extracted = trimOrNull(p.text) ?? trimOrNull(p.transcript);
+          if (extracted) return extracted;
+        }
+      }
+    }
+
+    // response.output[].content[] shape (ignore user role).
+    const response = rec.response;
+    if (response && typeof response === "object") {
+      const responseRec = response as Record<string, unknown>;
+      const outputs = responseRec.output;
+      if (Array.isArray(outputs)) {
+        for (const output of outputs) {
+          if (!output || typeof output !== "object") continue;
+          const outRec = output as Record<string, unknown>;
+          const role = typeof outRec.role === "string" ? outRec.role : null;
+          if (role === "user") continue;
+          const content = outRec.content;
+          if (Array.isArray(content)) {
+            for (const c of content) {
+              if (!c || typeof c !== "object") continue;
+              const cRec = c as Record<string, unknown>;
+              const extracted = trimOrNull(cRec.text) ?? trimOrNull(cRec.transcript);
+              if (extracted) return extracted;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function resolveVoiceProvider(voiceId?: string, forceOpenAi?: boolean): VoiceProvider {
   const selected = typeof voiceId === "string" ? voiceId.trim() : "";
   // Feature flag keeps rollout controlled; voice selection decides provider when enabled.
   const enabled = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT === "1";
+  if (forceOpenAi) return "openai";
   return enabled && selected.length > 0 ? "elevenlabs" : "openai";
 }
 
 /** When true, agent speech uses ElevenLabs (text-only OpenAI responses + local playback). */
-function elevenLabsAgentReplacesOpenAiAudio(voiceId?: string): boolean {
-  return resolveVoiceProvider(voiceId) === "elevenlabs";
+function elevenLabsAgentReplacesOpenAiAudio(voiceId?: string, forceOpenAi?: boolean): boolean {
+  return resolveVoiceProvider(voiceId, forceOpenAi) === "elevenlabs";
 }
 
-function openAiAgentResponseModalities(voiceId?: string): ("audio" | "text")[] {
-  return resolveVoiceProvider(voiceId) === "elevenlabs" ? ["text"] : ["audio", "text"];
+function openAiAgentResponseModalities(voiceId?: string, forceOpenAi?: boolean): ("audio" | "text")[] {
+  return resolveVoiceProvider(voiceId, forceOpenAi) === "elevenlabs" ? ["text"] : ["audio", "text"];
 }
 
 function isIgnorableStatusTransitionError(error: unknown): boolean {
@@ -238,6 +313,7 @@ async function postIntroResponseToRtc(
   mode: IntroMode = "first",
   runtimePromptSettings?: RuntimePromptSettings,
   selectedVoiceId?: string,
+  forceOpenAiVoiceOutput?: boolean,
   gateOptions?: {
     getSessionUpdatedVersion: () => number;
     waitForSessionUpdatedAck: (previousVersion: number, timeoutMs: number) => Promise<boolean>;
@@ -313,10 +389,15 @@ async function postIntroResponseToRtc(
           "Не называй себя именем кандидата."
         ];
 
+  const modalities = openAiAgentResponseModalities(selectedVoiceId, forceOpenAiVoiceOutput);
+  if (process.env.NODE_ENV !== "production" && resolveVoiceProvider(selectedVoiceId, forceOpenAiVoiceOutput) === "elevenlabs") {
+    console.info("[OpenAI Realtime][ElevenLabs] response.create modalities", { modalities, voiceId: selectedVoiceId ?? "" });
+  }
+
   await rtc.postEvent({
     type: "response.create",
     response: {
-      modalities: openAiAgentResponseModalities(selectedVoiceId),
+      modalities,
       instructions: [
         ...baseInstructions,
         "",
@@ -397,6 +478,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   const [lastAgentContextTrace, setLastAgentContextTrace] = useState<AgentContextTrace | null>(null);
   const [rtcState, setRtcState] = useState<WebRtcConnectionState>("idle");
   const [remoteAudioStream, setRemoteAudioStream] = useState<MediaStream | null>(null);
+  const lastRemoteAudioStreamRef = useRef<MediaStream | null>(null);
   const [agentInputEnabled, setAgentInputEnabled] = useState(true);
   const [agentPaused, setAgentPaused] = useState(false);
   const [runtimeRecoveryState, setRuntimeRecoveryState] = useState<RuntimeRecoveryState>("idle");
@@ -427,26 +509,61 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   }, []);
   const [sessionElevenLabsVoiceId, setSessionElevenLabsVoiceId] = useState(() => getDefaultElevenLabsVoiceId());
   const sessionElevenLabsVoiceIdRef = useRef(sessionElevenLabsVoiceId);
-  const voiceProviderRef = useRef<VoiceProvider>(resolveVoiceProvider(sessionElevenLabsVoiceId));
+  const [forceOpenAiVoiceOutput, setForceOpenAiVoiceOutput] = useState(false);
+  const forceOpenAiVoiceOutputRef = useRef(forceOpenAiVoiceOutput);
+  const voiceProviderRef = useRef<VoiceProvider>(resolveVoiceProvider(sessionElevenLabsVoiceId, forceOpenAiVoiceOutput));
   const lastReportedVoiceIdRef = useRef<string | null>(null);
   const elevenLabsUtteranceAbortRef = useRef<AbortController | null>(null);
   const elevenLabsQueueRef = useRef<string[]>([]);
   const elevenLabsQueueDrainingRef = useRef(false);
+  const elevenLabsAlreadyQueuedResponseIdsRef = useRef<Set<string>>(new Set());
+  const elevenLabsTtsFailureToastShownRef = useRef(false);
 
   const voiceProvider: VoiceProvider = useMemo(
-    () => resolveVoiceProvider(sessionElevenLabsVoiceId),
-    [sessionElevenLabsVoiceId]
+    () => resolveVoiceProvider(sessionElevenLabsVoiceId, forceOpenAiVoiceOutput),
+    [forceOpenAiVoiceOutput, sessionElevenLabsVoiceId]
   );
 
   useEffect(() => {
     sessionElevenLabsVoiceIdRef.current = sessionElevenLabsVoiceId;
-    voiceProviderRef.current = resolveVoiceProvider(sessionElevenLabsVoiceId);
+    voiceProviderRef.current = resolveVoiceProvider(sessionElevenLabsVoiceId, forceOpenAiVoiceOutputRef.current);
   }, [sessionElevenLabsVoiceId]);
+
+  useEffect(() => {
+    forceOpenAiVoiceOutputRef.current = forceOpenAiVoiceOutput;
+    voiceProviderRef.current = resolveVoiceProvider(sessionElevenLabsVoiceIdRef.current, forceOpenAiVoiceOutput);
+  }, [forceOpenAiVoiceOutput]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    const flag = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT;
+    const voiceId = sessionElevenLabsVoiceId.trim();
+    const computed = resolveVoiceProvider(voiceId, forceOpenAiVoiceOutput);
+    if (computed !== "elevenlabs") {
+      if (flag !== "1" || !voiceId) {
+        console.warn("[ElevenLabs] disabled: flag off or voiceId missing", {
+          flag,
+          hasVoiceId: Boolean(voiceId),
+          forceOpenAiVoiceOutput
+        });
+      }
+      return;
+    }
+    console.info("[ElevenLabs] enabled", {
+      flag,
+      voiceProvider: computed,
+      voiceId,
+      forceOpenAiVoiceOutput
+    });
+  }, [forceOpenAiVoiceOutput, sessionElevenLabsVoiceId]);
 
   const clearElevenLabsQueue = useCallback(() => {
     elevenLabsQueueRef.current = [];
     elevenLabsQueueDrainingRef.current = false;
-    clearElevenLabsQueue();
+    elevenLabsAlreadyQueuedResponseIdsRef.current.clear();
+    elevenLabsUtteranceAbortRef.current?.abort();
+    elevenLabsUtteranceAbortRef.current = null;
+    stopAgentElevenLabsPlayback();
   }, []);
 
   const drainElevenLabsQueue = useCallback(async () => {
@@ -465,6 +582,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         }
         try {
           // NOTE: MVP = one utterance per response.text.done. Sentence-boundary splitting can be added later.
+          if (process.env.NODE_ENV !== "production" && voiceProviderRef.current === "elevenlabs") {
+            console.info("[ElevenLabs TTS] enqueue", { chars: text.length, voiceId });
+          }
           await playAgentUtteranceWithElevenLabs(text, voiceId, { signal });
         } catch (err) {
           if (err instanceof DOMException && err.name === "AbortError") {
@@ -475,15 +595,21 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
             elevenLabsQueueRef.current = [];
             break;
           }
-          // Fail closed: keep text-only (no OpenAI audio in this mode), but don't crash the session.
-          console.warn("[elevenlabs-agent-tts] playback error", err);
-          // TODO(elevenlabs-tts): consider safe fallback to OpenAI audio ONLY if we can re-enable audio without double sound.
+          // Keep the session alive. If ElevenLabs fails, optionally fall back to OpenAI audio once.
+          console.warn("[ElevenLabs TTS] playback error", err);
+          if (!elevenLabsTtsFailureToastShownRef.current) {
+            elevenLabsTtsFailureToastShownRef.current = true;
+            toast.warning("Голос ElevenLabs временно недоступен. Переключаемся на OpenAI голос.");
+          }
+          if (!forceOpenAiVoiceOutputRef.current) {
+            setForceOpenAiVoiceOutput(true);
+          }
         }
       }
     } finally {
       elevenLabsQueueDrainingRef.current = false;
     }
-  }, []);
+  }, [setForceOpenAiVoiceOutput]);
 
   useEffect(() => {
     // Switching providers mid-session should not leave stale audio playing.
@@ -491,6 +617,18 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       clearElevenLabsQueue();
     }
   }, [clearElevenLabsQueue, voiceProvider]);
+
+  useEffect(() => {
+    // If we switch from ElevenLabs → OpenAI (fallback), the remote audio track
+    // may already be present; reuse the last seen stream.
+    if (voiceProvider === "openai") {
+      if (lastRemoteAudioStreamRef.current) {
+        setRemoteAudioStream(lastRemoteAudioStreamRef.current);
+      }
+      return;
+    }
+    setRemoteAudioStream(null);
+  }, [voiceProvider]);
 
   useEffect(() => {
     let cancelled = false;
@@ -684,13 +822,44 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
    */
   const handleOpenAiEvent = useCallback((event: OpenAiServerEvent) => {
     const { type, payload } = event;
+    const isElevenLabsMode = elevenLabsAgentReplacesOpenAiAudio(
+      sessionElevenLabsVoiceIdRef.current,
+      forceOpenAiVoiceOutputRef.current
+    );
+
+    if (process.env.NODE_ENV !== "production" && isElevenLabsMode) {
+      const shouldLog =
+        type === "response.created" ||
+        type === "response.output_text.delta" ||
+        type === "response.output_text.done" ||
+        type === "response.text.delta" ||
+        type === "response.text.done" ||
+        type === "response.content_part.added" ||
+        type === "response.content_part.done" ||
+        type === "response.output_item.done" ||
+        type === "response.done" ||
+        type === "error";
+      if (shouldLog) {
+        const responseId =
+          readString(payload?.response, "id") ?? readString(payload, "response_id") ?? readString(payload, "id") ?? null;
+        const itemId = readString(payload, "item_id") ?? null;
+        const extractedText = extractAssistantTextFromRealtimeEvent({ type, payload });
+        console.info("[OpenAI Realtime][ElevenLabs]", {
+          type,
+          responseId,
+          itemId,
+          hasExtractedText: Boolean(extractedText),
+          extractedTextLength: extractedText ? extractedText.length : 0
+        });
+      }
+    }
 
     if (type === "response.created") {
       const respId = readString(payload.response, "id") ?? readString(payload, "response_id") ?? null;
       lastResponseIdRef.current = respId;
       setAgentState("thinking");
       setFlowPhase((prev) => (prev === "lobby" ? "intro" : prev));
-      if (elevenLabsAgentReplacesOpenAiAudio(sessionElevenLabsVoiceIdRef.current)) {
+      if (isElevenLabsMode) {
         // One abort controller per "playback lifecycle" (cleared on stop/pause/reconnect).
         // Do NOT abort here: we queue utterances and must not cut off the previous one.
         if (!elevenLabsUtteranceAbortRef.current || elevenLabsUtteranceAbortRef.current.signal.aborted) {
@@ -700,7 +869,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       return;
     }
 
-    if (elevenLabsAgentReplacesOpenAiAudio(sessionElevenLabsVoiceIdRef.current)) {
+    if (isElevenLabsMode) {
       if (type === "response.output_text.delta" || type === "response.text.delta") {
         const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
         const delta = readString(payload, "delta") ?? "";
@@ -710,6 +879,23 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           scheduleCaptionUpdate("agent", current + delta);
         }
         setAgentState((prev) => (prev === "thinking" ? "speaking" : prev === "idle" ? "speaking" : prev));
+        return;
+      }
+
+      if (
+        type === "response.content_part.added" ||
+        type === "response.content_part.done" ||
+        type === "response.output_item.done"
+      ) {
+        const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
+        const extracted = extractAssistantTextFromRealtimeEvent({ type, payload });
+        if (extracted) {
+          const current = agentTranscriptBufferRef.current.get(itemId) ?? "";
+          const next = current ? `${current} ${extracted}` : extracted;
+          agentTranscriptBufferRef.current.set(itemId, next);
+          scheduleCaptionUpdate("agent", next);
+          setAgentState((prev) => (prev === "thinking" ? "speaking" : prev === "idle" ? "speaking" : prev));
+        }
         return;
       }
 
@@ -735,6 +921,11 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
 
         const trimmed = transcript.trim();
         if (trimmed.length > 0) {
+          const responseId =
+            readString(payload?.response, "id") ?? readString(payload, "response_id") ?? readString(payload, "id") ?? null;
+          if (responseId) {
+            elevenLabsAlreadyQueuedResponseIdsRef.current.add(responseId);
+          }
           // Enqueue full utterance (MVP). TODO: sentence-boundary splitting for lower latency.
           elevenLabsQueueRef.current.push(trimmed);
           void drainElevenLabsQueue();
@@ -743,7 +934,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       }
     }
 
-    if (!elevenLabsAgentReplacesOpenAiAudio(sessionElevenLabsVoiceIdRef.current)) {
+    if (!isElevenLabsMode) {
       if (type === "response.output_audio.delta" || type === "response.audio.delta") {
         setAgentState((prev) => (prev === "thinking" ? "speaking" : prev === "idle" ? "speaking" : prev));
         return;
@@ -803,6 +994,16 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       return;
     }
 
+    if (type === "error") {
+      const err = (payload && typeof payload === "object" ? (payload as Record<string, unknown>).error : null) ?? payload;
+      const errType = readString(err, "type") ?? readString(payload, "type") ?? null;
+      const errCode = readString(err, "code") ?? null;
+      const errMessage = readString(err, "message") ?? (err instanceof Error ? err.message : null);
+      const eventId = readString(err, "event_id") ?? readString(payload, "event_id") ?? null;
+      console.warn("[OpenAI Realtime] error", { type: errType, code: errCode, message: errMessage, event_id: eventId });
+      return;
+    }
+
     if (type === "input_audio_buffer.speech_started") {
       if (agentStateRef.current === "speaking") {
         const requestId =
@@ -828,6 +1029,22 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     }
 
     if (type === "response.done") {
+      if (isElevenLabsMode) {
+        const responseId =
+          readString(payload?.response, "id") ?? readString(payload, "response_id") ?? readString(payload, "id") ?? null;
+        const alreadyQueued = responseId ? elevenLabsAlreadyQueuedResponseIdsRef.current.has(responseId) : false;
+        if (!alreadyQueued) {
+          const extracted = extractAssistantTextFromRealtimeEvent({ type, payload });
+          const trimmed = extracted?.trim() ?? "";
+          if (trimmed.length > 0) {
+            if (responseId) {
+              elevenLabsAlreadyQueuedResponseIdsRef.current.add(responseId);
+            }
+            elevenLabsQueueRef.current.push(trimmed);
+            void drainElevenLabsQueue();
+          }
+        }
+      }
       if (pendingCancelRef.current) {
         const pending = pendingCancelRef.current;
         const ackAtMs = Date.now();
@@ -909,6 +1126,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       rtcRef.current = new WebRtcInterviewClient({
         onStateChange: setRtcState,
         onRemoteStream: (stream) => {
+          lastRemoteAudioStreamRef.current = stream;
           // Prevent double sound: in ElevenLabs mode OpenAI should be text-only, but we also
           // defensively avoid attaching any remote audio stream to the UI audio element.
           if (voiceProviderRef.current === "openai") {
@@ -1037,7 +1255,10 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       await rtc.postEvent({
         type: "response.create",
         response: {
-          modalities: openAiAgentResponseModalities(sessionElevenLabsVoiceIdRef.current),
+          modalities: openAiAgentResponseModalities(
+            sessionElevenLabsVoiceIdRef.current,
+            forceOpenAiVoiceOutputRef.current
+          ),
           instructions: "Продолжи интервью с текущего места и задай следующий уместный вопрос."
         }
       });
@@ -1224,6 +1445,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
                     "reconnect",
                     effectivePromptSettings,
                     sessionElevenLabsVoiceIdRef.current,
+                    forceOpenAiVoiceOutputRef.current,
                     {
                     getSessionUpdatedVersion,
                     waitForSessionUpdatedAck
@@ -1481,6 +1703,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         "first",
         effectivePromptSettings,
         sessionElevenLabsVoiceIdRef.current,
+        forceOpenAiVoiceOutputRef.current,
         {
         getSessionUpdatedVersion,
         waitForSessionUpdatedAck

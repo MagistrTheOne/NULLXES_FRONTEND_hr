@@ -285,6 +285,8 @@ function SpectatorBody() {
   }, [jobAiId]);
 
   const effectiveMeetingId = meetingResolution.id;
+  const isSignedSpectator = Boolean(spectatorJoinToken && spectatorObserverTicket);
+  const isInternalObserverDashboard = !isSignedSpectator && Boolean(jobAiId);
   const candidateName = [detail?.projection.candidateFirstName, detail?.projection.candidateLastName]
     .filter(Boolean)
     .join(" ")
@@ -298,15 +300,21 @@ function SpectatorBody() {
   const runtimeMatchesMeeting = Boolean(effectiveMeetingId && runtimeMeetingId === effectiveMeetingId);
   const runtimeActive =
     runtimeMatchesMeeting && ACTIVE_MEETING_STATUSES.has(String(runtimeSnapshot?.meeting.status ?? ""));
-  const runtimeReady = runtimeMatchesMeeting && runtimeSnapshot?.health.ready === true;
+  const runtimeHealthReady = runtimeMatchesMeeting && runtimeSnapshot?.health.ready === true;
   const runtimeStreamCallIdRaw =
     typeof runtimeSnapshot?.media?.streamCallId === "string" ? runtimeSnapshot.media.streamCallId.trim() : "";
   const runtimeStreamCallTypeRaw =
     typeof runtimeSnapshot?.media?.streamCallType === "string" ? runtimeSnapshot.media.streamCallType.trim() : "";
-  const resolvedStreamCallId = runtimeReady ? runtimeStreamCallIdRaw : "";
-  const resolvedStreamCallType = runtimeReady ? runtimeStreamCallTypeRaw || "default" : "";
-  // Spectator joins only after runtime confirms the exact active meeting/call.
-  const canConnect = Boolean(effectiveMeetingId) && runtimeReady && !terminalByProjection;
+  const resolvedStreamCallId = runtimeMatchesMeeting ? runtimeStreamCallIdRaw : "";
+  const resolvedStreamCallType = runtimeMatchesMeeting ? runtimeStreamCallTypeRaw || "default" : "";
+  const hasTrustedStreamBinding = Boolean(resolvedStreamCallId) && Boolean(resolvedStreamCallType);
+  // Spectator joins when we have a trusted meeting + trusted Stream binding (health.ready is best-effort only).
+  const canConnect =
+    Boolean(effectiveMeetingId) &&
+    runtimeMatchesMeeting &&
+    (projectionActive || runtimeActive) &&
+    hasTrustedStreamBinding &&
+    !terminalByProjection;
   const spectatorWaitingReason = useMemo(() => {
     if (terminalByProjection) {
       return "Интервью завершено. Повторное подключение недоступно.";
@@ -323,11 +331,49 @@ function SpectatorBody() {
     if (!projectionActive && !runtimeActive) {
       return "meeting найден, но статус ещё не активен. Ждём, пока кандидат/HR поднимут живую сессию.";
     }
-    if (!runtimeReady) {
-      return "Runtime найден, ждём готовность живой сессии перед подключением наблюдателя.";
+    if (!hasTrustedStreamBinding) {
+      return "Сессия активна. Ждём конфигурацию Stream call.";
     }
     return null;
-  }, [effectiveMeetingId, projectionActive, runtimeActive, runtimeMatchesMeeting, runtimeReady, runtimeSnapshot, terminalByProjection]);
+  }, [
+    effectiveMeetingId,
+    hasTrustedStreamBinding,
+    projectionActive,
+    runtimeActive,
+    runtimeMatchesMeeting,
+    runtimeSnapshot,
+    terminalByProjection
+  ]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    console.info("[spectator-orchestration]", {
+      jobAiId,
+      nullxesStatus: String(detail?.projection.nullxesStatus ?? ""),
+      activeMeetingId: effectiveMeetingId,
+      streamCallId: resolvedStreamCallId || null,
+      streamCallType: resolvedStreamCallType || null,
+      runtimeHealthReady,
+      runtimeReady: runtimeHealthReady,
+      sessionEnded: terminalByProjection,
+      observerCanConnect: canConnect,
+      waitingReason: spectatorWaitingReason,
+      isSignedSpectator,
+      isInternalObserverDashboard
+    });
+  }, [
+    canConnect,
+    detail?.projection.nullxesStatus,
+    effectiveMeetingId,
+    isInternalObserverDashboard,
+    isSignedSpectator,
+    jobAiId,
+    resolvedStreamCallId,
+    resolvedStreamCallType,
+    runtimeHealthReady,
+    spectatorWaitingReason,
+    terminalByProjection
+  ]);
 
   const sseAttemptRef = useRef(0);
   const sseSlowModeRef = useRef(false);
