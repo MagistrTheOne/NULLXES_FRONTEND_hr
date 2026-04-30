@@ -361,6 +361,11 @@ function SpectatorBody() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!jobAiId) return;
+    if (!spectatorJoinToken) {
+      // Internal observer dashboard must not reuse external signed spectator credentials.
+      setSpectatorObserverTicket(null);
+      return;
+    }
     // Load persisted spectator credentials (joinToken is always from URL).
     const storageKey = `nullxes:spectator:credentials:${jobAiId}`;
     const fromStorage = (() => {
@@ -376,7 +381,7 @@ function SpectatorBody() {
     const storedTicket = typeof fromStorage?.observerTicket === "string" ? fromStorage.observerTicket.trim() : "";
     const effective = queryTicket || storedTicket || null;
     setSpectatorObserverTicket(effective);
-  }, [jobAiId, spectatorObserverTicketFromQuery]);
+  }, [jobAiId, spectatorJoinToken, spectatorObserverTicketFromQuery]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

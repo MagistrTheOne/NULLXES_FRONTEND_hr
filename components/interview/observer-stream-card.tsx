@@ -1154,7 +1154,7 @@ export function ObserverStreamCard({
     }).catch(() => undefined);
     try {
       let lastError: Error | null = null;
-      let activeObserverTicket = spectatorObserverTicket?.trim() || null;
+      let activeObserverTicket = spectatorJoinToken ? spectatorObserverTicket?.trim() || null : null;
       let refreshedTicketOnce = false;
 
       for (let attempt = 1; attempt <= OBSERVER_MAX_ATTEMPTS; attempt += 1) {
@@ -1195,7 +1195,7 @@ export function ObserverStreamCard({
                   ? { viewerKey: tabId ? `${persistedViewerKey}:${tabId}` : persistedViewerKey }
                   : {}),
                 ...(spectatorJoinToken ? { joinToken: spectatorJoinToken } : {}),
-                ...(activeObserverTicket ? { observerTicket: activeObserverTicket } : {})
+                ...(spectatorJoinToken && activeObserverTicket ? { observerTicket: activeObserverTicket } : {})
               })
             });
           } finally {
