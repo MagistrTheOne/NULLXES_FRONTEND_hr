@@ -1449,7 +1449,7 @@ export function InterviewShell() {
             stopAIDisabled={busy || (!isCandidateFlow && !interviewCandidatePresent)}
             onStopAI={() => {
               const jid = selectedInterviewId ?? selectedRow?.jobAiId;
-              void stop(typeof jid === "number" ? { interviewId: jid } : undefined);
+              void stop(typeof jid === "number" ? { interviewId: jid, finalStatus: "stopped_during_meeting" } : { finalStatus: "stopped_during_meeting" });
             }}
             onTogglePauseAI={() => {
               void (agentPaused ? resumeAgent() : pauseAgent()).then((ok) => {

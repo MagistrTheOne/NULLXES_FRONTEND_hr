@@ -346,10 +346,39 @@ async function transitionJobAiToCompleted(interviewId: number): Promise<void> {
   }
 }
 
+async function transitionJobAiToStoppedDuringMeeting(interviewId: number): Promise<void> {
+  const detail = await getInterviewById(interviewId).catch(() => null);
+  const currentStatus = (detail?.projection.jobAiStatus ?? detail?.interview.status) as JobAiInterviewStatus | undefined;
+
+  if (!currentStatus || currentStatus === "stopped_during_meeting") {
+    return;
+  }
+
+  if (currentStatus === "pending") {
+    await updateInterviewStatus(interviewId, "received");
+    await updateInterviewStatus(interviewId, "in_meeting");
+    await updateInterviewStatus(interviewId, "stopped_during_meeting");
+    return;
+  }
+  if (currentStatus === "received") {
+    await updateInterviewStatus(interviewId, "in_meeting");
+    await updateInterviewStatus(interviewId, "stopped_during_meeting");
+    return;
+  }
+  if (currentStatus === "in_meeting") {
+    await updateInterviewStatus(interviewId, "stopped_during_meeting");
+  }
+}
+
 export type InterviewSessionStopOptions = {
   interviewId?: number;
   /** Timer-driven / operational shutdown: bypass «кандидат в Stream» guard. */
   skipInterviewCandidateStopGuard?: boolean;
+  /**
+   * Terminal meeting status to persist in gateway + propagate downstream.
+   * Default remains "completed" for backward compatibility.
+   */
+  finalStatus?: "completed" | "stopped_during_meeting";
 };
 
 export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
@@ -1505,18 +1534,24 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           .catch(() => undefined);
       }
 
+      const finalStatus = options?.finalStatus ?? "completed";
       await stopMeeting(activeMeetingId, {
         reason: "manual_stop",
-        finalStatus: "completed",
+        finalStatus,
         metadata: {
-          jobAiInterviewId: options?.interviewId ?? activeInterviewId ?? undefined
+          jobAiInterviewId: options?.interviewId ?? activeInterviewId ?? undefined,
+          stop_reason: finalStatus === "stopped_during_meeting" ? "manual_bot_stop" : "manual_complete"
         }
       });
 
       const interviewIdForClose = options?.interviewId ?? activeInterviewId ?? undefined;
       if (interviewIdForClose) {
         try {
-          await transitionJobAiToCompleted(interviewIdForClose);
+          if (finalStatus === "completed") {
+            await transitionJobAiToCompleted(interviewIdForClose);
+          } else {
+            await transitionJobAiToStoppedDuringMeeting(interviewIdForClose);
+          }
         } catch (statusError) {
           if (isIgnorableStatusTransitionError(statusError)) {
             console.warn("Skipping non-critical JobAI status transition error", statusError);
@@ -1529,7 +1564,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
             interviewId: interviewIdForClose,
             meetingId: activeMeetingId,
             sessionId: activeSessionId ?? undefined,
-            nullxesStatus: "completed"
+            nullxesStatus: finalStatus
           });
         } catch (statusError) {
           if (isIgnorableStatusTransitionError(statusError)) {
