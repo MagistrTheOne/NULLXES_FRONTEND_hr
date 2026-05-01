@@ -9,9 +9,11 @@ import {
   getMeetingRecording,
   getMeetingRecordingDownload,
   getCandidateAdmissionStatus,
+  getRuntimeSnapshot,
   getInterviewById,
   issueCandidateJoinLink,
   listInterviews,
+  setMeetingOpenAiRealtimeVoice,
   startMeetingRecording,
   stopMeetingRecording,
   syncMeetingRecordingToJobAi,
@@ -193,6 +195,7 @@ export function InterviewShell() {
   const [recording, setRecording] = useState<MeetingRecordingSnapshot | null>(null);
   const [recordingBusy, setRecordingBusy] = useState<"start" | "stop" | "sync" | "download" | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [sessionOpenAiVoice, setSessionOpenAiVoice] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [observerControl, setObserverControl] = useState<ObserverControlState>(DEFAULT_OBSERVER_CONTROL);
   const [candidateAdmission, setCandidateAdmission] = useState<CandidateAdmissionStatus | null>(null);
@@ -369,6 +372,24 @@ export function InterviewShell() {
   const hasInterviewSelection = Boolean(selectedRow || selectedInterviewDetailMatched);
   const canControlRecording = Boolean(recoveredMeetingId && selectedInterviewId);
   const recordingCanMutate = !isCandidateFlow && !isSpectatorFlow;
+
+  useEffect(() => {
+    if (!recoveredMeetingId) {
+      setSessionOpenAiVoice(null);
+      return;
+    }
+    let cancelled = false;
+    void getRuntimeSnapshot(recoveredMeetingId)
+      .then((snapshot) => {
+        if (cancelled) return;
+        const voice = snapshot?.meeting?.metadata?.openai_realtime_voice;
+        setSessionOpenAiVoice(typeof voice === "string" ? voice : null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [recoveredMeetingId]);
 
   const refreshRecording = useCallback(async () => {
     if (!recoveredMeetingId) {
@@ -1169,6 +1190,19 @@ export function InterviewShell() {
           }
           sessionElevenLabsVoiceId={sessionElevenLabsVoiceId}
           onSessionElevenLabsVoiceIdChange={!isCandidateFlow ? setSessionElevenLabsVoiceId : undefined}
+          sessionOpenAiVoice={sessionOpenAiVoice}
+          onSessionOpenAiVoiceChange={
+            !isCandidateFlow
+              ? (voice) => {
+                  setSessionOpenAiVoice(typeof voice === "string" ? voice : null);
+                  if (!recoveredMeetingId) return;
+                  void setMeetingOpenAiRealtimeVoice(recoveredMeetingId, voice).catch((err) => {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    toast.error("Не удалось сохранить голос", { description: msg });
+                  });
+                }
+              : undefined
+          }
           onFail={markFailed}
           startDisabled={
             phase === "connected" ||

@@ -598,6 +598,19 @@ export async function syncMeetingRecordingToJobAi(
   );
 }
 
+export async function setMeetingOpenAiRealtimeVoice(
+  meetingId: string,
+  voice: string | null
+): Promise<{ ok: true; meetingId: string; voice: string | null }> {
+  return requestJson<{ ok: true; meetingId: string; voice: string | null }>(
+    `meetings/${encodeURIComponent(meetingId)}/openai/voice`,
+    {
+      method: "POST",
+      body: JSON.stringify({ voice })
+    }
+  );
+}
+
 export type RuntimeSnapshot = {
   schemaVersion: "1.0";
   generatedAtMs: number;
