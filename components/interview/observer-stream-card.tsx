@@ -585,11 +585,8 @@ type ObserverStreamCardProps = {
   talkMode: ObserverTalkMode;
   /** Optional HR avatar image URL when agent has no video track. */
   agentAvatarImageUrl?: string | null;
-  onVisibleChange?: (nextVisible: boolean) => void;
   onTalkModeChange?: (nextTalkMode: ObserverTalkMode) => void;
   allowVisibilityToggle?: boolean;
-  allowTalkToggle?: boolean;
-  mutePlayback?: boolean;
   title?: string;
   onStatusChange?: (status: ObserverConnectionStatus) => void;
   sessionEnded?: boolean;

@@ -26,7 +26,6 @@ import { normalizeInterviewListRows } from "@/lib/normalize-interview-list-row";
 import { sortInterviewListRowsNewestFirst } from "@/lib/sort-interview-list-rows";
 import {
   getObserverControlState,
-  resolveObserverVisibilityState,
   setObserverControlState,
   subscribeObserverControlState,
   type ObserverControlState
@@ -1555,22 +1554,9 @@ export function InterviewShell() {
             enabled={streamSurfaceEnabled}
             visible={observerVisible}
             talkMode="off"
-            mutePlayback
             allowVisibilityToggle
-            allowTalkToggle={false}
             sessionEnded={completedInterviewLocked}
             uiState={sessionUiState}
-            onVisibleChange={(nextVisible) => {
-              if (!selectedInterviewId) {
-                return;
-              }
-              const nextState = resolveObserverVisibilityState(observerControl, nextVisible);
-              setObserverControlState(selectedInterviewId, {
-                visibility: nextState.visibility,
-                talk: nextState.talk,
-                updatedAt: new Date().toISOString()
-              });
-            }}
             onTalkModeChange={() => {
               if (!selectedInterviewId) {
                 return;

@@ -743,9 +743,7 @@ function SpectatorBody() {
               enabled={canConnect}
               visible
               talkMode={observerControl.talk}
-              mutePlayback={false}
               allowVisibilityToggle={false}
-              allowTalkToggle={false}
               spectatorDashboardLayout
               showSelfPreview
               sessionEnded={sessionTerminal}
