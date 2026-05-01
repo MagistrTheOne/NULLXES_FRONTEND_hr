@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Copy, ExternalLink } from "lucide-react";
+import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -98,27 +97,6 @@ function resolveNullxesBadge(row: InterviewListRow): { key: string; label: strin
   }
 }
 
-function navigateSameOrigin(router: ReturnType<typeof useRouter>, path: string): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  if (/^https?:\/\//i.test(path)) {
-    try {
-      const url = new URL(path);
-      if (url.origin === window.location.origin) {
-        void router.push(`${url.pathname}${url.search}${url.hash}`);
-        return;
-      }
-    } catch {
-      // fall through
-    }
-    window.location.assign(path);
-    return;
-  }
-  const normalized = path.startsWith("/") ? path : `/${path}`;
-  void router.push(normalized);
-}
-
 function sanitizeEntryPath(value: unknown): string {
   if (typeof value !== "string") {
     return "";
@@ -166,7 +144,6 @@ export function InterviewsTablePreview({
   onPageChange,
   onEntryUrlCopied
 }: InterviewsTablePreviewProps) {
-  const router = useRouter();
   const showSpectatorActions = process.env.NEXT_PUBLIC_ENABLE_SPECTATOR !== "0";
   const showInternalDebugUi = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
   const [refOpen, setRefOpen] = useState(false);
@@ -256,19 +233,19 @@ export function InterviewsTablePreview({
       </CardHeader>
       <CardContent>
         {error ? <p className="mb-3 rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
-        <div className="min-w-0 rounded-xl bg-white/50">
-          <Table className="min-w-[640px]">
+        <div className="min-w-0 overflow-x-hidden rounded-xl bg-white/50">
+          <Table className="w-full table-fixed">
             <TableHeader>
               <TableRow>
-                <TableHead>ID Nullxes</TableHead>
-                <TableHead>ID JobAI</TableHead>
-                <TableHead>Имя</TableHead>
-                <TableHead>Фамилия</TableHead>
+                <TableHead className="w-[220px]">ID Nullxes</TableHead>
+                <TableHead className="w-[90px]">ID JobAI</TableHead>
+                <TableHead className="w-[120px]">Имя</TableHead>
+                <TableHead className="w-[140px]">Фамилия</TableHead>
                 <TableHead>Компания</TableHead>
-                <TableHead>meetingAt</TableHead>
-                <TableHead>Nullxes</TableHead>
-                <TableHead>JobAI</TableHead>
-                <TableHead className="text-right">Действия</TableHead>
+                <TableHead className="w-[170px]">meetingAt</TableHead>
+                <TableHead className="w-[130px]">Nullxes</TableHead>
+                <TableHead className="w-[120px]">JobAI</TableHead>
+                <TableHead className="w-[220px] text-right">Действия</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -281,10 +258,12 @@ export function InterviewsTablePreview({
               ) : null}
               {rows.map((row) => {
                 const nullxesBadge = resolveNullxesBadge(row);
-                const spectatorEntryPath = buildSpectatorEntryPath(row);
+                void buildSpectatorEntryPath;
                 return (
                   <TableRow key={row.jobAiId} className={selectedInterviewId === row.jobAiId ? "bg-sky-100/40" : ""}>
-                  <TableCell className="font-medium">{row.nullxesMeetingId ?? "—"}</TableCell>
+                  <TableCell className="font-medium">
+                    <span className="block max-w-full truncate">{row.nullxesMeetingId ?? "—"}</span>
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <span>{row.jobAiId}</span>
@@ -297,8 +276,12 @@ export function InterviewsTablePreview({
                   </TableCell>
                   <TableCell>{row.candidateFirstName}</TableCell>
                   <TableCell>{row.candidateLastName}</TableCell>
-                  <TableCell>{row.companyName}</TableCell>
-                  <TableCell>{new Date(row.meetingAt).toLocaleString("ru-RU")}</TableCell>
+                  <TableCell>
+                    <span className="block max-w-full truncate">{row.companyName}</span>
+                  </TableCell>
+                  <TableCell>
+                    <span className="block max-w-full truncate">{new Date(row.meetingAt).toLocaleString("ru-RU")}</span>
+                  </TableCell>
                   <TableCell>
                     <Badge variant="secondary" title={nullxesBadge.key}>
                       {nullxesBadge.label}
@@ -338,17 +321,10 @@ export function InterviewsTablePreview({
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => navigateSameOrigin(router, spectatorEntryPath)}
+                            onClick={() => void issueAndCopyLink("spectator", row)}
+                            disabled={Boolean(linkBusy[`spectator:${row.jobAiId}`])}
                           >
-                            Ссылка наблюдателя
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="secondary"
-                            aria-label="Открыть ссылку наблюдателя"
-                            onClick={() => navigateSameOrigin(router, spectatorEntryPath)}
-                          >
-                            <ExternalLink className="size-4" />
+                            {linkBusy[`spectator:${row.jobAiId}`] ? "Выпуск ссылки…" : "Ссылка наблюдателя"}
                           </Button>
                         </>
                       ) : null}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -126,22 +126,10 @@ export function MeetingHeader({
 
   const canonicalUrl = (prototypeEntryUrl ?? "").trim();
   const hasCopySource = Boolean(canonicalUrl || entryUrlInput.trim());
-  const spectatorUrl = (spectatorEntryUrl ?? "").trim();
-  void spectatorUrl;
   const meetingAtAbsolute = meetingAt ? new Date(meetingAt).toLocaleString("ru-RU") : "—";
   const meetingAtRelative = useMemo(() => formatRelativeMeetingTime(meetingAt), [meetingAt]);
   const greeting = candidateFirstName?.trim() || candidateFio.split(" ")[0] || "";
-  const isSpectatorUrl = useCallback((raw: string) => /\/spectator\b/i.test(raw), []);
-  const enterSpectator = useCallback(
-    async (raw: string) => {
-      const text = raw.trim();
-      if (!text) return;
-      await navigator.clipboard.writeText(text).catch(() => undefined);
-      window.open(text, "_blank", "noopener,noreferrer");
-      toast.success("Вход наблюдателя", { description: "Ссылка скопирована в буфер и открыта в новой вкладке." });
-    },
-    []
-  );
+  void spectatorEntryUrl;
 
   return (
     <header className="flex w-full min-w-0 max-w-full flex-col items-center gap-5 sm:gap-8 md:gap-10">
@@ -167,20 +155,10 @@ export function MeetingHeader({
               value={entryUrlInput}
               onChange={(e) => setEntryUrlInput(e.target.value)}
               onBlur={() => {
-                const text = entryUrlInput.trim();
-                if (text && isSpectatorUrl(text)) {
-                  void enterSpectator(text);
-                  return;
-                }
                 onEntryUrlCommit?.(entryUrlInput);
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  const text = entryUrlInput.trim();
-                  if (text && isSpectatorUrl(text)) {
-                    void enterSpectator(text);
-                    return;
-                  }
                   onEntryUrlCommit?.(entryUrlInput);
                 }
               }}
