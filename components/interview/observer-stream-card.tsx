@@ -814,6 +814,8 @@ export function ObserverStreamCard({
   const connectInFlightRef = useRef(false);
   const noParticipantsReconnectCountRef = useRef<Record<string, number>>({});
   const participantWatchdogRef = useRef<number | null>(null);
+  const sfuRejoinInFlightRef = useRef(false);
+  const lastSfuRejoinAtMsRef = useRef(0);
   const currentTicketRef = useRef<string | null>(null);
   const pipRef = useRef<HTMLDivElement | null>(null);
   const candidateVideoContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1096,6 +1098,66 @@ export function ObserverStreamCard({
     setClient(null);
     setLocalUserId(null);
   }, []);
+
+  useEffect(() => {
+    if (!call || ended) {
+      return;
+    }
+    let cancelled = false;
+    const unregister = (call as unknown as {
+      on?: (event: string, cb: (e: unknown) => void) => (() => void) | void;
+    }).on?.("error", (event) => {
+      try {
+        if (cancelled) return;
+        const reconnectStrategy = (event as { reconnectStrategy?: unknown }).reconnectStrategy;
+        const error = (event as { error?: unknown }).error as { code?: unknown; message?: unknown } | undefined;
+        const code =
+          typeof error?.code === "string"
+            ? error.code
+            : typeof (event as { code?: unknown }).code === "string"
+              ? ((event as { code?: string }).code as string)
+              : null;
+        const message =
+          typeof error?.message === "string"
+            ? error.message
+            : typeof (event as { message?: unknown }).message === "string"
+              ? ((event as { message?: string }).message as string)
+              : "";
+        const strategyRejoin =
+          reconnectStrategy === 3 ||
+          (typeof reconnectStrategy === "string" && reconnectStrategy.toLowerCase().includes("rejoin"));
+        const ioTimeout = message.toLowerCase().includes("io timeout");
+        const internalServerError = code === "INTERNAL_SERVER_ERROR";
+        if (!strategyRejoin && !ioTimeout && !internalServerError) {
+          return;
+        }
+        const now = Date.now();
+        if (sfuRejoinInFlightRef.current) return;
+        if (now - lastSfuRejoinAtMsRef.current < 15_000) return;
+        lastSfuRejoinAtMsRef.current = now;
+        sfuRejoinInFlightRef.current = true;
+        pushEvent("SFU error: rejoin required (io timeout)");
+        void (async () => {
+          try {
+            await disconnectStream();
+            // Allow auto-join to re-run after a forced SFU rejoin.
+            autoJoinAttemptForRef.current = null;
+            connectInFlightRef.current = false;
+          } finally {
+            sfuRejoinInFlightRef.current = false;
+          }
+        })();
+      } catch {
+        // ignore
+      }
+    });
+    return () => {
+      cancelled = true;
+      if (typeof unregister === "function") {
+        unregister();
+      }
+    };
+  }, [call, disconnectStream, ended, pushEvent]);
 
   const cleanupSelfPreview = useCallback(() => {
     setSelfPreviewStream((current) => {
