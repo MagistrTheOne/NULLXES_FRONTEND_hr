@@ -791,6 +791,7 @@ export function ObserverStreamCard({
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const clientRef = useRef<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
+  const callRef = useRef<ReturnType<StreamVideoClient["call"]> | null>(null);
   const [localUserId, setLocalUserId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1068,20 +1069,28 @@ export function ObserverStreamCard({
     return () => observer.disconnect();
   }, [call, playbackMuted, spectatorDashboardLayout]);
 
+  // IMPORTANT: keep this callback STABLE (empty deps).
+  // If we put `call` into deps, every successful join recreates `disconnectStream`,
+  // which then re-runs every effect that has `disconnectStream` in deps and the
+  // STALE cleanup of those effects calls `disconnectStream()` again — which
+  // unconditionally calls `setCall(null) / setClient(null)` and tears down the
+  // observer right after a successful join. We read the latest call via callRef.
   const disconnectStream = useCallback(async () => {
     connectEpochRef.current += 1;
-    if (call) {
-      await call.leave().catch(() => undefined);
+    const activeCall = callRef.current;
+    if (activeCall) {
+      await activeCall.leave().catch(() => undefined);
     }
     // Do NOT call client.disconnectUser() on transient disconnects.
     // The observer client is a singleton via StreamVideoClient.getOrCreateInstance(...);
     // disconnecting the user here makes the next getOrCreateInstance return a stale,
     // disconnected client and triggers double-connectUser warnings.
     // Final cleanup happens only on full unmount via the dedicated effect below.
+    callRef.current = null;
     setCall(null);
     setClient(null);
     setLocalUserId(null);
-  }, [call]);
+  }, []);
 
   const cleanupSelfPreview = useCallback(() => {
     setSelfPreviewStream((current) => {
@@ -1495,6 +1504,7 @@ export function ObserverStreamCard({
             return;
           }
           clientRef.current = streamClient;
+          callRef.current = streamCall;
           setClient(streamClient);
           setCall(streamCall);
           setLocalUserId(payload.user.id);
@@ -1742,26 +1752,22 @@ export function ObserverStreamCard({
     }
   }, [onTalkModeChange, status, talkMode]);
 
+  // Single unmount-only cleanup. disconnectStream and cleanupSelfPreview are stable
+  // (empty deps), so deps array is intentionally empty: this effect must run its
+  // teardown ONLY when the component unmounts, never when transient state changes.
   useEffect(
     () => () => {
       void disconnectStream();
       cleanupSelfPreview();
-    },
-    [cleanupSelfPreview, disconnectStream]
-  );
-
-  // Final cleanup of the singleton observer client only on full unmount
-  // of the spectator card: leave call already handled above; here we make
-  // sure the Stream user is disconnected so the next mount can create a
-  // fresh instance via getOrCreateInstance.
-  useEffect(() => {
-    return () => {
       const c = clientRef.current;
-      if (!c) return;
-      void c.disconnectUser().catch(() => undefined);
-      clientRef.current = null;
-    };
-  }, []);
+      if (c) {
+        void c.disconnectUser().catch(() => undefined);
+        clientRef.current = null;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   const showJoinLoader = busy && visible;
   const showSingleFeedMode = focusCandidateOnly && status !== "no_participants";
