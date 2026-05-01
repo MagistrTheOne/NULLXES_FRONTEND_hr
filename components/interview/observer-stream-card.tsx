@@ -12,12 +12,8 @@ import {
 } from "@stream-io/video-react-sdk";
 import {
   Loader2,
-  Maximize2,
-  RotateCcw,
   Video,
-  VideoOff,
-  Volume2,
-  VolumeX
+  VideoOff
 } from "lucide-react";
 import { toast } from "sonner";
 import Image from "next/image";
@@ -25,7 +21,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
 import { InterviewStatusBadge } from "@/components/interview/interview-status-badge";
-import { MicIndicator } from "@/components/interview/mic-indicator";
 import { issueRuntimeCommand } from "@/lib/api";
 import { mapVideoStatus, type VideoConnectionState } from "@/lib/interview-status";
 import type { SessionUIState } from "@/lib/session-ui-state";
@@ -57,7 +52,6 @@ export type ObserverConnectionStatus =
   | "error"
   | "idle_hidden";
 type ObserverConnectionPhase = "connecting" | "connected" | "reconnecting" | "failed";
-type ObserverViewMode = "waiting" | "live" | "ended";
 
 const OBSERVER_TOKEN_TIMEOUT_MS = 20_000;
 // Stream SFU join for readonly spectators can take longer (role propagation + SFU WS).
@@ -114,17 +108,6 @@ function isObserverTransientMessage(message: string): boolean {
   );
 }
 
-type PipPosition = { x: number; y: number };
-
-function clampPipPosition(position: PipPosition, root: HTMLElement, pip: HTMLElement): PipPosition {
-  const maxX = Math.max(8, root.clientWidth - pip.offsetWidth - 8);
-  const maxY = Math.max(8, root.clientHeight - pip.offsetHeight - 8);
-  return {
-    x: Math.min(Math.max(8, position.x), maxX),
-    y: Math.min(Math.max(8, position.y), maxY)
-  };
-}
-
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -168,67 +151,6 @@ function ObserverSplitDashboard({
   const { useCallCallingState, useParticipants } = useCallStateHooks();
   const state = useCallCallingState();
   const participants = useParticipants();
-
-  useEffect(() => {
-    if (process.env.NODE_ENV === "production") return;
-    console.info(
-      "[observer-participants]",
-      participants.map((p) => {
-        const userId = typeof p.userId === "string" ? p.userId : "";
-        const name = typeof (p as unknown as { name?: unknown }).name === "string" ? ((p as unknown as { name?: string }).name as string) : "";
-        const sessionId =
-          typeof (p as unknown as { sessionId?: unknown }).sessionId === "string"
-            ? ((p as unknown as { sessionId?: string }).sessionId as string)
-            : "";
-        const publishedTracks = (p as unknown as { publishedTracks?: unknown }).publishedTracks;
-        const publishedTracksArr = Array.isArray(publishedTracks) ? (publishedTracks as unknown[]) : [];
-        const hasVideo =
-          Boolean((p as unknown as { videoStream?: unknown }).videoStream) || publishedTracksArr.includes("video");
-        const hasAudio =
-          Boolean((p as unknown as { audioStream?: unknown }).audioStream) || publishedTracksArr.includes("audio");
-        return {
-          userId: userId || null,
-          name: name || null,
-          sessionId: sessionId || null,
-          hasVideo,
-          hasAudio,
-          isLocal: userId === localUserId
-        };
-      })
-    );
-  }, [localUserId, participants]);
-
-  useEffect(() => {
-    if (process.env.NODE_ENV === "production") return;
-    const snapshot = participants.map((p) => {
-      const userId = typeof p.userId === "string" ? p.userId : "";
-      const user = (p as unknown as { user?: { name?: string; role?: string } }).user;
-      const tracks = (p as unknown as { publishedTracks?: unknown }).publishedTracks;
-      return {
-        userId: userId || null,
-        name: typeof user?.name === "string" ? user.name : null,
-        role: typeof user?.role === "string" ? user.role : null,
-        sessionId:
-          typeof (p as unknown as { sessionId?: unknown }).sessionId === "string"
-            ? ((p as unknown as { sessionId?: string }).sessionId as string)
-            : null,
-        isLocalParticipant: Boolean((p as unknown as { isLocalParticipant?: unknown }).isLocalParticipant),
-        isSpeaking: Boolean((p as unknown as { isSpeaking?: unknown }).isSpeaking),
-        publishedTracksType: tracks ? typeof tracks : null,
-        guessed: {
-          isCandidate: userId.startsWith("candidate-"),
-          isAgent: userId.startsWith("agent-") || userId.startsWith("agent_"),
-          isViewer: userId.startsWith("viewer-") || userId.startsWith("avatar-viewer-")
-        }
-      };
-    });
-    console.info("[stream-participants-diagnostics]", {
-      scope: "observer-split-dashboard",
-      localUserId,
-      count: snapshot.length,
-      participants: snapshot
-    });
-  }, [localUserId, participants]);
 
   const remoteCount = useMemo(
     () => participants.filter((p) => p.userId !== localUserId).length,
@@ -428,12 +350,6 @@ function ObserverSplitDashboard({
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание кандидата</div>
           )}
-          {process.env.NODE_ENV !== "production" ? (
-            <div className="absolute bottom-2 left-2 right-2 z-10 rounded-md bg-black/55 px-2 py-1 text-[10px] leading-snug text-white">
-              candidate: {(candidateParticipant?.userId as string | undefined) ?? "—"} ·{" "}
-              {((candidateParticipant as unknown as { name?: unknown })?.name as string | undefined) ?? "—"}
-            </div>
-          ) : null}
         </div>
       </StreamParticipantShell>
       <StreamParticipantShell
@@ -484,12 +400,6 @@ function ObserverSplitDashboard({
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание HR аватара</div>
         )}
-        {process.env.NODE_ENV !== "production" ? (
-          <div className="absolute bottom-2 left-2 right-2 z-10 rounded-md bg-black/55 px-2 py-1 text-[10px] leading-snug text-white">
-            agent: {(agentParticipant?.userId as string | undefined) ?? "—"} ·{" "}
-            {((agentParticipant as unknown as { name?: unknown })?.name as string | undefined) ?? "—"}
-          </div>
-        ) : null}
       </StreamParticipantShell>
     </div>
   );
@@ -717,11 +627,8 @@ export function ObserverStreamCard({
   visible,
   talkMode,
   agentAvatarImageUrl = null,
-  onVisibleChange,
   onTalkModeChange,
   allowVisibilityToggle = true,
-  allowTalkToggle = true,
-  mutePlayback = true,
   title = "Наблюдатель",
   onStatusChange,
   sessionEnded = false,
@@ -749,8 +656,6 @@ export function ObserverStreamCard({
   const [selfPreviewStream, setSelfPreviewStream] = useState<MediaStream | null>(null);
   const [selfCameraEnabled, setSelfCameraEnabled] = useState(true);
   const [selfPreviewError, setSelfPreviewError] = useState<string | null>(null);
-  const [playbackMuted, setPlaybackMuted] = useState(mutePlayback);
-  const [focusCandidateOnly, setFocusCandidateOnly] = useState(false);
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
   const splitPlaybackRootRef = useRef<HTMLDivElement | null>(null);
   const selfPreviewVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -766,21 +671,12 @@ export function ObserverStreamCard({
   const sfuRejoinInFlightRef = useRef(false);
   const lastSfuRejoinAtMsRef = useRef(0);
   const currentTicketRef = useRef<string | null>(null);
-  const pipRef = useRef<HTMLDivElement | null>(null);
   const candidateVideoContainerRef = useRef<HTMLDivElement | null>(null);
-  const dragStateRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
-  const [pipPosition, setPipPosition] = useState<PipPosition | null>(null);
-  const [pipPinned, setPipPinned] = useState(true);
 
   const ended = Boolean(sessionEnded) || uiState === "completed";
   const viewerKind =
     observerAccessMode === "internal_dashboard" ? ("internal_observer_dashboard" as const) : null;
   const suppressErrorToasts = observerAccessMode === "internal_dashboard";
-  const viewMode: ObserverViewMode = useMemo(() => {
-    if (ended) return "ended";
-    if (client && call && localUserId) return "live";
-    return "waiting";
-  }, [call, client, ended, localUserId]);
   const accessReady = useMemo(() => {
     const callId = (streamCallId ?? "").trim();
     const callType = (streamCallType ?? "").trim();
@@ -804,17 +700,6 @@ export function ObserverStreamCard({
       currentTicketRef.current = null;
     }
   }, [observerAccessMode, observerTicket]);
-
-  useEffect(() => {
-    if (process.env.NODE_ENV === "production") return;
-    console.log("[observer-access]", {
-      mode: observerAccessMode,
-      accessReady,
-      meetingId,
-      streamCallId,
-      streamCallType
-    });
-  }, [accessReady, meetingId, observerAccessMode, streamCallId, streamCallType]);
   const emitObserverAuditEvent = useCallback(
     (type: "observer_join_attempt" | "observer_joined" | "observer_no_participants_retry", payload: Record<string, unknown>) => {
       if (!meetingId) return;
@@ -941,28 +826,6 @@ export function ObserverStreamCard({
   useEffect(() => {
     onStatusChange?.(status);
   }, [onStatusChange, status]);
-
-  useEffect(() => {
-    setPlaybackMuted(mutePlayback);
-  }, [mutePlayback]);
-
-  useEffect(() => {
-    const root = spectatorDashboardLayout ? splitPlaybackRootRef.current : streamViewportRef.current;
-    if (!root) {
-      return;
-    }
-    const syncMedia = () => {
-      root.querySelectorAll("audio, video").forEach((element) => {
-        const media = element as HTMLMediaElement;
-        media.muted = playbackMuted;
-        media.volume = playbackMuted ? 0 : 1;
-      });
-    };
-    syncMedia();
-    const observer = new MutationObserver(() => syncMedia());
-    observer.observe(root, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, [call, playbackMuted, spectatorDashboardLayout]);
 
   // IMPORTANT: keep this callback STABLE (empty deps).
   // If we put `call` into deps, every successful join recreates `disconnectStream`,
@@ -1152,74 +1015,6 @@ export function ObserverStreamCard({
     setPersistedViewerKey(generated);
   }, [meetingId, viewerKey]);
 
-  const pipStorageKey = useMemo(() => {
-    const id = meetingId?.trim() || "global";
-    const layout = spectatorDashboardLayout ? "dashboard" : "card";
-    return `nullxes:spectator:pip:${layout}:${id}`;
-  }, [meetingId, spectatorDashboardLayout]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem(pipStorageKey);
-    if (!raw) {
-      setPipPinned(true);
-      setPipPosition(null);
-      return;
-    }
-    try {
-      const parsed = JSON.parse(raw) as { pinned?: boolean; x?: number; y?: number };
-      setPipPinned(parsed.pinned !== false);
-      if (typeof parsed.x === "number" && typeof parsed.y === "number") {
-        setPipPosition({ x: parsed.x, y: parsed.y });
-      } else {
-        setPipPosition(null);
-      }
-    } catch {
-      setPipPinned(true);
-      setPipPosition(null);
-    }
-  }, [pipStorageKey]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(
-      pipStorageKey,
-      JSON.stringify({
-        pinned: pipPinned,
-        x: pipPosition?.x,
-        y: pipPosition?.y
-      })
-    );
-  }, [pipPinned, pipPosition, pipStorageKey]);
-
-  useEffect(() => {
-    const onPointerMove = (event: PointerEvent) => {
-      const drag = dragStateRef.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      const pip = pipRef.current;
-      const root = spectatorDashboardLayout ? splitPlaybackRootRef.current : streamViewportRef.current;
-      if (!pip || !root) return;
-      const rootRect = root.getBoundingClientRect();
-      const next = clampPipPosition(
-        { x: event.clientX - rootRect.left - drag.offsetX, y: event.clientY - rootRect.top - drag.offsetY },
-        root,
-        pip
-      );
-      setPipPosition(next);
-    };
-    const onPointerUp = (event: PointerEvent) => {
-      const drag = dragStateRef.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      dragStateRef.current = null;
-    };
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
-    return () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-    };
-  }, [spectatorDashboardLayout]);
-
   const refreshObserverTicket = useCallback(async (): Promise<string | null> => {
     const token = joinToken?.trim();
     if (!token) {
@@ -1261,14 +1056,6 @@ export function ObserverStreamCard({
   }, [meetingId, streamCallId, streamCallType, joinToken, observerTicket, viewerKind]);
 
   const startStream = useCallback(async () => {
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[observer-startStream-enter]", {
-        epoch: connectEpochRef.current,
-        hasClient: Boolean(clientRef.current),
-        hasCall: Boolean(call),
-        inFlight: connectInFlightRef.current
-      });
-    }
     if (ended) {
       return;
     }
@@ -1319,16 +1106,6 @@ export function ObserverStreamCard({
           const abortTimer = setTimeout(() => tokenAbort.abort(), OBSERVER_TOKEN_TIMEOUT_MS);
           let response: Response;
           try {
-            if (process.env.NODE_ENV !== "production") {
-              console.info("[observer-token-request]", {
-                observerAccessMode,
-                hasJoinToken: Boolean(joinToken?.trim()),
-                hasObserverTicket: Boolean(activeObserverTicket?.trim()),
-                viewerKind,
-                hasCallId: Boolean(streamCallId?.trim()),
-                hasCallType: Boolean(streamCallType?.trim())
-              });
-            }
             response = await fetch("/api/stream/token", {
               method: "POST",
               credentials: "include",
@@ -1356,16 +1133,6 @@ export function ObserverStreamCard({
 
           if (!response.ok) {
             const payload = (await response.json().catch(() => ({}))) as StreamTokenErrorPayload;
-            if (process.env.NODE_ENV !== "production") {
-              console.info("[observer-ticket-flow]", {
-                attempt,
-                responseStatus: response.status,
-                responseCode: typeof payload.code === "string" ? payload.code : null,
-                hasObserverTicket: Boolean(activeObserverTicket?.trim()),
-                refreshedTicketOnce,
-                observerAccessMode
-              });
-            }
             if (response.status === 409 && payload.code === "meeting.not_active") {
               throw new Error("meeting.not_active");
             }
@@ -1499,9 +1266,6 @@ export function ObserverStreamCard({
                     return Boolean(record.audio || record.audioTrack);
                   })
               );
-              if (process.env.NODE_ENV !== "production") {
-                console.log("[observer-join]", { participantsCount, hasAudioTracks });
-              }
               if (participantsCount === 0) {
                 console.warn("observer_no_participants_after_join");
               }
@@ -1624,24 +1388,6 @@ export function ObserverStreamCard({
 
   useEffect(() => {
     const autoJoinKey = `${meetingId ?? "no-meeting"}:${streamCallType ?? "no-type"}:${streamCallId ?? "no-call"}:${joinToken ?? ""}:${observerTicket ?? ""}`;
-    if (process.env.NODE_ENV !== "production") {
-      console.info("[observer-autojoin-state]", {
-        canConnect,
-        hasCall: Boolean(call),
-        busy,
-        hasError: Boolean(error),
-        error,
-        meetingId,
-        hasStreamCallId: Boolean(streamCallId),
-        hasStreamCallType: Boolean(streamCallType),
-        viewerKind,
-        observerAccessMode,
-        hasJoinToken: Boolean(joinToken),
-        hasObserverTicket: Boolean(observerTicket),
-        autoJoinKey,
-        lastAutoJoinKey: autoJoinAttemptForRef.current
-      });
-    }
     if (!canConnect || call || busy || error) return;
     if (autoJoinAttemptForRef.current === autoJoinKey) {
       return;
@@ -1735,243 +1481,22 @@ export function ObserverStreamCard({
   );
 
   const showJoinLoader = busy && visible;
-  const showSingleFeedMode = focusCandidateOnly && status !== "no_participants";
-  const toggleFullscreen = useCallback(() => {
-    const root = spectatorDashboardLayout ? splitPlaybackRootRef.current : streamViewportRef.current;
-    if (!root || typeof document === "undefined") {
-      return;
-    }
-    if (document.fullscreenElement) {
-      void document.exitFullscreen().catch(() => undefined);
-      return;
-    }
-    void root.requestFullscreen?.().catch(() => undefined);
-  }, [spectatorDashboardLayout]);
-
   const resolvedCandidateDisplayName = (candidateDisplayName?.trim() || "Кандидат").trim();
 
   const observerToolbar = (
-    <>
-      <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
-        <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{participantName}</p>
-        <div className="flex items-center gap-2">
-          <InterviewStatusBadge status={videoStatusView} />
-          <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
-            <span className="mr-1 text-emerald-600" aria-hidden>
-              ●
-            </span>
-            {statusBadgeLabel}
-          </Badge>
-        </div>
+    <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+      <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{participantName}</p>
+      <div className="flex items-center gap-2">
+        <InterviewStatusBadge status={videoStatusView} />
+        <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+          <span className="mr-1 text-emerald-600" aria-hidden>
+            ●
+          </span>
+          {statusBadgeLabel}
+        </Badge>
       </div>
-
-      {viewMode === "waiting" ? (
-        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-slate-700">
-              {transientStatus
-                ? "Подключаем наблюдателя…"
-                : canConnect && busy
-                  ? "Подключаем наблюдателя…"
-                  : canConnect && !busy && !call
-                    ? "Готово к подключению"
-                    : waitingReason
-                      ? "Ожидание"
-                      : "Ожидание запуска"}
-            </p>
-            <p className="mt-0.5 text-[11px] leading-snug text-slate-600">
-              {transientStatus || statusHint || waitingReason || "Видео подключится автоматически после старта интервью."}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {!call && canConnect ? (
-              <Button
-                type="button"
-                className="h-9 min-h-9 rounded-full px-3 text-xs"
-                onClick={() => {
-                  setError(null);
-                  setTransientStatus(null);
-                  autoJoinAttemptForRef.current = null;
-                  void startStream();
-                }}
-                disabled={busy}
-                title={busy ? "Выполняется подключение" : "Подключить наблюдателя к активной сессии"}
-              >
-                <Video className="mr-1 h-4 w-4" aria-hidden />
-                <span className="hidden sm:inline">Подключиться</span>
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-
-      {viewMode === "ended" ? (
-        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap gap-1.5" />
-        </div>
-      ) : null}
-
-      {viewMode === "live" ? (
-        <>
-          {allowTalkToggle && visible ? <MicIndicator active={talkMode === "on" && Boolean(call)} /> : null}
-          <div className="flex min-h-9 flex-wrap gap-1.5">
-            {call ? (
-              <>
-                <Button
-                  type="button"
-                  variant={playbackMuted ? "secondary" : "outline"}
-                  className="h-9 min-h-9 rounded-full px-3 text-xs focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-                  onClick={() => setPlaybackMuted((prev) => !prev)}
-                  title={playbackMuted ? "Включить звук воспроизведения" : "Выключить звук воспроизведения"}
-                >
-                  {playbackMuted ? (
-                    <VolumeX className="mr-1 h-4 w-4" aria-hidden />
-                  ) : (
-                    <Volume2 className="mr-1 h-4 w-4" aria-hidden />
-                  )}
-                  <span className="hidden sm:inline">Звук</span>
-                </Button>
-                {!spectatorDashboardLayout ? (
-                  <>
-                    <Button
-                      type="button"
-                      variant={showSingleFeedMode ? "secondary" : "outline"}
-                      className="h-9 min-h-9 rounded-full px-3 text-xs focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-                      onClick={() => setFocusCandidateOnly((prev) => !prev)}
-                      title="Переключить раскладку участников"
-                    >
-                      {showSingleFeedMode ? (
-                        <RotateCcw className="mr-1 h-4 w-4" aria-hidden />
-                      ) : (
-                        <Maximize2 className="mr-1 h-4 w-4" aria-hidden />
-                      )}
-                      <span className="hidden sm:inline">{showSingleFeedMode ? "Все" : "Фокус"}</span>
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-9 min-h-9 rounded-full px-3 text-xs focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-                      onClick={toggleFullscreen}
-                      title="Открыть полноэкранный режим"
-                    >
-                      <Maximize2 className="mr-1 h-4 w-4" aria-hidden />
-                      <span className="hidden sm:inline">Экран</span>
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-9 min-h-9 rounded-full px-3 text-xs focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-                    onClick={toggleFullscreen}
-                    title="Полноэкранный режим (кандидат + HR)"
-                  >
-                    <Maximize2 className="mr-1 h-4 w-4" aria-hidden />
-                    <span className="hidden sm:inline">Экран</span>
-                  </Button>
-                )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-9 min-h-9 rounded-full px-3 text-xs focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-                  onClick={() => {
-                    void disconnectStream().then(() => {
-                      autoJoinAttemptForRef.current = null;
-                    });
-                  }}
-                  disabled={busy || ended}
-                  title="Переподключиться"
-                  aria-label="Переподключиться"
-                >
-                  <RotateCcw className="mr-1 h-4 w-4" aria-hidden />
-                  <span className="hidden sm:inline">Reconnect</span>
-                </Button>
-              </>
-            ) : null}
-          </div>
-        </>
-      ) : null}
-    </>
-  );
-
-  const selfPreviewPip = showSelfPreview ? (
-    <div
-      ref={pipRef}
-      style={pipPosition ? { left: `${pipPosition.x}px`, top: `${pipPosition.y}px` } : undefined}
-      className={cn(
-        "z-20 w-44 rounded-xl border border-white/40 bg-slate-900/75 p-2 shadow-lg backdrop-blur",
-        pipPosition ? "absolute" : spectatorDashboardLayout ? "absolute bottom-3 right-3" : "absolute right-3 top-3"
-      )}
-    >
-      <div
-        className={cn(
-          "mb-1 flex items-center justify-between gap-2 rounded-md px-1",
-          pipPinned ? "cursor-default" : "cursor-grab active:cursor-grabbing"
-        )}
-        onPointerDown={(event) => {
-          if (pipPinned) return;
-          const pip = pipRef.current;
-          const root = spectatorDashboardLayout ? splitPlaybackRootRef.current : streamViewportRef.current;
-          if (!pip || !root) return;
-          const pipRect = pip.getBoundingClientRect();
-          dragStateRef.current = {
-            pointerId: event.pointerId,
-            offsetX: event.clientX - pipRect.left,
-            offsetY: event.clientY - pipRect.top
-          };
-        }}
-      >
-        <p className="text-center text-[10px] font-medium uppercase tracking-wide text-slate-400">
-          Наблюдатель
-        </p>
-        <div className="flex items-center gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            className="h-6 rounded-full px-2 text-[10px] text-slate-200 hover:bg-slate-700/70"
-            onClick={() => setPipPinned((prev) => !prev)}
-            title={pipPinned ? "Открепить для перетаскивания" : "Закрепить текущую позицию"}
-          >
-            {pipPinned ? "Открепить" : "Закрепить"}
-          </Button>
-        </div>
-      </div>
-      <div className="overflow-hidden rounded-lg bg-black">
-        {selfPreviewStream && selfCameraEnabled ? (
-          <video ref={selfPreviewVideoRef} className="h-24 w-full object-cover" muted playsInline autoPlay />
-        ) : (
-          <div className="flex h-24 w-full items-center justify-center text-xs text-slate-300">Камера выключена</div>
-        )}
-      </div>
-      <p className="mt-2 text-center text-[10px] leading-snug text-slate-300">Локальный preview · не транслируется</p>
-      <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-        <Button
-          type="button"
-          variant={selfCameraEnabled ? "default" : "secondary"}
-          className="h-9 rounded-full px-3 text-xs"
-          disabled={!selfPreviewStream}
-          onClick={() => setSelfCameraEnabled((prev) => !prev)}
-          title={selfCameraEnabled ? "Выключить камеру" : "Включить камеру"}
-        >
-          {selfCameraEnabled ? <Video className="mr-1 h-3.5 w-3.5" /> : <VideoOff className="mr-1 h-3.5 w-3.5" />}
-          {selfCameraEnabled ? "Камера: вкл" : "Камера: выкл"}
-        </Button>
-        {selfPreviewError ? (
-          <Button
-            type="button"
-            variant="outline"
-            className="h-8 rounded-full px-3 text-[11px]"
-            onClick={() => void ensureSelfPreview()}
-          >
-            Повторить доступ
-          </Button>
-        ) : null}
-      </div>
-      {selfPreviewError ? (
-        <p className="mt-2 rounded-lg bg-rose-100/90 px-2 py-1 text-[11px] leading-snug text-rose-700">{selfPreviewError}</p>
-      ) : null}
     </div>
-  ) : null;
+  );
 
   if (spectatorDashboardLayout) {
     return (
@@ -2141,13 +1666,12 @@ export function ObserverStreamCard({
                   localUserId={localUserId}
                   agentAvatarImageUrl={agentAvatarImageUrl}
                   onParticipantsDetected={setHasParticipants}
-                  sessionMirrorLayout={showSingleFeedMode ? false : sessionMirrorLayout}
+                  sessionMirrorLayout={sessionMirrorLayout}
                   candidateVideoContainerRef={candidateVideoContainerRef}
                 />
               </StreamCall>
             </StreamTheme>
           </StreamVideo>
-          {selfPreviewPip}
         </div>
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
