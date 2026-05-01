@@ -100,6 +100,14 @@ async function streamAdminPost(
   return response;
 }
 
+function parseStreamAdminStatus(error: unknown): number | null {
+  if (!(error instanceof Error)) return null;
+  const match = error.message.match(/failed\s+\((\d+)\)/i);
+  if (!match) return null;
+  const code = Number(match[1]);
+  return Number.isFinite(code) ? code : null;
+}
+
 async function enforceSpectatorReadonlyRole(
   apiKey: string,
   secret: string,
@@ -147,8 +155,26 @@ async function enforceObserverPublisherRole(
   });
 
   const callUrl = `https://video.stream-io-api.com/api/v2/video/call/${encodeURIComponent(callType)}/${encodeURIComponent(callId)}?api_key=${encodeURIComponent(apiKey)}`;
+  try {
+    // Fast path: call exists, just upsert member role.
+    await streamAdminPost(apiKey, secret, callUrl, {
+      data: {
+        members: [{ user_id: userId, role: "user" }]
+      }
+    });
+    return;
+  } catch (error) {
+    // Slow path: call may not be created yet (observer opens before candidate),
+    // or Stream may require created_by_id when creating a call.
+    const status = parseStreamAdminStatus(error);
+    if (status !== 404 && status !== 400) {
+      throw error;
+    }
+  }
+
   await streamAdminPost(apiKey, secret, callUrl, {
     data: {
+      created_by_id: userId,
       members: [{ user_id: userId, role: "user" }]
     }
   });
