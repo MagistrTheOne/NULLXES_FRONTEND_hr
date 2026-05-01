@@ -175,6 +175,7 @@ export function InterviewShell() {
   void promptSettingsLastStatus;
   void promptSettingsLastError;
   void lastAgentContextTrace;
+  void questionsAsked;
   void sessionElevenLabsVoiceId;
   void setSessionElevenLabsVoiceId;
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -1159,8 +1160,6 @@ export function InterviewShell() {
           <>
             <InterviewPhaseIndicator
               flowPhase={flowPhase}
-              questionsAsked={questionsAsked}
-              totalQuestions={interviewStartContext?.questions?.length ?? 0}
             />
             {flowPhase === "intro" || flowPhase === "questions" || flowPhase === "closing" ? (
               <div className="flex w-full justify-center">
