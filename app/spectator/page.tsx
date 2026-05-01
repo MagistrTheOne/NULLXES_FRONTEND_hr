@@ -3,7 +3,11 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ChevronDown, ExternalLink, RefreshCw } from "lucide-react";
-import { ObserverStreamCard, type ObserverConnectionStatus } from "@/components/interview/observer-stream-card";
+import {
+  ObserverStreamCard,
+  type ObserverAccessMode,
+  type ObserverConnectionStatus
+} from "@/components/interview/observer-stream-card";
 import { InterviewStatusBadge } from "@/components/interview/interview-status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -290,8 +294,8 @@ function SpectatorBody() {
   const effectiveMeetingId = meetingResolution.id;
   // External signed spectator mode is primarily identified by joinToken.
   // observerTicket is short-lived/consume-once and may be missing on initial redirect or after refresh.
-  const isSignedSpectator = Boolean(spectatorJoinToken);
-  const isInternalObserverDashboard = !isSignedSpectator && Boolean(jobAiId);
+  const observerAccessMode: ObserverAccessMode = spectatorJoinToken ? "external_signed" : "internal_dashboard";
+  const isSignedSpectator = observerAccessMode === "external_signed";
   const candidateName = [detail?.projection.candidateFirstName, detail?.projection.candidateLastName]
     .filter(Boolean)
     .join(" ")
@@ -314,14 +318,12 @@ function SpectatorBody() {
   const resolvedStreamCallId = runtimeMatchesMeeting ? runtimeStreamCallIdRaw : "";
   const resolvedStreamCallType = runtimeMatchesMeeting ? runtimeStreamCallTypeRaw || "default" : "";
   const hasTrustedStreamBinding = Boolean(resolvedStreamCallId) && Boolean(resolvedStreamCallType);
-  const spectatorAccessReady = !isSignedSpectator || Boolean(spectatorObserverTicket);
+  const accessReady =
+    observerAccessMode === "internal_dashboard"
+      ? Boolean(effectiveMeetingId) && hasTrustedStreamBinding
+      : Boolean(spectatorJoinToken) && Boolean(spectatorObserverTicket) && Boolean(effectiveMeetingId) && hasTrustedStreamBinding;
   // Spectator joins when we have a trusted meeting + trusted Stream binding (health.ready is best-effort only).
-  const canConnect =
-    Boolean(effectiveMeetingId) &&
-    runtimeMatchesMeeting &&
-    hasTrustedStreamBinding &&
-    spectatorAccessReady &&
-    !terminalByProjection;
+  const canConnect = accessReady && runtimeMatchesMeeting && !terminalByProjection;
   const spectatorWaitingReason = useMemo(() => {
     if (terminalByProjection) {
       return "Интервью завершено. Повторное подключение недоступно.";
@@ -426,21 +428,23 @@ function SpectatorBody() {
 
   useEffect(() => {
     if (process.env.NODE_ENV === "production") return;
-    console.info("[spectator-mode]", {
-      jobAiId,
-      isSignedSpectator,
-      isInternalObserverDashboard,
+    console.info("[spectator-access-mode]", {
+      observerAccessMode,
       hasJoinToken: Boolean(spectatorJoinToken),
       hasObserverTicket: Boolean(spectatorObserverTicket),
-      hasViewerKey: Boolean(spectatorViewerKey)
+      accessReady,
+      hasMeetingId: Boolean(effectiveMeetingId),
+      hasStreamCallId: Boolean(resolvedStreamCallId),
+      hasStreamCallType: Boolean(resolvedStreamCallType)
     });
   }, [
-    isInternalObserverDashboard,
-    isSignedSpectator,
-    jobAiId,
+    accessReady,
+    effectiveMeetingId,
+    observerAccessMode,
+    resolvedStreamCallId,
+    resolvedStreamCallType,
     spectatorJoinToken,
-    spectatorObserverTicket,
-    spectatorViewerKey
+    spectatorObserverTicket
   ]);
 
   useEffect(() => {
@@ -458,16 +462,14 @@ function SpectatorBody() {
       sessionEnded: terminalByProjection,
       observerCanConnect: canConnect,
       waitingReason: spectatorWaitingReason,
-      isSignedSpectator,
-      isInternalObserverDashboard
+      observerAccessMode
     });
   }, [
     canConnect,
     detail?.projection.nullxesStatus,
     effectiveMeetingId,
-    isInternalObserverDashboard,
-    isSignedSpectator,
     jobAiId,
+    observerAccessMode,
     projectionStatus,
     resolvedStreamCallId,
     resolvedStreamCallType,
@@ -735,7 +737,7 @@ function SpectatorBody() {
               meetingId={effectiveMeetingId}
               streamCallId={resolvedStreamCallId || null}
               streamCallType={resolvedStreamCallType || null}
-              viewerKind={isInternalObserverDashboard ? "internal_observer_dashboard" : undefined}
+              observerAccessMode={observerAccessMode}
               enabled={canConnect}
               visible
               talkMode={observerControl.talk}
@@ -746,9 +748,9 @@ function SpectatorBody() {
               showSelfPreview
               sessionEnded={terminalByProjection}
               waitingReason={spectatorWaitingReason}
-              spectatorJoinToken={spectatorJoinToken}
-              spectatorObserverTicket={spectatorObserverTicket}
-              spectatorViewerKey={spectatorViewerKey}
+              joinToken={spectatorJoinToken}
+              observerTicket={spectatorObserverTicket}
+              viewerKey={spectatorViewerKey}
               onObserverTicketRefresh={(ticket) => {
                 if (typeof window === "undefined") return;
                 const next = ticket.trim();

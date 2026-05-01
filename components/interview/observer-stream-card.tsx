@@ -58,6 +58,7 @@ type StreamTokenErrorPayload = {
 };
 
 type ObserverTalkMode = "off" | "on";
+export type ObserverAccessMode = "internal_dashboard" | "external_signed";
 export type ObserverConnectionStatus =
   | "waiting_meeting"
   | "joining"
@@ -611,8 +612,7 @@ type ObserverStreamCardProps = {
   meetingId: string | null;
   streamCallId?: string | null;
   streamCallType?: string | null;
-  /** Internal marker for backend token issuance routing. */
-  viewerKind?: "internal_observer_dashboard" | null;
+  observerAccessMode: ObserverAccessMode;
   enabled: boolean;
   visible: boolean;
   talkMode: ObserverTalkMode;
@@ -625,12 +625,12 @@ type ObserverStreamCardProps = {
   onStatusChange?: (status: ObserverConnectionStatus) => void;
   sessionEnded?: boolean;
   uiState?: SessionUIState;
-  /** Подписанная ссылка наблюдателя (query после /join/spectator/...); усиливает выдачу Stream token. */
-  spectatorJoinToken?: string | null;
-  /** Одноразовый observer session ticket, выданный backend на join-шаге. */
-  spectatorObserverTicket?: string | null;
+  /** External signed spectator join token (from /join/spectator/:token). */
+  joinToken?: string | null;
+  /** One-time observer session ticket for external signed spectators. */
+  observerTicket?: string | null;
   /** Stable spectator key for reconnect identity (if available from URL/parent). */
-  spectatorViewerKey?: string | null;
+  viewerKey?: string | null;
   /** Called when observerTicket was refreshed and should be persisted by parent. */
   onObserverTicketRefresh?: (ticket: string) => void;
   /** Called when observerTicket is no longer usable and should be cleared by parent. */
@@ -655,7 +655,7 @@ export function ObserverStreamCard({
   meetingId,
   streamCallId = null,
   streamCallType = null,
-  viewerKind = null,
+  observerAccessMode,
   enabled,
   visible,
   talkMode,
@@ -668,9 +668,9 @@ export function ObserverStreamCard({
   onStatusChange,
   sessionEnded = false,
   uiState,
-  spectatorJoinToken = null,
-  spectatorObserverTicket = null,
-  spectatorViewerKey = null,
+  joinToken = null,
+  observerTicket = null,
+  viewerKey = null,
   onObserverTicketRefresh,
   onObserverTicketInvalid,
   sessionMirrorLayout = false,
@@ -713,19 +713,23 @@ export function ObserverStreamCard({
   const [bookmarksOpen, setBookmarksOpen] = useState(true);
 
   const ended = Boolean(sessionEnded) || uiState === "completed";
-  const suppressErrorToasts = viewerKind === "internal_observer_dashboard";
+  const viewerKind =
+    observerAccessMode === "internal_dashboard" ? ("internal_observer_dashboard" as const) : null;
+  const suppressErrorToasts = observerAccessMode === "internal_dashboard";
   const viewMode: ObserverViewMode = useMemo(() => {
     if (ended) return "ended";
     if (client && call && localUserId) return "live";
     return "waiting";
   }, [call, client, ended, localUserId]);
-  const canConnect =
-    enabled &&
-    visible &&
-    Boolean(meetingId) &&
-    Boolean(streamCallId?.trim()) &&
-    Boolean(streamCallType?.trim()) &&
-    !ended;
+  const accessReady = useMemo(() => {
+    const hasBinding =
+      Boolean(meetingId) && Boolean(streamCallId?.trim()) && Boolean(streamCallType?.trim());
+    if (!hasBinding) return false;
+    if (observerAccessMode === "internal_dashboard") return true;
+    return Boolean(joinToken?.trim()) && Boolean(observerTicket?.trim());
+  }, [joinToken, meetingId, observerAccessMode, observerTicket, streamCallId, streamCallType]);
+
+  const canConnect = enabled && visible && accessReady && !ended;
   const emitObserverAuditEvent = useCallback(
     (type: "observer_join_attempt" | "observer_joined" | "observer_no_participants_retry", payload: Record<string, unknown>) => {
       if (!meetingId) return;
@@ -789,7 +793,13 @@ export function ObserverStreamCard({
       return waitingReason ?? "Интервью еще не запущено. Подключение доступно после активации сессии кандидата.";
     }
     if (!streamCallId || !streamCallType) {
+      if (observerAccessMode === "internal_dashboard") {
+        return waitingReason ?? "Ждём Stream call";
+      }
       return waitingReason ?? "Ждём конфигурацию Stream call от runtime.";
+    }
+    if (observerAccessMode === "external_signed" && !observerTicket?.trim()) {
+      return waitingReason ?? "Подготавливаем доступ наблюдателя…";
     }
     if (busy) {
       if (connectionPhase === "reconnecting") {
@@ -810,7 +820,22 @@ export function ObserverStreamCard({
       return "Подключение к звонку…";
     }
     return waitingReason ?? "Ожидание запуска. Подключение выполнится автоматически, когда сессия будет доступна.";
-  }, [busy, call, connectionPhase, enabled, ended, error, meetingId, status, streamCallId, streamCallType, transientStatus, waitingReason]);
+  }, [
+    busy,
+    call,
+    connectionPhase,
+    enabled,
+    ended,
+    error,
+    meetingId,
+    observerAccessMode,
+    observerTicket,
+    status,
+    streamCallId,
+    streamCallType,
+    transientStatus,
+    waitingReason
+  ]);
 
   const statusBadgeLabel = useMemo(() => {
     if (ended) return "Завершено";
@@ -997,7 +1022,7 @@ export function ObserverStreamCard({
   }, []);
 
   useEffect(() => {
-    const explicitViewerKey = spectatorViewerKey?.trim();
+    const explicitViewerKey = viewerKey?.trim();
     if (explicitViewerKey) {
       setPersistedViewerKey(explicitViewerKey);
       return;
@@ -1015,7 +1040,7 @@ export function ObserverStreamCard({
     const generated = `viewer-${Math.random().toString(36).slice(2, 12)}`;
     window.localStorage.setItem(storageKey, generated);
     setPersistedViewerKey(generated);
-  }, [meetingId, spectatorViewerKey]);
+  }, [meetingId, viewerKey]);
 
   const pipStorageKey = useMemo(() => {
     const id = meetingId?.trim() || "global";
@@ -1086,12 +1111,12 @@ export function ObserverStreamCard({
   }, [spectatorDashboardLayout]);
 
   const refreshObserverTicket = useCallback(async (): Promise<string | null> => {
-    const joinToken = spectatorJoinToken?.trim();
-    if (!joinToken) {
+    const token = joinToken?.trim();
+    if (!token) {
       return null;
     }
     const response = await fetch(
-      `/api/gateway/join/spectator/${encodeURIComponent(joinToken)}/session-ticket`,
+      `/api/gateway/join/spectator/${encodeURIComponent(token)}/session-ticket`,
       {
         method: "POST",
         credentials: "include",
@@ -1106,7 +1131,7 @@ export function ObserverStreamCard({
     const observerTicket =
       typeof payload.observerTicket === "string" ? payload.observerTicket.trim() : "";
     return observerTicket.length > 0 ? observerTicket : null;
-  }, [spectatorJoinToken]);
+  }, [joinToken]);
 
   useEffect(() => {
     if (ended) {
@@ -1123,7 +1148,7 @@ export function ObserverStreamCard({
     setTransientStatus(null);
     autoJoinAttemptForRef.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meetingId, streamCallId, streamCallType, spectatorJoinToken, spectatorObserverTicket, viewerKind]);
+  }, [meetingId, streamCallId, streamCallType, joinToken, observerTicket, viewerKind]);
 
   const startStream = useCallback(async () => {
     if (ended) {
@@ -1154,7 +1179,8 @@ export function ObserverStreamCard({
     }).catch(() => undefined);
     try {
       let lastError: Error | null = null;
-      let activeObserverTicket = spectatorJoinToken ? spectatorObserverTicket?.trim() || null : null;
+      let activeObserverTicket =
+        observerAccessMode === "external_signed" ? observerTicket?.trim() || null : null;
       let refreshedTicketOnce = false;
 
       for (let attempt = 1; attempt <= OBSERVER_MAX_ATTEMPTS; attempt += 1) {
@@ -1172,9 +1198,10 @@ export function ObserverStreamCard({
           try {
             if (process.env.NODE_ENV !== "production") {
               console.info("[observer-token-request]", {
-                mode: viewerKind ? "internal" : "external",
-                hasJoinToken: Boolean(spectatorJoinToken?.trim()),
+                observerAccessMode,
+                hasJoinToken: Boolean(joinToken?.trim()),
                 hasObserverTicket: Boolean(activeObserverTicket?.trim()),
+                viewerKind,
                 hasCallId: Boolean(streamCallId?.trim()),
                 hasCallType: Boolean(streamCallType?.trim())
               });
@@ -1194,8 +1221,10 @@ export function ObserverStreamCard({
                 ...(persistedViewerKey
                   ? { viewerKey: tabId ? `${persistedViewerKey}:${tabId}` : persistedViewerKey }
                   : {}),
-                ...(spectatorJoinToken ? { joinToken: spectatorJoinToken } : {}),
-                ...(spectatorJoinToken && activeObserverTicket ? { observerTicket: activeObserverTicket } : {})
+                ...(observerAccessMode === "external_signed" && joinToken ? { joinToken } : {}),
+                ...(observerAccessMode === "external_signed" && joinToken && activeObserverTicket
+                  ? { observerTicket: activeObserverTicket }
+                  : {})
               })
             });
           } finally {
@@ -1211,7 +1240,7 @@ export function ObserverStreamCard({
                 responseCode: typeof payload.code === "string" ? payload.code : null,
                 hasObserverTicket: Boolean(activeObserverTicket?.trim()),
                 refreshedTicketOnce,
-                mode: viewerKind ? "internal" : "external"
+                observerAccessMode
               });
             }
             if (response.status === 409 && payload.code === "meeting.not_active") {
@@ -1223,8 +1252,15 @@ export function ObserverStreamCard({
             if (response.status === 503 && payload.code === "observer_role_unavailable") {
               throw new Error("observer_role_unavailable");
             }
-            if (!refreshedTicketOnce && isObserverTicketError(payload)) {
+            if (
+              observerAccessMode === "external_signed" &&
+              !refreshedTicketOnce &&
+              isObserverTicketError(payload)
+            ) {
               refreshedTicketOnce = true;
+              if (observerAccessMode === "external_signed") {
+                onObserverTicketInvalid?.();
+              }
               const refreshed = await refreshObserverTicket();
               if (refreshed) {
                 activeObserverTicket = refreshed;
@@ -1238,7 +1274,7 @@ export function ObserverStreamCard({
 
           const payload = (await response.json()) as StreamTokenResponse;
           // TODO(stream-auth): Stream рекомендует `tokenProvider` (auto-refresh) для long-lived клиентов.
-          // Сейчас у нас одноразовый `spectatorObserverTicket` (consume-once), поэтому нельзя просто
+          // Сейчас у нас одноразовый `observerTicket` (consume-once), поэтому нельзя просто
           // переиспользовать его в tokenProvider для повторного обновления токена.
           // Правильный будущий вариант: backend endpoint для observer refresh, который выдаёт новый Stream token
           // без повторного consume observerTicket (например, через серверную spectator-session + refresh).
@@ -1363,14 +1399,15 @@ export function ObserverStreamCard({
   }, [
     ended,
     ensureSelfPreview,
+    observerAccessMode,
     streamCallId,
     streamCallType,
     meetingId,
     participantName,
     refreshObserverTicket,
     persistedViewerKey,
-    spectatorJoinToken,
-    spectatorObserverTicket,
+    joinToken,
+    observerTicket,
     tabId,
     call,
     pushEvent,
@@ -1382,7 +1419,7 @@ export function ObserverStreamCard({
   ]);
 
   useEffect(() => {
-    const autoJoinKey = `${meetingId ?? "no-meeting"}:${streamCallType ?? "no-type"}:${streamCallId ?? "no-call"}:${spectatorJoinToken ?? ""}:${spectatorObserverTicket ?? ""}`;
+    const autoJoinKey = `${meetingId ?? "no-meeting"}:${streamCallType ?? "no-type"}:${streamCallId ?? "no-call"}:${joinToken ?? ""}:${observerTicket ?? ""}`;
     if (process.env.NODE_ENV !== "production") {
       console.info("[observer-autojoin-state]", {
         canConnect,
@@ -1394,8 +1431,9 @@ export function ObserverStreamCard({
         hasStreamCallId: Boolean(streamCallId),
         hasStreamCallType: Boolean(streamCallType),
         viewerKind,
-        hasJoinToken: Boolean(spectatorJoinToken),
-        hasObserverTicket: Boolean(spectatorObserverTicket),
+        observerAccessMode,
+        hasJoinToken: Boolean(joinToken),
+        hasObserverTicket: Boolean(observerTicket),
         autoJoinKey,
         lastAutoJoinKey: autoJoinAttemptForRef.current
       });
@@ -1406,7 +1444,7 @@ export function ObserverStreamCard({
     }
     autoJoinAttemptForRef.current = autoJoinKey;
     void startStream();
-  }, [busy, call, canConnect, error, meetingId, spectatorJoinToken, spectatorObserverTicket, startStream, streamCallId, streamCallType, viewerKind]);
+  }, [busy, call, canConnect, error, joinToken, meetingId, observerTicket, observerAccessMode, startStream, streamCallId, streamCallType, viewerKind]);
 
   useEffect(() => {
     if (canConnect) {

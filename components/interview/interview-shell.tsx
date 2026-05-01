@@ -1549,6 +1549,7 @@ export function InterviewShell() {
             title="Наблюдатель"
             participantName="Наблюдатель"
             meetingId={recoveredMeetingId}
+            observerAccessMode="internal_dashboard"
             enabled={streamSurfaceEnabled}
             visible={observerVisible}
             talkMode="off"
