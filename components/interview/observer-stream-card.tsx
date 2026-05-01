@@ -77,6 +77,9 @@ const OBSERVER_RETRY_BACKOFF_MS = 1_200;
 const OBSERVER_RECONNECT_LOCK_MS = 1_500;
 const OBSERVER_NO_PARTICIPANTS_GRACE_MS = 7_000;
 const OBSERVER_NO_PARTICIPANTS_RECONNECT_MAX = 3;
+const OBSERVER_JOIN_RETRY_ATTEMPTS = 2;
+const OBSERVER_JOIN_RETRY_DELAY_MS = 1_500;
+const OBSERVER_PARTICIPANT_WATCHDOG_MS = 7_000;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -702,6 +705,7 @@ export function ObserverStreamCard({
   const reconnectLockUntilRef = useRef(0);
   const connectInFlightRef = useRef(false);
   const noParticipantsReconnectCountRef = useRef<Record<string, number>>({});
+  const currentTicketRef = useRef<string | null>(null);
   const pipRef = useRef<HTMLDivElement | null>(null);
   const candidateVideoContainerRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
@@ -722,14 +726,39 @@ export function ObserverStreamCard({
     return "waiting";
   }, [call, client, ended, localUserId]);
   const accessReady = useMemo(() => {
-    const hasBinding =
-      Boolean(meetingId) && Boolean(streamCallId?.trim()) && Boolean(streamCallType?.trim());
-    if (!hasBinding) return false;
+    const callId = (streamCallId ?? "").trim();
+    const callType = (streamCallType ?? "").trim();
+    const bindingValid =
+      Boolean(meetingId) &&
+      Boolean(callId) &&
+      Boolean(callType) &&
+      callId !== "unknown" &&
+      callType !== "unknown";
+    if (!bindingValid) return false;
     if (observerAccessMode === "internal_dashboard") return true;
     return Boolean(joinToken?.trim()) && Boolean(observerTicket?.trim());
   }, [joinToken, meetingId, observerAccessMode, observerTicket, streamCallId, streamCallType]);
 
   const canConnect = enabled && visible && accessReady && !ended;
+
+  useEffect(() => {
+    if (observerAccessMode === "external_signed") {
+      currentTicketRef.current = observerTicket?.trim() || null;
+    } else {
+      currentTicketRef.current = null;
+    }
+  }, [observerAccessMode, observerTicket]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    console.log("[observer-access]", {
+      mode: observerAccessMode,
+      accessReady,
+      meetingId,
+      streamCallId,
+      streamCallType
+    });
+  }, [accessReady, meetingId, observerAccessMode, streamCallId, streamCallType]);
   const emitObserverAuditEvent = useCallback(
     (type: "observer_join_attempt" | "observer_joined" | "observer_no_participants_retry", payload: Record<string, unknown>) => {
       if (!meetingId) return;
@@ -1160,6 +1189,9 @@ export function ObserverStreamCard({
     if (connectInFlightRef.current) {
       return;
     }
+    if (!accessReady) {
+      return;
+    }
     const now = Date.now();
     if (reconnectLockUntilRef.current > now) {
       return;
@@ -1273,6 +1305,14 @@ export function ObserverStreamCard({
           }
 
           const payload = (await response.json()) as StreamTokenResponse;
+          // External tickets are consume-once; do not accept late responses for an old ticket.
+          if (observerAccessMode === "external_signed") {
+            const refTicket = currentTicketRef.current?.trim() || null;
+            const usedTicket = activeObserverTicket?.trim() || null;
+            if (usedTicket && refTicket && usedTicket !== refTicket) {
+              throw new Error("observer.ticket.mismatch");
+            }
+          }
           // TODO(stream-auth): Stream рекомендует `tokenProvider` (auto-refresh) для long-lived клиентов.
           // Сейчас у нас одноразовый `observerTicket` (consume-once), поэтому нельзя просто
           // переиспользовать его в tokenProvider для повторного обновления токена.
@@ -1287,21 +1327,40 @@ export function ObserverStreamCard({
             user: payload.user,
             options: { timeout: 60_000 }
           });
+          await streamClient.connectUser(payload.user, payload.token).catch(() => undefined);
           streamCall = streamClient.call(payload.callType, payload.callId);
           await streamCall.camera.disable().catch(() => undefined);
           await streamCall.microphone.disable().catch(() => undefined);
-          await withTimeout(
-            // Observer is read-only and must never create ghost calls.
-            // Join only existing call created by candidate/HR flow.
-            // Spectator does not publish mic/camera to SFU.
-            // Do NOT pass `audio: false` here: in Stream SDK it may disable receiving
-            // remote audio tracks, which breaks the requirement "spectator hears Stream audio".
-            streamCall.join({ create: false, video: false } as Parameters<typeof streamCall.join>[0]),
-            OBSERVER_JOIN_TIMEOUT_MS,
-            "Observer stream join timeout"
-          );
+          // Join timing: try twice with delay to reduce \"joined but empty\" races.
+          let joined = false;
+          for (let joinAttempt = 1; joinAttempt <= OBSERVER_JOIN_RETRY_ATTEMPTS; joinAttempt += 1) {
+            try {
+              await withTimeout(
+                // Observer is read-only and must never create ghost calls.
+                // Join only existing call created by candidate/HR flow.
+                // Spectator does not publish mic/camera to SFU.
+                // Do NOT pass `audio: false` here: in Stream SDK it may disable receiving
+                // remote audio tracks, which breaks the requirement "spectator hears Stream audio".
+                streamCall.join({ create: false, video: false } as Parameters<typeof streamCall.join>[0]),
+                OBSERVER_JOIN_TIMEOUT_MS,
+                "Observer stream join timeout"
+              );
+              joined = true;
+              break;
+            } catch (joinErr) {
+              if (joinAttempt >= OBSERVER_JOIN_RETRY_ATTEMPTS) {
+                throw joinErr;
+              }
+              await wait(OBSERVER_JOIN_RETRY_DELAY_MS);
+            }
+          }
+          if (!joined) {
+            throw new Error("observer.join.failed");
+          }
           await streamCall.microphone.disable().catch(() => undefined);
           await streamCall.camera.disable().catch(() => undefined);
+          // Best-effort: enable receiving remote audio if supported by SDK build.
+          await (streamCall as unknown as { audio?: { enable?: () => Promise<unknown> } }).audio?.enable?.().catch(() => undefined);
           setConnectionPhase("connected");
 
           if (connectEpochRef.current !== epoch) {
@@ -1320,6 +1379,47 @@ export function ObserverStreamCard({
             callType: payload.callType
           });
           void ensureSelfPreview();
+
+          // Watchdog: if still no participants after join, soft retry (leave+join).
+          const joinedCall = streamCall;
+          window.setTimeout(() => {
+            try {
+              const participantsMap = (joinedCall as unknown as { state?: { participants?: Map<string, unknown> } })
+                .state?.participants;
+              const participantsCount = participantsMap ? participantsMap.size : 0;
+              const hasAudioTracks = Boolean(
+                participantsMap &&
+                  [...(participantsMap.values() as Iterable<unknown>)].some((p) => {
+                    if (!p || typeof p !== "object") return false;
+                    const tracks = (p as { publishedTracks?: unknown }).publishedTracks;
+                    if (!tracks || typeof tracks !== "object") return false;
+                    const record = tracks as Record<string, unknown>;
+                    return Boolean(record.audio || record.audioTrack);
+                  })
+              );
+              if (process.env.NODE_ENV !== "production") {
+                console.log("[observer-join]", { participantsCount, hasAudioTracks });
+              }
+              if (participantsCount === 0) {
+                console.warn("observer_no_participants_after_join");
+              }
+              if (!hasAudioTracks) {
+                console.warn("observer_connected_but_no_audio_tracks");
+              }
+              if (participantsCount === 0) {
+                void joinedCall
+                  .leave()
+                  .catch(() => undefined)
+                  .then(() => wait(800))
+                  .then(() =>
+                    joinedCall.join({ create: false, video: false } as Parameters<typeof joinedCall.join>[0])
+                  )
+                  .catch(() => undefined);
+              }
+            } catch {
+              // ignore
+            }
+          }, OBSERVER_PARTICIPANT_WATCHDOG_MS);
           return;
         } catch (err) {
           lastError = err instanceof Error ? err : new Error("Failed to start observer stream");
@@ -1333,6 +1433,7 @@ export function ObserverStreamCard({
             lower.includes("network") ||
             lower.includes("abort") ||
             lower.includes("observer.ticket.refreshed_retry") ||
+            lower.includes("observer.ticket.mismatch") ||
             lower.includes("meeting.not_active") ||
             lower.includes("stream.binding_missing") ||
             lower.includes("observer_role_unavailable") ||
@@ -1397,6 +1498,7 @@ export function ObserverStreamCard({
       }
     }
   }, [
+    accessReady,
     ended,
     ensureSelfPreview,
     observerAccessMode,
