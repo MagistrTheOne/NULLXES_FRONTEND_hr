@@ -498,6 +498,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   const lastRemoteAudioStreamRef = useRef<MediaStream | null>(null);
   const [agentInputEnabled, setAgentInputEnabled] = useState(true);
   const [agentPaused, setAgentPaused] = useState(false);
+  const agentPausedRef = useRef(false);
   const pauseResumeBusyRef = useRef(false);
   const [pauseResumeBusy, setPauseResumeBusy] = useState(false);
   const [runtimeRecoveryState, setRuntimeRecoveryState] = useState<RuntimeRecoveryState>("idle");
@@ -730,6 +731,10 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     agent: null,
     candidate: null
   });
+
+  useEffect(() => {
+    agentPausedRef.current = agentPaused;
+  }, [agentPaused]);
   const getSessionUpdatedVersion = useCallback(() => sessionUpdatedVersionRef.current, []);
   const flushSessionUpdatedWaiters = useCallback((acked: boolean) => {
     if (pendingSessionUpdatedWaitersRef.current.length === 0) {
@@ -929,6 +934,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
 
     if (isElevenLabsMode) {
       if (type === "response.output_text.delta" || type === "response.text.delta") {
+        if (agentPausedRef.current) {
+          return;
+        }
         const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
         const delta = readString(payload, "delta") ?? "";
         if (delta) {
@@ -945,6 +953,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         type === "response.content_part.done" ||
         type === "response.output_item.done"
       ) {
+        if (agentPausedRef.current) {
+          return;
+        }
         const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
         const extracted = extractAssistantTextFromRealtimeEvent({ type, payload });
         if (extracted) {
@@ -958,6 +969,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       }
 
       if (type === "response.output_text.done" || type === "response.text.done") {
+        if (agentPausedRef.current) {
+          return;
+        }
         const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
         const transcript =
           readString(payload, "text") ??
@@ -1005,6 +1019,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         type === "response.output_audio_transcript.delta" ||
         type === "response.audio_transcript.delta"
       ) {
+        if (agentPausedRef.current) {
+          return;
+        }
         const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
         const delta = readString(payload, "delta") ?? "";
         if (delta) {
@@ -1019,6 +1036,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         type === "response.output_audio_transcript.done" ||
         type === "response.audio_transcript.done"
       ) {
+        if (agentPausedRef.current) {
+          return;
+        }
         const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
         const transcript =
           readString(payload, "transcript") ?? agentTranscriptBufferRef.current.get(itemId) ?? "";
@@ -1274,9 +1294,15 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     }
 
     setAgentPaused(true);
+    agentPausedRef.current = true;
     rtc.setAudioInputEnabled(false);
     setAgentInputEnabled(false);
     setAgentState("idle");
+    setLatestCaptions((prev) => ({ ...prev, agent: undefined }));
+    if (captionFadeTimerRef.current.agent) {
+      clearTimeout(captionFadeTimerRef.current.agent);
+      captionFadeTimerRef.current.agent = null;
+    }
 
     try {
       await rtc.postEvent({
@@ -1325,6 +1351,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   }, [buildResumeCheckpoint, ensureClient, meetingId, phase]);
 
   const resumeAgent = useCallback(async () => {
+    agentPausedRef.current = false;
     if (pauseResumeBusyRef.current) {
       return false;
     }
