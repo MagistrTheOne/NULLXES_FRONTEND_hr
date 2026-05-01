@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -111,6 +111,17 @@ export function MeetingHeader({
   const meetingAtAbsolute = meetingAt ? new Date(meetingAt).toLocaleString("ru-RU") : "—";
   const meetingAtRelative = useMemo(() => formatRelativeMeetingTime(meetingAt), [meetingAt]);
   const greeting = candidateFirstName?.trim() || candidateFio.split(" ")[0] || "";
+  const isSpectatorUrl = useCallback((raw: string) => /\/spectator\b/i.test(raw), []);
+  const enterSpectator = useCallback(
+    async (raw: string) => {
+      const text = raw.trim();
+      if (!text) return;
+      await navigator.clipboard.writeText(text).catch(() => undefined);
+      window.open(text, "_blank", "noopener,noreferrer");
+      toast.success("Вход наблюдателя", { description: "Ссылка скопирована в буфер и открыта в новой вкладке." });
+    },
+    []
+  );
 
   return (
     <header className="flex w-full min-w-0 max-w-full flex-col items-center gap-5 sm:gap-8 md:gap-10">
@@ -134,9 +145,21 @@ export function MeetingHeader({
             <Input
               value={entryUrlInput}
               onChange={(e) => setEntryUrlInput(e.target.value)}
-              onBlur={() => onEntryUrlCommit?.(entryUrlInput)}
+              onBlur={() => {
+                const text = entryUrlInput.trim();
+                if (text && isSpectatorUrl(text)) {
+                  void enterSpectator(text);
+                  return;
+                }
+                onEntryUrlCommit?.(entryUrlInput);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
+                  const text = entryUrlInput.trim();
+                  if (text && isSpectatorUrl(text)) {
+                    void enterSpectator(text);
+                    return;
+                  }
                   onEntryUrlCommit?.(entryUrlInput);
                 }
               }}
@@ -173,19 +196,16 @@ export function MeetingHeader({
           <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
-              variant="secondary"
+              variant="outline"
               disabled={!spectatorUrl}
               className="h-9 rounded-lg px-3 text-xs"
-              title={spectatorUrl ? "Скопировать ссылку наблюдателя" : "Ссылка наблюдателя появится после выбора интервью"}
+              title={spectatorUrl ? "Скопировать и открыть ссылку наблюдателя" : "Ссылка наблюдателя появится после выбора интервью"}
               onClick={() => {
                 if (!spectatorUrl) return;
-                void navigator.clipboard.writeText(spectatorUrl);
-                toast.success("Ссылка наблюдателя скопирована", {
-                  description: "Можно отправить наблюдателю по почте или мессенджеру."
-                });
+                void enterSpectator(spectatorUrl);
               }}
             >
-              Скопировать ссылку наблюдателя
+              Вход наблюдателя
             </Button>
           </div>
         </div>
