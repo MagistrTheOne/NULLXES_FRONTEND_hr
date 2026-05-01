@@ -813,6 +813,7 @@ export function ObserverStreamCard({
   const reconnectLockUntilRef = useRef(0);
   const connectInFlightRef = useRef(false);
   const noParticipantsReconnectCountRef = useRef<Record<string, number>>({});
+  const participantWatchdogRef = useRef<number | null>(null);
   const currentTicketRef = useRef<string | null>(null);
   const pipRef = useRef<HTMLDivElement | null>(null);
   const candidateVideoContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1077,6 +1078,10 @@ export function ObserverStreamCard({
   // observer right after a successful join. We read the latest call via callRef.
   const disconnectStream = useCallback(async () => {
     connectEpochRef.current += 1;
+    if (participantWatchdogRef.current) {
+      window.clearTimeout(participantWatchdogRef.current);
+      participantWatchdogRef.current = null;
+    }
     const activeCall = callRef.current;
     if (activeCall) {
       await activeCall.leave().catch(() => undefined);
@@ -1519,8 +1524,14 @@ export function ObserverStreamCard({
 
           // Watchdog: if still no participants after join, soft retry (leave+join).
           const joinedCall = streamCall;
-          window.setTimeout(() => {
+          if (participantWatchdogRef.current) {
+            window.clearTimeout(participantWatchdogRef.current);
+            participantWatchdogRef.current = null;
+          }
+          const watchdogTimer = window.setTimeout(() => {
             try {
+              if (connectEpochRef.current !== epoch) return;
+              if (callRef.current !== joinedCall) return;
               const participantsMap = (joinedCall as unknown as { state?: { participants?: Map<string, unknown> } })
                 .state?.participants;
               const participantsCount = participantsMap ? participantsMap.size : 0;
@@ -1557,6 +1568,7 @@ export function ObserverStreamCard({
               // ignore
             }
           }, OBSERVER_PARTICIPANT_WATCHDOG_MS);
+          participantWatchdogRef.current = watchdogTimer;
           return;
         } catch (err) {
           lastError = err instanceof Error ? err : new Error("Failed to start observer stream");
