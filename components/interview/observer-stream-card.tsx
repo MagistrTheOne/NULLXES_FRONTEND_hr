@@ -1933,14 +1933,7 @@ export function ObserverStreamCard({
 
   if (spectatorDashboardLayout) {
     return (
-      <div className="flex w-full min-w-0 flex-col gap-3">
-        <div className="text-center">
-          <h2 className="text-xl font-medium leading-tight text-slate-600 sm:text-2xl">Наблюдатель</h2>
-          <p className="mt-1 text-xs text-slate-500 sm:text-sm">
-            Тот же вид, что у кандидата: кандидат и HR. Управление сессией HR недоступно.
-          </p>
-        </div>
-
+      <div className="grid w-full min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div
           ref={splitPlaybackRootRef}
           className={cn(
@@ -1957,7 +1950,7 @@ export function ObserverStreamCard({
           {!visible && allowVisibilityToggle ? (
             <div className="flex min-h-[200px] flex-col items-center justify-center gap-2 px-4 py-12 text-center">
               <p className="text-sm font-medium text-slate-700">{videoStatusView.label}</p>
-              <p className="text-xs text-slate-600">Включите видео, чтобы видеть кандидата и агента</p>
+              <p className="text-xs text-slate-600">Включите видео, чтобы видеть кандидата и HR</p>
             </div>
           ) : client && call && localUserId ? (
             <div className="relative min-h-[420px] w-full lg:min-h-[440px]">
@@ -1997,7 +1990,6 @@ export function ObserverStreamCard({
                   />
                 </div>
               ) : null}
-              {selfPreviewPip}
             </div>
           ) : (
             <div className="relative grid min-h-[280px] w-full min-w-0 grid-cols-1 gap-4 p-1 sm:min-h-[360px] md:grid-cols-2 md:min-h-[400px] lg:min-h-[420px]">
@@ -2047,19 +2039,60 @@ export function ObserverStreamCard({
                   <p className="max-w-[240px] text-xs text-slate-600">{statusHint}</p>
                 </div>
               </StreamParticipantShell>
-              {selfPreviewPip}
             </div>
           )}
         </div>
 
-        <div className="rounded-2xl border-0 bg-[#d9dee7] p-3 shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]">
-          {observerToolbar}
-        </div>
-        {error ? (
-          <p className="mx-auto w-full max-w-[720px] rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">
-            {error}
-          </p>
-        ) : null}
+        <aside className={cn("flex min-w-0 flex-col gap-3", ended && "pointer-events-none opacity-70")}>
+          <div className="rounded-2xl border-0 bg-[#d9dee7] p-3 shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]">
+            <p className="text-center text-[10px] font-semibold uppercase tracking-wide text-slate-500">Наблюдатель</p>
+            <div className="mt-2">{observerToolbar}</div>
+          </div>
+
+          {showSelfPreview ? (
+            <div className="rounded-2xl border border-white/50 bg-white/55 p-3 shadow-sm">
+              <p className="text-center text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                Self-preview (локально)
+              </p>
+              <div className="mt-2 overflow-hidden rounded-xl bg-black">
+                {selfPreviewStream && selfCameraEnabled ? (
+                  <video ref={selfPreviewVideoRef} className="h-32 w-full object-cover" muted playsInline autoPlay />
+                ) : (
+                  <div className="flex h-32 w-full items-center justify-center text-xs text-slate-300">Камера выключена</div>
+                )}
+              </div>
+              <p className="mt-2 text-center text-[10px] leading-snug text-slate-500">Не транслируется в звонок</p>
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  type="button"
+                  variant={selfCameraEnabled ? "default" : "secondary"}
+                  className="h-9 rounded-full px-3 text-xs"
+                  disabled={!selfPreviewStream}
+                  onClick={() => setSelfCameraEnabled((prev) => !prev)}
+                  title={selfCameraEnabled ? "Выключить камеру" : "Включить камеру"}
+                >
+                  {selfCameraEnabled ? <Video className="mr-1 h-3.5 w-3.5" /> : <VideoOff className="mr-1 h-3.5 w-3.5" />}
+                  {selfCameraEnabled ? "Камера: вкл" : "Камера: выкл"}
+                </Button>
+                {selfPreviewError ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-8 rounded-full px-3 text-[11px]"
+                    onClick={() => void ensureSelfPreview()}
+                  >
+                    Повторить доступ
+                  </Button>
+                ) : null}
+              </div>
+              {selfPreviewError ? (
+                <p className="mt-2 rounded-lg bg-rose-100/90 px-2 py-1 text-[11px] leading-snug text-rose-700">{selfPreviewError}</p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {error ? <p className="w-full rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+        </aside>
       </div>
     );
   }

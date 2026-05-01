@@ -790,7 +790,7 @@ export function CandidateStreamCard({
                       />
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center px-4 text-center text-[12px] leading-snug text-slate-200/90">
-                        <span className="block max-w-[260px] break-words">
+                        <span className="block max-w-[260px] wrap-break-word">
                           Нажмите «Проверить камеру и микрофон», чтобы увидеть превью
                         </span>
                       </div>
