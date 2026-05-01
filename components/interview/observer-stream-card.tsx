@@ -789,6 +789,7 @@ export function ObserverStreamCard({
   candidateDisplayName = null
 }: ObserverStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
+  const clientRef = useRef<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
   const [localUserId, setLocalUserId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1072,13 +1073,15 @@ export function ObserverStreamCard({
     if (call) {
       await call.leave().catch(() => undefined);
     }
-    if (client) {
-      await client.disconnectUser().catch(() => undefined);
-    }
+    // Do NOT call client.disconnectUser() on transient disconnects.
+    // The observer client is a singleton via StreamVideoClient.getOrCreateInstance(...);
+    // disconnecting the user here makes the next getOrCreateInstance return a stale,
+    // disconnected client and triggers double-connectUser warnings.
+    // Final cleanup happens only on full unmount via the dedicated effect below.
     setCall(null);
     setClient(null);
     setLocalUserId(null);
-  }, [call, client]);
+  }, [call]);
 
   const cleanupSelfPreview = useCallback(() => {
     setSelfPreviewStream((current) => {
@@ -1290,6 +1293,14 @@ export function ObserverStreamCard({
   }, [meetingId, streamCallId, streamCallType, joinToken, observerTicket, viewerKind]);
 
   const startStream = useCallback(async () => {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[observer-startStream-enter]", {
+        epoch: connectEpochRef.current,
+        hasClient: Boolean(clientRef.current),
+        hasCall: Boolean(call),
+        inFlight: connectInFlightRef.current
+      });
+    }
     if (ended) {
       return;
     }
@@ -1307,6 +1318,8 @@ export function ObserverStreamCard({
       return;
     }
     reconnectLockUntilRef.current = now + OBSERVER_RECONNECT_LOCK_MS;
+    // Sync lock: must be set BEFORE any await so a second mount in StrictMode
+    // (or a fast re-render) cannot enter this function in parallel.
     connectInFlightRef.current = true;
     setBusy(true);
     setError(null);
@@ -1431,13 +1444,17 @@ export function ObserverStreamCard({
           // См. avatar-stream-card: переопределяем axios-timeout Stream SDK
           // с дефолтных 5с на 60с, чтобы observer не падал посреди сессии
           // сообщением «timeout of 5000ms exceeded».
-          streamClient = new StreamVideoClient({
+          // IMPORTANT: use getOrCreateInstance to avoid creating a second
+          // StreamVideoClient for the same user (warning: "A StreamVideoClient
+          // already exists ..."). When apiKey + token + user are passed,
+          // the SDK connects automatically — do NOT call connectUser explicitly,
+          // otherwise coordinator logs "Consecutive calls to connectUser".
+          streamClient = StreamVideoClient.getOrCreateInstance({
             apiKey: payload.apiKey,
             token: payload.token,
             user: payload.user,
             options: { timeout: 60_000 }
           });
-          await streamClient.connectUser(payload.user, payload.token).catch(() => undefined);
           streamCall = streamClient.call(payload.callType, payload.callId);
           await streamCall.camera.disable().catch(() => undefined);
           await streamCall.microphone.disable().catch(() => undefined);
@@ -1475,9 +1492,9 @@ export function ObserverStreamCard({
 
           if (connectEpochRef.current !== epoch) {
             await streamCall.leave().catch(() => undefined);
-            await streamClient.disconnectUser().catch(() => undefined);
             return;
           }
+          clientRef.current = streamClient;
           setClient(streamClient);
           setCall(streamCall);
           setLocalUserId(payload.user.id);
@@ -1534,7 +1551,7 @@ export function ObserverStreamCard({
         } catch (err) {
           lastError = err instanceof Error ? err : new Error("Failed to start observer stream");
           await streamCall?.leave().catch(() => undefined);
-          await streamClient?.disconnectUser().catch(() => undefined);
+          // Keep singleton client alive for retries (getOrCreateInstance reuses).
           const lower = lastError.message.toLowerCase();
           const transient =
             lower.includes("timeout") ||
@@ -1732,6 +1749,19 @@ export function ObserverStreamCard({
     },
     [cleanupSelfPreview, disconnectStream]
   );
+
+  // Final cleanup of the singleton observer client only on full unmount
+  // of the spectator card: leave call already handled above; here we make
+  // sure the Stream user is disconnected so the next mount can create a
+  // fresh instance via getOrCreateInstance.
+  useEffect(() => {
+    return () => {
+      const c = clientRef.current;
+      if (!c) return;
+      void c.disconnectUser().catch(() => undefined);
+      clientRef.current = null;
+    };
+  }, []);
 
   const showJoinLoader = busy && visible;
   const showSingleFeedMode = focusCandidateOnly && status !== "no_participants";
