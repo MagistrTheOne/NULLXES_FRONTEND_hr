@@ -888,7 +888,7 @@ export function ObserverStreamCard({
         if (now - lastSfuRejoinAtMsRef.current < 15_000) return;
         lastSfuRejoinAtMsRef.current = now;
         sfuRejoinInFlightRef.current = true;
-        console.warn("SFU error: rejoin required (io timeout)");
+        // prod: suppress console noise; auto-rejoin is enough
         void (async () => {
           try {
             await disconnectStream();
@@ -1227,10 +1227,10 @@ export function ObserverStreamCard({
                   })
               );
               if (participantsCount === 0) {
-                console.warn("observer_no_participants_after_join");
+                // prod: suppress console noise (self-healing retry)
               }
               if (!hasAudioTracks) {
-                console.warn("observer_connected_but_no_audio_tracks");
+                // prod: suppress console noise (self-healing retry)
               }
               if (participantsCount === 0) {
                 void joinedCall
@@ -1306,7 +1306,7 @@ export function ObserverStreamCard({
             : msg
         );
         setConnectionPhase(call ? "reconnecting" : "connecting");
-        console.warn("observer transient state", msg);
+    // prod: suppress console noise
         autoJoinAttemptForRef.current = null;
         return;
       }
@@ -1316,7 +1316,7 @@ export function ObserverStreamCard({
       if (!suppressErrorToasts) {
         toast.error("Видео наблюдателя", { description: msg });
       }
-      console.warn("observer join failed", msg);
+      // prod: suppress console noise
       autoJoinAttemptForRef.current = null;
     } finally {
       connectInFlightRef.current = false;

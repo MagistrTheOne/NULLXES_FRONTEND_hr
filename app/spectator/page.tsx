@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ChevronDown, ExternalLink, RefreshCw } from "lucide-react";
+import { ArrowLeft, ExternalLink, RefreshCw } from "lucide-react";
 import {
   ObserverStreamCard,
   type ObserverAccessMode,
@@ -11,7 +11,6 @@ import {
 import { InterviewStatusBadge } from "@/components/interview/interview-status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   getInterviewById,
   getRuntimeSnapshotByInterview,
@@ -38,7 +37,7 @@ const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
   updatedAt: ""
 };
 
-const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
+// Internal debug UI removed (prod-only UX).
 // "Live" statuses can differ between projection/runtime snapshots.
 // Keep the gate permissive as long as Stream binding exists and session is not terminal.
 const ACTIVE_MEETING_STATUSES = new Set(["starting", "in_meeting", "active", "live", "meeting_in_progress"]);
@@ -163,6 +162,10 @@ function SpectatorBody() {
   const [observerStatus, setObserverStatus] = useState<ObserverConnectionStatus>("waiting_meeting");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [technicalError, setTechnicalError] = useState<string | null>(null);
+  void detailsOpen;
+  void setDetailsOpen;
+  void technicalError;
+  void setTechnicalError;
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<RuntimeSnapshot | null>(null);
   const [meetingResolution, setMeetingResolution] = useState<MeetingResolution>({
     id: null,
@@ -316,6 +319,7 @@ function SpectatorBody() {
   const runtimeActive =
     runtimeMatchesMeeting && ACTIVE_MEETING_STATUSES.has(String(runtimeSnapshot?.meeting.status ?? ""));
   const runtimeHealthReady = runtimeMatchesMeeting && runtimeSnapshot?.health.ready === true;
+  void runtimeHealthReady;
   const runtimeStreamCallIdRaw =
     typeof runtimeSnapshot?.media?.streamCallId === "string" ? runtimeSnapshot.media.streamCallId.trim() : "";
   const runtimeStreamCallTypeRaw =
@@ -431,58 +435,7 @@ function SpectatorBody() {
     };
   }, [spectatorJoinToken, spectatorObserverTicket]);
 
-  useEffect(() => {
-    if (process.env.NODE_ENV === "production") return;
-    console.info("[spectator-access-mode]", {
-      observerAccessMode,
-      hasJoinToken: Boolean(spectatorJoinToken),
-      hasObserverTicket: Boolean(spectatorObserverTicket),
-      accessReady,
-      hasMeetingId: Boolean(effectiveMeetingId),
-      hasStreamCallId: Boolean(resolvedStreamCallId),
-      hasStreamCallType: Boolean(resolvedStreamCallType)
-    });
-  }, [
-    accessReady,
-    effectiveMeetingId,
-    observerAccessMode,
-    resolvedStreamCallId,
-    resolvedStreamCallType,
-    spectatorJoinToken,
-    spectatorObserverTicket
-  ]);
-
-  useEffect(() => {
-    if (process.env.NODE_ENV === "production") return;
-    console.info("[spectator-orchestration]", {
-      jobAiId,
-      nullxesStatus: String(detail?.projection.nullxesStatus ?? ""),
-      projectionStatus,
-      activeMeetingId: effectiveMeetingId,
-      streamCallId: resolvedStreamCallId || null,
-      streamCallType: resolvedStreamCallType || null,
-      runtimeHealthReady,
-      runtimeReady: runtimeHealthReady,
-      runtimeStatus: String(runtimeSnapshot?.meeting?.status ?? ""),
-      sessionEnded: sessionTerminal,
-      observerCanConnect: canConnect,
-      waitingReason: spectatorWaitingReason,
-      observerAccessMode
-    });
-  }, [
-    canConnect,
-    detail?.projection.nullxesStatus,
-    effectiveMeetingId,
-    jobAiId,
-    observerAccessMode,
-    projectionStatus,
-    resolvedStreamCallId,
-    resolvedStreamCallType,
-    runtimeHealthReady,
-    runtimeSnapshot?.meeting?.status,
-    spectatorWaitingReason,
-    sessionTerminal
-  ]);
+  // prod: suppress debug logs
 
   const sseAttemptRef = useRef(0);
   const sseSlowModeRef = useRef(false);
@@ -558,6 +511,7 @@ function SpectatorBody() {
     () => mapVideoStatus(mapObserverStatusToVideoState(observerStatus)),
     [observerStatus]
   );
+  void videoStatus;
 
   return (
     <div className="min-h-screen bg-[#e9edf4] px-4 py-6 text-slate-800 sm:px-6 sm:py-8 md:px-10">
@@ -678,53 +632,7 @@ function SpectatorBody() {
               )}
             </div>
 
-            {/* Tech details — collapsed by default, hidden внутренние ID */}
-            <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
-              <CollapsibleTrigger className="inline-flex h-8 w-full items-center justify-between rounded-md border border-white/60 bg-white/55 px-3 py-2 text-[11px] font-medium text-slate-700 shadow-sm transition-colors hover:bg-white/70 sm:w-auto">
-                Тех. детали
-                <ChevronDown className={`size-4 transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
-              </CollapsibleTrigger>
-              <CollapsibleContent className="pt-3">
-                <div className="grid grid-cols-1 gap-2 text-xs text-slate-600 sm:grid-cols-2">
-                  <div className="rounded-lg border border-white/60 bg-white/55 px-3 py-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Внутренний ID</p>
-                    <p className="mt-0.5 break-all font-mono text-[11px] text-slate-800">
-                      {effectiveMeetingId ?? "Появится после запуска"}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-white/60 bg-white/55 px-3 py-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Источник meeting</p>
-                    <p className="mt-0.5 font-mono text-[11px] text-slate-800">{meetingResolution.source}</p>
-                  </div>
-                  <div className="rounded-lg border border-white/60 bg-white/55 px-3 py-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Видеопоток</p>
-                    <p className="mt-0.5 text-[11px] font-medium text-slate-800">{videoStatus.label}</p>
-                  </div>
-                  <div className="rounded-lg border border-white/60 bg-white/55 px-3 py-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Runtime revision</p>
-                    <p className="mt-0.5 font-mono text-[11px] text-slate-800">{runtimeSnapshot?.revision ?? "—"}</p>
-                  </div>
-                  <div className="rounded-lg border border-white/60 bg-white/55 px-3 py-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Runtime health</p>
-                    <p className="mt-0.5 font-mono text-[11px] text-slate-800">
-                      {runtimeSnapshot?.health.ready ? "ready" : runtimeSnapshot ? runtimeSnapshot.health.warnings.join(",") || "not_ready" : "—"}
-                    </p>
-                  </div>
-                  {SHOW_INTERNAL_DEBUG_UI ? (
-                    <div className="rounded-lg border border-white/60 bg-white/55 px-3 py-2 sm:col-span-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">jobAiStatus</p>
-                      <p className="mt-0.5 font-mono text-[11px] text-slate-800">{detail?.projection.jobAiStatus ?? "—"}</p>
-                    </div>
-                  ) : null}
-                  {technicalError ? (
-                    <div className="rounded-lg border border-rose-200/60 bg-rose-50/60 px-3 py-2 sm:col-span-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-rose-600/80">gateway diagnostic</p>
-                      <p className="mt-0.5 break-all font-mono text-[11px] text-rose-800">{technicalError}</p>
-                    </div>
-                  ) : null}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
+            {null}
           </CardContent>
         </Card>
 

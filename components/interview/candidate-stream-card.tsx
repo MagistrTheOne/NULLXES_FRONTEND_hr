@@ -578,7 +578,7 @@ export function CandidateStreamCard({
           callId: payload.callId,
           callType: payload.callType
         }).catch((recordingError) => {
-          console.warn("[candidate-stream-card] recording auto-start failed after Stream join:", recordingError);
+          void recordingError;
         });
       }
 
@@ -591,9 +591,7 @@ export function CandidateStreamCard({
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start candidate stream";
-      // Всегда логируем в консоль — чтобы в dev-tools осталась диагностика,
-      // даже если UI-плашка подавлена фильтром visibleError.
-      console.warn("[candidate-stream-card] startStream failed:", message, err);
+      void err;
       setError(message);
       autoJoinAttemptForRef.current = null;
     } finally {

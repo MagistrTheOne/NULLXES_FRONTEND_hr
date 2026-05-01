@@ -300,13 +300,7 @@ export class WebRtcInterviewClient {
         type === "session.created" ||
         type === "session.updated" ||
         type === "rate_limits.updated";
-      if (typeof console !== "undefined") {
-        if (type === "error" || type.endsWith(".error")) {
-          console.error("[OpenAI Realtime]", type, parsed);
-        } else if (isCritical) {
-          console.debug("[OpenAI Realtime]", type, parsed);
-        }
-      }
+      // prod: suppress console noise; UI surfaces errors via state/toasts
       if (isCritical && this.sessionId) {
         void sendRealtimeEvent(this.sessionId, {
           type: `openai.${type}`,
@@ -322,10 +316,8 @@ export class WebRtcInterviewClient {
       if (this.onOpenAiEvent) {
         try {
           this.onOpenAiEvent({ type, payload: parsed });
-        } catch (listenerErr) {
-          if (typeof console !== "undefined") {
-            console.error("[OpenAI Realtime] listener threw", listenerErr);
-          }
+        } catch {
+          // ignore: listener errors must not break realtime loop
         }
       }
     };

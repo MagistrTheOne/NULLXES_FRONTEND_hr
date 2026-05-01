@@ -42,13 +42,15 @@ export const auth = betterAuth({
     enabled: true,
     sendResetPassword: async ({ user, url }) => {
       void Promise.resolve();
-      console.info("[better-auth] sendResetPassword (stub)", { email: user.email, url });
+      void user;
+      void url;
     },
   },
   emailVerification: {
     sendVerificationEmail: async ({ user, url }) => {
       void Promise.resolve();
-      console.info("[better-auth] sendVerificationEmail (stub)", { email: user.email, url });
+      void user;
+      void url;
     },
   },
   ...(socialProviders() ? { socialProviders: socialProviders()! } : {}),

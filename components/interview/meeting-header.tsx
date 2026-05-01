@@ -98,6 +98,8 @@ export function MeetingHeader({
   sessionOpenAiVoice = null,
   onSessionOpenAiVoiceChange
 }: MeetingHeaderProps) {
+  void onStart;
+  void startDisabled;
   const [entryUrlInput, setEntryUrlInput] = useState(prototypeEntryUrl ?? "");
   const [detailsOpen, setDetailsOpen] = useState(false);
 

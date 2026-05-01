@@ -34,15 +34,11 @@ export async function playAgentUtteranceWithElevenLabs(
     return;
   }
   if (!voiceId.trim()) {
-    console.warn("[elevenlabs-agent-tts] missing voiceId");
     return;
   }
 
   stopAgentElevenLabsPlayback();
-  const debug = process.env.NODE_ENV !== "production";
-  if (debug) {
-    console.info("[ElevenLabs TTS] request start", { chars: Math.min(trimmed.length, 8000), voiceId: voiceId.trim() });
-  }
+  void process.env.NODE_ENV;
 
   const res = await fetch("/api/tts/elevenlabs/stream", {
     method: "POST",
@@ -53,11 +49,7 @@ export async function playAgentUtteranceWithElevenLabs(
   });
 
   if (!res.ok) {
-    console.warn("[ElevenLabs TTS] response non-ok", { status: res.status });
     return;
-  }
-  if (debug) {
-    console.info("[ElevenLabs TTS] response ok", { status: res.status });
   }
 
   const blob = await res.blob();
@@ -76,9 +68,6 @@ export async function playAgentUtteranceWithElevenLabs(
       }
     };
     audio.onended = () => {
-      if (debug) {
-        console.info("[ElevenLabs TTS] play end");
-      }
       cleanup();
       resolve();
     };
@@ -87,14 +76,8 @@ export async function playAgentUtteranceWithElevenLabs(
       reject(new Error("elevenlabs_audio_element_error"));
     };
     void audio.play().catch((err) => {
-      if (debug) {
-        console.info("[ElevenLabs TTS] play start failed");
-      }
       cleanup();
       reject(err instanceof Error ? err : new Error(String(err)));
     });
-    if (debug) {
-      console.info("[ElevenLabs TTS] play start");
-    }
   });
 }

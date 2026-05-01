@@ -743,15 +743,7 @@ function postJobAiIngestNotification(id: number, status: string): void {
     },
     body: JSON.stringify({ id, status }),
     credentials: "same-origin",
-  }).catch((error) => {
-    // eslint-disable-next-line no-console
-    console.warn("[jobai-ingest] fire-and-forget failed", {
-      id,
-      status,
-      correlationId,
-      message: error instanceof Error ? error.message : String(error)
-    });
-  });
+  }).catch(() => undefined);
 }
 
 export async function updateInterviewStatus(id: number, status: JobAiInterviewStatus): Promise<InterviewDetail> {

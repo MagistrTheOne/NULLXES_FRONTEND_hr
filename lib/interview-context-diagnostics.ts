@@ -110,13 +110,10 @@ export function logInterviewContextDiagnostics(
   diag: InterviewContextDiagnostics,
   extra?: { gatewayHint?: ReturnType<typeof buildGatewayVsExtractorHint> }
 ): void {
-  if (typeof window === "undefined" || !isInterviewContextDebugEnabled()) {
-    return;
-  }
-  const payload = extra?.gatewayHint
-    ? { ...diag, gatewayVsExtractor: extra.gatewayHint }
-    : diag;
-  console.info(`[interview.context] ${label}`, payload);
+  void label;
+  void diag;
+  void extra;
+  // prod: diagnostics logging removed
 }
 
 export function diagnosticsFromInterviewDetail(

@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useInterviewSession, type InterviewStartContext } from "@/hooks/use-interview-session";
 import {
-  decideCandidateAdmission,
   getCandidateAdmissionStatus,
   getRuntimeSnapshot,
   getInterviewById,
@@ -174,6 +173,10 @@ export function InterviewShell() {
     sessionElevenLabsVoiceId,
     setSessionElevenLabsVoiceId
   } = useInterviewSession({ isCandidateFlow });
+  void promptSettingsSource;
+  void promptSettingsLastStatus;
+  void promptSettingsLastError;
+  void lastAgentContextTrace;
   void sessionElevenLabsVoiceId;
   void setSessionElevenLabsVoiceId;
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -193,6 +196,12 @@ export function InterviewShell() {
   const [candidateAdmission, setCandidateAdmission] = useState<CandidateAdmissionStatus | null>(null);
   const [candidateAdmissionError, setCandidateAdmissionError] = useState<string | null>(null);
   const [candidateAdmissionBusy, setCandidateAdmissionBusy] = useState(false);
+  void candidateAdmission;
+  void setCandidateAdmission;
+  void candidateAdmissionError;
+  void setCandidateAdmissionError;
+  void candidateAdmissionBusy;
+  void setCandidateAdmissionBusy;
   const [exitDialog, setExitDialog] = useState<{ open: boolean; mode: ExitConfirmationMode; busy: boolean }>({
     open: false,
     mode: "leave",
@@ -210,6 +219,7 @@ export function InterviewShell() {
   const poorSinceMsRef = useRef<number | null>(null);
   const lastPoorToastAtMsRef = useRef<number>(0);
   const lastQuestionStateLogRef = useRef<string>("");
+  void lastQuestionStateLogRef;
   /** Avoid infinite render loops: child pushes quality every Stream tick with a new object ref. */
   const reportCandidateConnectionQuality = useCallback((reading: ConnectionQualityReading) => {
     setConnectionQuality((prev) => {
@@ -498,6 +508,7 @@ export function InterviewShell() {
     }),
     [connectionQuality?.quality, degradationState.telemetryUnavailable]
   );
+  void unifiedDegradationState;
 
   const candidateFio = useMemo(() => {
     const sourceFullName = selectedInterviewDetailMatched?.prototypeCandidate?.sourceFullName?.trim();
@@ -547,46 +558,7 @@ export function InterviewShell() {
     };
   }, [candidateFio, selectedInterviewDetailMatched, selectedRow]);
 
-  useEffect(() => {
-    if (process.env.NODE_ENV === "production") return;
-
-    const orders = (interviewStartContext?.questions ?? [])
-      .slice()
-      .sort((a, b) => a.order - b.order)
-      .map((q) => q.order);
-    const totalQuestions = interviewStartContext?.questions?.length ?? 0;
-    const currentQuestionIndex =
-      flowPhase === "questions" && totalQuestions > 0 ? Math.min(Math.max(questionsAsked, 0), totalQuestions - 1) : null;
-    const safeAsked =
-      flowPhase === "questions" && totalQuestions > 0
-        ? Math.min(Math.max(questionsAsked, 0) + 1, totalQuestions)
-        : null;
-    const displayedLabel =
-      flowPhase === "intro"
-        ? "Знакомство"
-        : flowPhase === "closing"
-          ? "Заключительная часть"
-          : safeAsked && totalQuestions > 0
-            ? `Вопрос ${safeAsked} из ${totalQuestions}`
-            : flowPhase === "completed"
-              ? null
-              : "Интервью идёт";
-
-    const payload = {
-      phase,
-      flowPhase,
-      order: currentQuestionIndex !== null ? (orders[currentQuestionIndex] ?? null) : null,
-      currentQuestionIndex,
-      totalQuestions,
-      displayedLabel
-    };
-
-    const key = JSON.stringify(payload);
-    if (lastQuestionStateLogRef.current !== key) {
-      lastQuestionStateLogRef.current = key;
-      console.info("[interview-question-state]", payload);
-    }
-  }, [flowPhase, interviewStartContext, phase, questionsAsked]);
+  void lastQuestionStateLogRef;
 
   useEffect(() => {
     if (!isInterviewContextDebugEnabled() || !selectedInterviewDetailMatched) {
@@ -1184,81 +1156,7 @@ export function InterviewShell() {
             Восстанавливаем runtime после обновления страницы. Подключение может занять несколько секунд.
           </p>
         ) : null}
-        {unifiedDegradationState.telemetry_unavailable ? (
-          <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 shadow-sm">
-            telemetry_unavailable: endpoint телеметрии аватара временно недоступен, показываем только фактическое состояние видеопотока.
-          </p>
-        ) : null}
-        {unifiedDegradationState.stream_down ? (
-          <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-800 shadow-sm">
-            stream_down: видеоканал нестабилен, возможны задержки или кратковременный разрыв потока.
-          </p>
-        ) : null}
-        {SHOW_INTERNAL_DEBUG_UI && candidateAdmissionError ? (
-          <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 shadow-sm">
-            {candidateAdmissionError}
-          </p>
-        ) : null}
-        {SHOW_INTERNAL_DEBUG_UI && candidateAdmission && (candidateAdmission.pending.length > 0 || candidateAdmission.owner) ? (
-          <section className="rounded-xl border border-slate-200 bg-white/70 px-4 py-3 text-sm text-slate-700 shadow-sm">
-            <p className="font-medium text-slate-800">Admission control кандидата</p>
-            <p className="mt-1">
-              Текущий владелец слота:{" "}
-              {candidateAdmission.owner
-                ? `${candidateAdmission.owner.displayName} (${candidateAdmission.owner.participantId.slice(0, 10)}...)`
-                : "не назначен"}
-            </p>
-            {candidateAdmission.pending.length > 0 ? (
-              <div className="mt-3 space-y-2">
-                {candidateAdmission.pending.map((entry) => (
-                  <div key={entry.participantId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-100/70 px-3 py-2">
-                    <p className="text-xs text-slate-700">
-                      Запрос: {entry.displayName} ({entry.participantId.slice(0, 10)}...)
-                    </p>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        className="rounded-md bg-emerald-600 px-3 py-1 text-xs text-white disabled:opacity-50"
-                        disabled={candidateAdmissionBusy}
-                        onClick={() => {
-                          if (!recoveredMeetingId) return;
-                          setCandidateAdmissionBusy(true);
-                          void decideCandidateAdmission(recoveredMeetingId, {
-                            participantId: entry.participantId,
-                            action: "approve",
-                            decidedBy: "hr_ui"
-                          })
-                            .then(() => loadCandidateAdmission())
-                            .finally(() => setCandidateAdmissionBusy(false));
-                        }}
-                      >
-                        Approve
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-md bg-slate-500 px-3 py-1 text-xs text-white disabled:opacity-50"
-                        disabled={candidateAdmissionBusy}
-                        onClick={() => {
-                          if (!recoveredMeetingId) return;
-                          setCandidateAdmissionBusy(true);
-                          void decideCandidateAdmission(recoveredMeetingId, {
-                            participantId: entry.participantId,
-                            action: "deny",
-                            decidedBy: "hr_ui"
-                          })
-                            .then(() => loadCandidateAdmission())
-                            .finally(() => setCandidateAdmissionBusy(false));
-                        }}
-                      >
-                        Deny
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </section>
-        ) : null}
+        {null}
         {detailError && !selectedRow && !selectedInterviewDetail && !loadingRows ? (
           <p className="rounded-xl border border-slate-200 bg-white/70 px-4 py-2 text-sm text-slate-700 shadow-sm">
             Не удалось загрузить детали собеседования. Повторите попытку. ({detailError})
@@ -1273,43 +1171,7 @@ export function InterviewShell() {
             {prioritizedSessionBanner.body}
           </p>
         ) : null}
-        {SHOW_INTERNAL_DEBUG_UI ? (
-          <section className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 bg-white/70 px-4 py-3 text-sm text-slate-700 shadow-sm">
-              <p className="font-medium text-slate-800">Сигнал HR-аватара</p>
-              <p className="mt-1">
-                {degradationState.telemetryUnavailable
-                  ? "telemetry_unavailable (статус готовности берём только из фактического потока)"
-                  : avatarReady
-                    ? "avatar_ready получен"
-                    : "avatar_ready пока не получен"}
-              </p>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white/70 px-4 py-3 text-sm text-slate-700 shadow-sm">
-              <p className="font-medium text-slate-800">Контекст для агента</p>
-              <p className="mt-1">
-                {contextReadiness.candidateReady ? "✅" : "⬜"} Кандидат ·{" "}
-                {contextReadiness.jobTitleReady ? "✅" : "⬜"} Должность ·{" "}
-                {contextReadiness.vacancyTextReady ? "✅" : "⬜"} Вакансия ·{" "}
-                {contextReadiness.companyReady ? "✅" : "⬜"} Компания ·{" "}
-                {contextReadiness.questionsReady ? "✅" : "⬜"} Вопросы ({contextReadiness.questionsCount})
-              </p>
-              <p className="mt-2 text-xs text-slate-500">
-                settings_source={promptSettingsSource}
-                {typeof promptSettingsLastStatus === "number" ? ` · settings_status=${promptSettingsLastStatus}` : ""}
-                {promptSettingsLastError ? ` · settings_error=${promptSettingsLastError}` : ""}
-              </p>
-            </div>
-            {lastAgentContextTrace?.diagnostics ? (
-              <div className="md:col-span-2 rounded-xl border border-slate-200 bg-white/70 px-4 py-3 text-slate-700 shadow-sm">
-                <p className="text-sm font-medium text-slate-800">Последний контекст, ушедший в агента (session.update)</p>
-                <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-slate-50 p-2 text-xs leading-snug">
-                  {JSON.stringify(lastAgentContextTrace.diagnostics, null, 2)}
-                </pre>
-              </div>
-            ) : null}
-          </section>
-        ) : null}
+        {null}
 
         {isCandidateFlow && flowPhase === "completed" ? (
           <ThankYouScreen

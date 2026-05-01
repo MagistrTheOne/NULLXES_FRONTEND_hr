@@ -378,12 +378,10 @@ async function postIntroResponseToRtc(
       if (acked) {
         break;
       }
-      // eslint-disable-next-line no-console
-      console.warn(`[interview] session.update ACK timeout (attempt ${attempt}/${MAX_ATTEMPTS})`);
+      // prod: suppress console noise; retries are internal
     }
     if (!acked) {
-      // eslint-disable-next-line no-console
-      console.warn("[interview] proceeding with response.create without confirmed session.updated ACK");
+      // prod: suppress console noise
     }
   }
 
@@ -411,9 +409,7 @@ async function postIntroResponseToRtc(
         ];
 
   const modalities = openAiAgentResponseModalities(selectedVoiceId, forceOpenAiVoiceOutput);
-  if (process.env.NODE_ENV !== "production" && resolveVoiceProvider(selectedVoiceId, forceOpenAiVoiceOutput) === "elevenlabs") {
-    console.info("[OpenAI Realtime][ElevenLabs] response.create modalities", { modalities, voiceId: selectedVoiceId ?? "" });
-  }
+  void modalities;
 
   await rtc.postEvent({
     type: "response.create",
@@ -611,13 +607,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   }, [forceOpenAiVoiceOutput]);
 
   useEffect(() => {
-    if (process.env.NODE_ENV === "production") return;
-    const nodeEnv = process.env.NODE_ENV;
-    const flag = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT;
-    const allowProd = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT_ALLOW_PROD === "1";
-    const voiceId = sessionElevenLabsVoiceId.trim();
-    const provider = resolveVoiceProvider(voiceId, forceOpenAiVoiceOutput);
-    console.info("[VoiceProvider]", { nodeEnv, flag, allowProd, hasVoiceId: Boolean(voiceId), provider });
+    void sessionElevenLabsVoiceId;
+    void forceOpenAiVoiceOutput;
   }, [forceOpenAiVoiceOutput, sessionElevenLabsVoiceId]);
 
   const clearElevenLabsQueue = useCallback(() => {
@@ -657,7 +648,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         try {
           // NOTE: MVP = one utterance per response.text.done. Sentence-boundary splitting can be added later.
           if (process.env.NODE_ENV !== "production" && voiceProviderRef.current === "elevenlabs") {
-            console.info("[ElevenLabs TTS] enqueue", { chars: text.length, voiceId });
+            void voiceId;
           }
           await playAgentUtteranceWithElevenLabs(text, voiceId, { signal });
         } catch (err) {
@@ -670,7 +661,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
             break;
           }
           // Keep the session alive. If ElevenLabs fails, optionally fall back to OpenAI audio once.
-          console.warn("[ElevenLabs TTS] playback error", err);
+          void err;
           if (!elevenLabsTtsFailureToastShownRef.current) {
             elevenLabsTtsFailureToastShownRef.current = true;
             toast.warning("Голос ElevenLabs временно недоступен. Переключаемся на OpenAI голос.");
@@ -916,12 +907,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
 
       if (process.env.NODE_ENV !== "production" && reason === "event_update") {
         // Keep logs minimal: no full transcript, only counts and flags.
-        console.info("[resume-checkpoint-update]", {
-          phase: checkpoint.phase,
-          questionIndex: checkpoint.questionIndex,
-          hasQuestionText: Boolean(checkpoint.questionText),
-          transcriptTailCount: checkpoint.transcriptTail.length
-        });
+        void checkpoint;
       }
       return checkpoint;
     },
@@ -961,13 +947,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           readString(payload?.response, "id") ?? readString(payload, "response_id") ?? readString(payload, "id") ?? null;
         const itemId = readString(payload, "item_id") ?? null;
         const extractedText = extractAssistantTextFromRealtimeEvent({ type, payload });
-        console.info("[OpenAI Realtime][ElevenLabs]", {
-          type,
-          responseId,
-          itemId,
-          hasExtractedText: Boolean(extractedText),
-          extractedTextLength: extractedText ? extractedText.length : 0
-        });
+        void responseId;
+        void itemId;
+        void extractedText;
       }
     }
 
@@ -1141,7 +1123,10 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       const errCode = readString(err, "code") ?? null;
       const errMessage = readString(err, "message") ?? (err instanceof Error ? err.message : null);
       const eventId = readString(err, "event_id") ?? readString(payload, "event_id") ?? null;
-      console.warn("[OpenAI Realtime] error", { type: errType, code: errCode, message: errMessage, event_id: eventId });
+      void errType;
+      void errCode;
+      void errMessage;
+      void eventId;
       return;
     }
 
@@ -1344,14 +1329,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     const checkpoint = buildResumeCheckpoint("pause");
     resumeCheckpointRef.current = checkpoint;
     setResumeCheckpoint(checkpoint);
-    if (process.env.NODE_ENV !== "production") {
-      console.info("[pause-checkpoint]", {
-        phase: checkpoint.phase,
-        questionIndex: checkpoint.questionIndex,
-        hasQuestionText: Boolean(checkpoint.questionText),
-        transcriptTailCount: checkpoint.transcriptTail.length
-      });
-    }
+    void checkpoint;
 
     setAgentPaused(true);
     agentPausedRef.current = true;
@@ -1451,14 +1429,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     const checkpoint = resumeCheckpointRef.current ?? buildResumeCheckpoint("before_resume");
     resumeCheckpointRef.current = checkpoint;
     setResumeCheckpoint(checkpoint);
-    if (process.env.NODE_ENV !== "production") {
-      console.info("[resume-checkpoint]", {
-        phase: checkpoint.phase,
-        questionIndex: checkpoint.questionIndex,
-        hasQuestionText: Boolean(checkpoint.questionText),
-        hasLastCandidateText: Boolean(checkpoint.lastCandidateText)
-      });
-    }
+    void checkpoint;
 
     setAgentPaused(false);
     rtc.setAudioInputEnabled(true);
@@ -1578,9 +1549,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         }
         // Gateway без GET /realtime/session/:id отдаёт 404 — это не «аватар мёртв», а отсутствие телеметрии.
         if (error instanceof ApiRequestError && error.status === 404) {
-          console.warn(
-            "[interview] getRealtimeSessionState: upstream 404 — на gateway нет GET /realtime/session/:id; опрос avatar_ready отключён, WebRTC не страдает."
-          );
           setTelemetryUnavailable(true);
           setAvatarReady(false);
           if (avatarPollTimerRef.current) {
@@ -1706,7 +1674,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
                 }
               }
             } catch (introErr) {
-              console.warn("[interview] WebRTC restore: intro replay failed", introErr);
+              void introErr;
             }
           }
           reconnectAttemptForSessionRef.current = null;
@@ -1941,7 +1909,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           await transitionJobAiToInMeeting(options.interviewId);
         } catch (statusError) {
           if (isIgnorableStatusTransitionError(statusError)) {
-            console.warn("Skipping non-critical JobAI status transition error", statusError);
+            void statusError;
           } else {
             setError(statusError instanceof Error ? statusError.message : "Failed to update JobAI status");
           }
@@ -2105,7 +2073,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           }
         } catch (statusError) {
           if (isIgnorableStatusTransitionError(statusError)) {
-            console.warn("Skipping non-critical JobAI status transition error", statusError);
+            void statusError;
           } else {
             setError(statusError instanceof Error ? statusError.message : "Failed to update JobAI status");
           }
@@ -2119,7 +2087,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           });
         } catch (statusError) {
           if (isIgnorableStatusTransitionError(statusError)) {
-            console.warn("Skipping non-critical JobAI status transition error", statusError);
+            void statusError;
           } else {
             setError(statusError instanceof Error ? statusError.message : "Failed to update JobAI status");
           }
@@ -2196,8 +2164,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
 
   // Cleanup caption fade timers on unmount.
   useEffect(() => {
+    const timers = captionFadeTimerRef.current;
     return () => {
-      const timers = captionFadeTimerRef.current;
       if (timers.agent) clearTimeout(timers.agent);
       if (timers.candidate) clearTimeout(timers.candidate);
       if (cancelAckTimeoutRef.current) {
