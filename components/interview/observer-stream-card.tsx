@@ -813,7 +813,7 @@ export function ObserverStreamCard({
   const videoStatusView = useMemo(() => mapVideoStatus(videoState), [videoState]);
   const statusHint = useMemo(() => {
     if (ended) {
-      return "Сессия завершена. Повторное подключение недоступно.";
+      return null;
     }
     if (transientStatus) {
       return transientStatus;
@@ -1715,10 +1715,6 @@ export function ObserverStreamCard({
 
       {viewMode === "ended" ? (
         <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-slate-700">Сессия завершена</p>
-            <p className="mt-0.5 text-[11px] leading-snug text-slate-600">Повторное подключение недоступно.</p>
-          </div>
           <div className="flex flex-wrap gap-1.5">
             <ObserverPresencePopover events={presenceEvents} />
             <Button

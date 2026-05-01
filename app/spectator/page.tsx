@@ -309,6 +309,10 @@ function SpectatorBody() {
   const projectionActive = ACTIVE_MEETING_STATUSES.has(projectionStatus);
   const runtimeMeetingId = normalizeMeetingId(runtimeSnapshot?.meetingId);
   const runtimeMatchesMeeting = Boolean(effectiveMeetingId && runtimeMeetingId === effectiveMeetingId);
+  const terminalByRuntime =
+    runtimeMatchesMeeting && TERMINAL_MEETING_STATUSES.has(String(runtimeSnapshot?.meeting.status ?? ""));
+  // Prefer runtime when it matches current meeting to avoid projection lag blocking observer join.
+  const sessionTerminal = terminalByRuntime || (!runtimeMatchesMeeting && terminalByProjection);
   const runtimeActive =
     runtimeMatchesMeeting && ACTIVE_MEETING_STATUSES.has(String(runtimeSnapshot?.meeting.status ?? ""));
   const runtimeHealthReady = runtimeMatchesMeeting && runtimeSnapshot?.health.ready === true;
@@ -324,10 +328,10 @@ function SpectatorBody() {
       ? Boolean(effectiveMeetingId) && hasTrustedStreamBinding
       : Boolean(spectatorJoinToken) && Boolean(spectatorObserverTicket) && Boolean(effectiveMeetingId) && hasTrustedStreamBinding;
   // Spectator joins when we have a trusted meeting + trusted Stream binding (health.ready is best-effort only).
-  const canConnect = accessReady && runtimeMatchesMeeting && !terminalByProjection;
+  const canConnect = accessReady && runtimeMatchesMeeting && !sessionTerminal;
   const spectatorWaitingReason = useMemo(() => {
-    if (terminalByProjection) {
-      return "Интервью завершено. Повторное подключение недоступно.";
+    if (sessionTerminal) {
+      return null;
     }
     if (!effectiveMeetingId) {
       return "Ожидаем назначение meetingId от runtime. Интервью ещё не перешло в активную фазу.";
@@ -358,7 +362,7 @@ function SpectatorBody() {
     runtimeMatchesMeeting,
     runtimeSnapshot,
     spectatorObserverTicket,
-    terminalByProjection
+    sessionTerminal
   ]);
 
   useEffect(() => {
@@ -460,7 +464,7 @@ function SpectatorBody() {
       runtimeHealthReady,
       runtimeReady: runtimeHealthReady,
       runtimeStatus: String(runtimeSnapshot?.meeting?.status ?? ""),
-      sessionEnded: terminalByProjection,
+      sessionEnded: sessionTerminal,
       observerCanConnect: canConnect,
       waitingReason: spectatorWaitingReason,
       observerAccessMode
@@ -477,7 +481,7 @@ function SpectatorBody() {
     runtimeHealthReady,
     runtimeSnapshot?.meeting?.status,
     spectatorWaitingReason,
-    terminalByProjection
+    sessionTerminal
   ]);
 
   const sseAttemptRef = useRef(0);
@@ -605,12 +609,8 @@ function SpectatorBody() {
               </div>
             ) : null}
 
-            {/* Terminal/waiting info row (compact, neutral) */}
-            {terminalByProjection ? (
-              <div className="w-full max-w-[720px] rounded-lg border border-white/60 bg-white/55 px-3 py-2 text-slate-700 shadow-sm">
-                <p className="text-[12px] font-medium">Интервью завершено · повторное подключение недоступно</p>
-              </div>
-            ) : !canConnect ? (
+            {/* Waiting info row (compact, neutral). Terminal state is reflected by status badge only. */}
+            {!canConnect ? (
               <div className="w-full max-w-[720px] rounded-lg border border-white/60 bg-white/55 px-3 py-2 text-slate-700 shadow-sm">
                 <p className="text-[12px] font-medium">Ожидание запуска</p>
                 <p className="mt-0.5 text-[11px] text-slate-600">{spectatorWaitingReason ?? "Видео подключится автоматически после старта интервью."}</p>
@@ -747,7 +747,7 @@ function SpectatorBody() {
               allowTalkToggle={false}
               spectatorDashboardLayout
               showSelfPreview
-              sessionEnded={terminalByProjection}
+              sessionEnded={sessionTerminal}
               waitingReason={spectatorWaitingReason}
               joinToken={spectatorJoinToken}
               observerTicket={spectatorObserverTicket}
