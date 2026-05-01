@@ -2,22 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { CirclePlay, Download, RefreshCw, Square } from "lucide-react";
 import { useInterviewSession, type InterviewStartContext } from "@/hooks/use-interview-session";
 import {
   decideCandidateAdmission,
-  getMeetingRecording,
-  getMeetingRecordingDownload,
   getCandidateAdmissionStatus,
   getRuntimeSnapshot,
   getInterviewById,
   issueCandidateJoinLink,
   listInterviews,
   setMeetingOpenAiRealtimeVoice,
-  startMeetingRecording,
-  stopMeetingRecording,
-  syncMeetingRecordingToJobAi,
-  type MeetingRecordingSnapshot,
   type CandidateAdmissionStatus,
   type InterviewDetail,
   type InterviewListRow,
@@ -47,7 +40,6 @@ import {
 } from "@/lib/interview-context-diagnostics";
 import { deriveSessionUiState, type SessionUIState } from "@/lib/session-ui-state";
 import { cn } from "@/lib/utils";
-import { isRecordingUiEnabled } from "@/lib/feature-flags";
 import { toast } from "sonner";
 import { AvatarStreamCard } from "./avatar-stream-card";
 import { CandidateStreamCard } from "./candidate-stream-card";
@@ -181,6 +173,8 @@ export function InterviewShell() {
     sessionElevenLabsVoiceId,
     setSessionElevenLabsVoiceId
   } = useInterviewSession({ isCandidateFlow });
+  void sessionElevenLabsVoiceId;
+  void setSessionElevenLabsVoiceId;
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const candidateRuntimeBootstrapRef = useRef(false);
   const [origin, setOrigin] = useState("");
@@ -192,9 +186,6 @@ export function InterviewShell() {
   const [loadingRows, setLoadingRows] = useState(false);
   const [rowsError, setRowsError] = useState<string | null>(null);
   const [rowsWarning, setRowsWarning] = useState<string | null>(null);
-  const [recording, setRecording] = useState<MeetingRecordingSnapshot | null>(null);
-  const [recordingBusy, setRecordingBusy] = useState<"start" | "stop" | "sync" | "download" | null>(null);
-  const [recordingError, setRecordingError] = useState<string | null>(null);
   const [sessionOpenAiVoice, setSessionOpenAiVoice] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [observerControl, setObserverControl] = useState<ObserverControlState>(DEFAULT_OBSERVER_CONTROL);
@@ -370,8 +361,7 @@ export function InterviewShell() {
   const streamSurfaceEnabled =
     phase === "connected" && !completedInterviewLocked && Boolean(recoveredMeetingId && recoveredSessionId);
   const hasInterviewSelection = Boolean(selectedRow || selectedInterviewDetailMatched);
-  const canControlRecording = Boolean(recoveredMeetingId && selectedInterviewId);
-  const recordingCanMutate = !isCandidateFlow && !isSpectatorFlow;
+  void isCandidateFlow;
 
   useEffect(() => {
     if (!recoveredMeetingId) {
@@ -390,84 +380,7 @@ export function InterviewShell() {
       cancelled = true;
     };
   }, [recoveredMeetingId]);
-
-  const refreshRecording = useCallback(async () => {
-    if (!recoveredMeetingId) {
-      setRecording(null);
-      setRecordingError(null);
-      return;
-    }
-    try {
-      const snapshot = await getMeetingRecording(recoveredMeetingId);
-      setRecording(snapshot);
-      setRecordingError(null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось получить статус записи";
-      setRecordingError(message);
-    }
-  }, [recoveredMeetingId]);
-
-  const runRecordingAction = useCallback(
-    async (kind: "start" | "stop" | "sync" | "download"): Promise<void> => {
-      if (!recoveredMeetingId || !selectedInterviewId) return;
-      setRecordingBusy(kind);
-      try {
-        if ((kind === "start" || kind === "stop" || kind === "sync") && !recordingCanMutate) {
-          toast.info("Только HR может управлять записью в этой сессии");
-          return;
-        }
-        if (kind === "start") {
-          const snapshot = await startMeetingRecording(recoveredMeetingId);
-          setRecording(snapshot);
-          toast.success("Запись включена");
-          return;
-        }
-        if (kind === "stop") {
-          const snapshot = await stopMeetingRecording(recoveredMeetingId);
-          setRecording(snapshot);
-          toast.success("Запись остановлена");
-          return;
-        }
-        if (kind === "sync") {
-          const result = await syncMeetingRecordingToJobAi(recoveredMeetingId, selectedInterviewId);
-          setRecording(result.snapshot);
-          toast.success("Запись синхронизирована с JobAI backend");
-          return;
-        }
-        const payload = await getMeetingRecordingDownload(recoveredMeetingId);
-        if ("ready" in payload && payload.ready === false) {
-          toast.info(payload.message ?? "Запись ещё обрабатывается");
-          return;
-        }
-        if (!("asset" in payload)) {
-          toast.info("Запись пока не готова к скачиванию");
-          return;
-        }
-        if (!payload.asset.url) {
-          toast.info("Запись пока не готова к скачиванию");
-          return;
-        }
-        window.open(payload.asset.url, "_blank", "noopener,noreferrer");
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Ошибка работы с записью";
-        toast.error("Операция с записью не выполнена", { description: message });
-      } finally {
-        setRecordingBusy(null);
-      }
-    },
-    [recoveredMeetingId, recordingCanMutate, selectedInterviewId]
-  );
-
-  useEffect(() => {
-    if (!canControlRecording) {
-      return;
-    }
-    void refreshRecording();
-    const timer = window.setInterval(() => {
-      void refreshRecording();
-    }, 8000);
-    return () => window.clearInterval(timer);
-  }, [canControlRecording, refreshRecording]);
+  // Recording UI/UX is removed intentionally (backend continues capturing automatically).
 
   useEffect(() => {
     if (!streamSurfaceEnabled) {
@@ -1188,8 +1101,6 @@ export function InterviewShell() {
             !meetingId ||
             (!isCandidateFlow && !interviewCandidatePresent)
           }
-          sessionElevenLabsVoiceId={sessionElevenLabsVoiceId}
-          onSessionElevenLabsVoiceIdChange={!isCandidateFlow ? setSessionElevenLabsVoiceId : undefined}
           sessionOpenAiVoice={sessionOpenAiVoice}
           onSessionOpenAiVoiceChange={
             !isCandidateFlow
@@ -1218,114 +1129,7 @@ export function InterviewShell() {
         />
 
         </>
-        {recoveredMeetingId ? (
-          <div className="flex flex-wrap items-center gap-2">
-            {recording?.diagnostics?.warning ? (
-              <span className="rounded-full border border-amber-300/80 bg-amber-50 px-3 py-1 text-[11px] font-medium text-amber-900 shadow-sm">
-                rec_warning={recording.diagnostics.warning}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-        {isRecordingUiEnabled() && recoveredMeetingId && selectedInterviewId ? (
-          <div className="w-full max-w-[420px] rounded-2xl border border-white/60 bg-[#dce2eb]/70 p-2 shadow-sm">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <p className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">ЗАПИСЬ</p>
-                <p className="mt-0.5 truncate text-xs text-slate-700">
-                  {recording?.configured === false
-                    ? "Недоступна"
-                    : recording?.state === "recording"
-                      ? "Идёт запись"
-                      : recording?.state === "ready"
-                        ? `Готово · файлов: ${recording.assets?.length ?? 0}`
-                        : recording?.state === "starting"
-                          ? "Запуск…"
-                          : recording?.state === "stopping"
-                            ? "Остановка…"
-                            : recording?.state === "failed"
-                              ? "Ошибка"
-                              : recording?.assets && recording.assets.length > 0
-                                ? `Файлов: ${recording.assets.length}`
-                                : "Нет данных"}
-                </p>
-              </div>
-              <span
-                className={cn(
-                  "inline-block h-2 w-2 rounded-full ring-2 ring-white/80",
-                  recording?.configured === false
-                    ? "bg-slate-400"
-                    : recording?.state === "ready" || recording?.state === "recording"
-                      ? "bg-emerald-500"
-                      : recording?.state === "failed"
-                        ? "bg-rose-500"
-                        : recording?.state === "starting" || recording?.state === "stopping"
-                          ? "bg-amber-500"
-                          : "bg-slate-300"
-                )}
-                title={
-                  recording?.configured === false
-                    ? "Stream recording off"
-                    : `Recording state: ${recording?.state ?? "idle"}`
-                }
-                aria-label={
-                  recording?.configured === false
-                    ? "Stream recording off"
-                    : `Recording state: ${recording?.state ?? "idle"}`
-                }
-              />
-            </div>
-            <div className="mt-2 flex items-center gap-1.5">
-              {recordingCanMutate && !completedInterviewLocked ? (
-                <>
-                  <button
-                    type="button"
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-emerald-200/70 bg-white/55 text-emerald-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
-                    onClick={() => void runRecordingAction("start")}
-                    disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
-                    title="Запись: старт"
-                    aria-label="Запись: старт"
-                  >
-                    <CirclePlay className="h-4 w-4" aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-amber-200/70 bg-white/55 text-amber-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
-                    onClick={() => void runRecordingAction("stop")}
-                    disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
-                    title="Запись: стоп"
-                    aria-label="Запись: стоп"
-                  >
-                    <Square className="h-3.5 w-3.5 fill-current" aria-hidden />
-                  </button>
-                </>
-              ) : null}
-              <button
-                type="button"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-white/60 bg-white/55 text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => void runRecordingAction("download")}
-                disabled={recordingBusy !== null || recording?.configured === false || !recoveredMeetingId}
-                title="Запись: скачать"
-                aria-label="Запись: скачать"
-              >
-                <Download className="h-4 w-4" aria-hidden />
-              </button>
-              <button
-                type="button"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-white/60 bg-white/55 text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => void refreshRecording()}
-                disabled={recordingBusy !== null || !recoveredMeetingId}
-                title="Запись: обновить"
-                aria-label="Запись: обновить"
-              >
-                <RefreshCw className="h-4 w-4" aria-hidden />
-              </button>
-            </div>
-            {recordingError ? (
-              <p className="mt-1.5 line-clamp-1 text-xs text-rose-700">{recordingError}</p>
-            ) : null}
-          </div>
-        ) : null}
+        {null}
         {error ? (
           <p className="mx-auto w-full max-w-[720px] rounded-xl bg-rose-100 px-3 py-2 text-sm text-rose-700 shadow-sm">
             {error}

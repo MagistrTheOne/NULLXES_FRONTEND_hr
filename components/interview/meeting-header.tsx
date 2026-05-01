@@ -6,11 +6,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { extractJobAiIdFromEntryUrl } from "@/lib/candidate-entry-url";
-import { isElevenLabsUiEnabled } from "@/lib/feature-flags";
 import { cn } from "@/lib/utils";
 import type { InterviewStatusView } from "@/lib/interview-status";
 import { InterviewStatusBadge } from "./interview-status-badge";
-import { HrElevenLabsVoicePicker } from "./hr-elevenlabs-voice-picker";
 
 type MeetingHeaderProps = {
   /** Презентационный статус интервью (label + tone + icon). */
@@ -54,9 +52,6 @@ type MeetingHeaderProps = {
     className?: string;
     tone?: "completed" | "blocked" | "lobby";
   } | null;
-  /** ElevenLabs `voice_id` for agent TTS (HR). Applied between turns via session hook + localStorage. */
-  sessionElevenLabsVoiceId?: string;
-  onSessionElevenLabsVoiceIdChange?: (voiceId: string) => void;
   /** OpenAI Realtime voice override persisted per meeting (backend). */
   sessionOpenAiVoice?: string | null;
   onSessionOpenAiVoiceChange?: (voice: string | null) => void;
@@ -98,8 +93,6 @@ export function MeetingHeader({
   candidateMode = false,
   interviewActive = false,
   technicalNotice = null,
-  sessionElevenLabsVoiceId,
-  onSessionElevenLabsVoiceIdChange,
   sessionOpenAiVoice = null,
   onSessionOpenAiVoiceChange
 }: MeetingHeaderProps) {
@@ -228,14 +221,6 @@ export function MeetingHeader({
                 Дата и время · <span className="font-medium text-slate-700">{meetingAtAbsolute}</span>
               </p>
             </div>
-          )}
-
-          {candidateMode || !isElevenLabsUiEnabled() ? null : (
-            <HrElevenLabsVoicePicker
-              committedVoiceId={sessionElevenLabsVoiceId ?? ""}
-              onSave={(voiceId) => onSessionElevenLabsVoiceIdChange?.(voiceId)}
-              className="mt-2"
-            />
           )}
 
           {candidateMode ? null : (
@@ -381,15 +366,6 @@ export function MeetingHeader({
                   </CollapsibleContent>
                 </Collapsible>
               </div>
-              {isElevenLabsUiEnabled() &&
-              onSessionElevenLabsVoiceIdChange &&
-              typeof sessionElevenLabsVoiceId === "string" ? (
-                <HrElevenLabsVoicePicker
-                  className="w-full min-w-0 shrink-0 md:max-w-sm md:flex-1 md:basis-0"
-                  committedVoiceId={sessionElevenLabsVoiceId}
-                  onSave={onSessionElevenLabsVoiceIdChange}
-                />
-              ) : null}
             </div>
           )}
         </CardContent>
