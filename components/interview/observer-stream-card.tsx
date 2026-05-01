@@ -440,7 +440,7 @@ function ObserverSplitDashboard({
                 <Badge variant="secondary">{candidateParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
               </div>
             ) : (
-              <ParticipantView participant={candidateParticipant} />
+              <ParticipantView participant={candidateParticipant} trackType="videoTrack" />
             )
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание кандидата</div>
@@ -474,7 +474,7 @@ function ObserverSplitDashboard({
               <Badge variant="secondary">{agentParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
             </div>
           ) : (
-            <ParticipantView participant={agentParticipant} />
+            <ParticipantView participant={agentParticipant} trackType="videoTrack" />
           )
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание HR аватара</div>
