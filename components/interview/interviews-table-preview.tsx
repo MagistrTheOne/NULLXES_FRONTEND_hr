@@ -64,8 +64,8 @@ type InterviewsTablePreviewProps = {
   onRefresh?: () => void;
   onSelect?: (row: InterviewListRow) => void;
   onPageChange?: (nextPage: number) => void;
-  /** После копирования ссылки кандидата — синхронизация поля в шапке и `?jobAiId=` (как при вводе + Enter). */
-  onCandidateEntryUrlCopied?: (absoluteUrl: string) => void;
+  /** После копирования ссылки — синхронизация поля в шапке и `?jobAiId=` (как при вводе + Enter). */
+  onEntryUrlCopied?: (absoluteUrl: string) => void;
 };
 
 function resolveNullxesBadge(row: InterviewListRow): { key: string; label: string } {
@@ -164,7 +164,7 @@ export function InterviewsTablePreview({
   onRefresh,
   onSelect,
   onPageChange,
-  onCandidateEntryUrlCopied
+  onEntryUrlCopied
 }: InterviewsTablePreviewProps) {
   const router = useRouter();
   const showSpectatorActions = process.env.NEXT_PUBLIC_ENABLE_SPECTATOR !== "0";
@@ -190,9 +190,7 @@ export function InterviewsTablePreview({
         const issuer = role === "candidate" ? issueCandidateJoinLink : issueSpectatorJoinLink;
         const result = await issuer(row.jobAiId);
         await navigator.clipboard.writeText(result.url).catch(() => undefined);
-        if (role === "candidate") {
-          onCandidateEntryUrlCopied?.(result.url);
-        }
+        onEntryUrlCopied?.(result.url);
         const expires = new Date(result.expiresAt).toLocaleString("ru-RU");
         toast.success(
           role === "candidate" ? "Ссылка кандидата скопирована" : "Ссылка наблюдателя скопирована",
@@ -211,7 +209,7 @@ export function InterviewsTablePreview({
         });
       }
     },
-    [linkBusy, onCandidateEntryUrlCopied]
+    [linkBusy, onEntryUrlCopied]
   );
 
   const openReference = useCallback(async (jobAiId: number) => {
@@ -457,15 +455,6 @@ export function InterviewsTablePreview({
                     </AccordionContent>
                   </AccordionItem>
 
-                  <AccordionItem value="final">
-                    <AccordionTrigger>Прощание</AccordionTrigger>
-                    <AccordionContent>
-                      <p className="whitespace-pre-wrap rounded-lg bg-white/60 p-2">
-                        {refDetail.interview.finalSpeechResolved ?? refDetail.interview.finalSpeech ?? "—"}
-                      </p>
-                    </AccordionContent>
-                  </AccordionItem>
-
                   <AccordionItem value="questions">
                     <AccordionTrigger>Вопросы (specialty.questions)</AccordionTrigger>
                     <AccordionContent>
@@ -475,6 +464,15 @@ export function InterviewsTablePreview({
                           <li key={`${q.order}-${q.text}`}>{q.text}</li>
                         ))}
                       </ol>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="final">
+                    <AccordionTrigger>Прощание</AccordionTrigger>
+                    <AccordionContent>
+                      <p className="whitespace-pre-wrap rounded-lg bg-white/60 p-2">
+                        {refDetail.interview.finalSpeechResolved ?? refDetail.interview.finalSpeech ?? "—"}
+                      </p>
                     </AccordionContent>
                   </AccordionItem>
                 </Accordion>

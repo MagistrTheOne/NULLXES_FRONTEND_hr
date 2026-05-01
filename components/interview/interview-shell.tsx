@@ -215,6 +215,7 @@ export function InterviewShell() {
    */
   const [joinedAtMs, setJoinedAtMs] = useState<number | null>(null);
   const [countdownDismissed, setCountdownDismissed] = useState(false);
+  const [entryUrlFocusSeq, setEntryUrlFocusSeq] = useState(0);
   const autoEndFiredRef = useRef(false);
   const [connectionQuality, setConnectionQuality] = useState<ConnectionQualityReading | null>(null);
   // observer tile is always present on the stand
@@ -1075,6 +1076,7 @@ export function InterviewShell() {
                 ?? (origin ? toAbsoluteUrl(selectedCandidateEntryPath, origin) : undefined)
               : undefined
           }
+          focusEntryUrlSeq={entryUrlFocusSeq}
           spectatorEntryUrl={selectedRow ? selectedSpectatorSignedUrl : null}
           onEntryUrlCommit={handleEntryUrlCommit}
           candidateFio={candidateFio}
@@ -1349,7 +1351,10 @@ export function InterviewShell() {
             onPageChange={(nextPage) => {
               setRowsPage(nextPage);
             }}
-            onCandidateEntryUrlCopied={handleEntryUrlCommit}
+            onEntryUrlCopied={(absoluteUrl) => {
+              handleEntryUrlCommit(absoluteUrl);
+              setEntryUrlFocusSeq((prev) => prev + 1);
+            }}
           />
         )}
         <audio ref={audioRef} autoPlay />

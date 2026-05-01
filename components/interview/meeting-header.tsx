@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,8 @@ type MeetingHeaderProps = {
   prototypeEntryUrl?: string;
   spectatorEntryUrl?: string | null;
   onEntryUrlCommit?: (value: string) => void;
+  /** Increment to force scroll+focus the entry URL field. */
+  focusEntryUrlSeq?: number;
   candidateFio: string;
   candidateFirstName?: string;
   onStart: () => void;
@@ -81,6 +83,7 @@ export function MeetingHeader({
   prototypeEntryUrl,
   spectatorEntryUrl = null,
   onEntryUrlCommit,
+  focusEntryUrlSeq = 0,
   candidateFio,
   candidateFirstName,
   onStart,
@@ -98,12 +101,28 @@ export function MeetingHeader({
   void startDisabled;
   const [entryUrlInput, setEntryUrlInput] = useState(prototypeEntryUrl ?? "");
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const entryUrlInputRef = useRef<HTMLInputElement | null>(null);
+  const entryUrlBlockRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     queueMicrotask(() => {
       setEntryUrlInput(prototypeEntryUrl ?? "");
     });
   }, [prototypeEntryUrl]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (candidateMode) return;
+    if (!focusEntryUrlSeq) return;
+    const block = entryUrlBlockRef.current;
+    if (block && typeof block.scrollIntoView === "function") {
+      block.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    queueMicrotask(() => {
+      entryUrlInputRef.current?.focus();
+      entryUrlInputRef.current?.select?.();
+    });
+  }, [candidateMode, focusEntryUrlSeq]);
 
   const canonicalUrl = (prototypeEntryUrl ?? "").trim();
   const hasCopySource = Boolean(canonicalUrl || entryUrlInput.trim());
@@ -138,12 +157,13 @@ export function MeetingHeader({
       </div>
 
       {candidateMode ? null : (
-        <div className="w-full min-w-0 max-w-xl space-y-2 px-0 sm:px-1 md:max-w-2xl">
+        <div ref={entryUrlBlockRef} className="w-full min-w-0 max-w-xl space-y-2 px-0 sm:px-1 md:max-w-2xl">
           <p className="text-center text-xs leading-relaxed text-slate-500 sm:text-left">
             Выберите интервью в списке ниже — здесь появятся ссылки для кандидата и наблюдателя.
           </p>
           <div className="flex items-stretch gap-2 rounded-xl bg-[#d9dee7] p-2 shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]">
             <Input
+              ref={entryUrlInputRef}
               value={entryUrlInput}
               onChange={(e) => setEntryUrlInput(e.target.value)}
               onBlur={() => {
