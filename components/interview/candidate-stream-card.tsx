@@ -63,10 +63,12 @@ function CandidateCallBody({
     useCallCallingState,
     useLocalParticipant,
     useCameraState,
-    useMicrophoneState
+    useMicrophoneState,
+    useParticipants
   } = useCallStateHooks();
   const state = useCallCallingState();
   const localParticipant = useLocalParticipant();
+  const participants = useParticipants();
   const { camera, optionsAwareIsMute: cameraPublishMuted, isTogglePending: cameraTogglePending } = useCameraState({
     optimisticUpdates: true
   });
@@ -150,6 +152,21 @@ function CandidateCallBody({
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-500">Ожидание кандидата</div>
         )}
+        {participants ? (
+          (() => {
+            const observer =
+              participants.find((p) => {
+                const id = participantStreamUserId(p);
+                return id.startsWith("observer-") || id.startsWith("observer-dashboard-");
+              }) ?? null;
+            if (!observer) return null;
+            return (
+              <div className="absolute bottom-3 right-3 z-20 h-28 w-28 overflow-hidden rounded-xl border border-white/60 bg-black shadow-lg">
+                <ParticipantView participant={observer} trackType="videoTrack" ParticipantViewUI={() => null} />
+              </div>
+            );
+          })()
+        ) : null}
         {showBadge ? (
           <ConnectionQualityBadge
             reading={quality}

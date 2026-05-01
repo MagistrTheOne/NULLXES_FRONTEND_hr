@@ -11,6 +11,8 @@ type TokenRequestBody = {
   role?: "candidate" | "spectator" | "admin";
   /** Internal viewer marker (e.g. HR avatar panel). */
   viewerKind?: string;
+  /** Internal observer dashboard: allow publishing tracks to SFU. */
+  observerPublish?: boolean;
   userId?: string;
   userName?: string;
   callId?: string;
@@ -121,6 +123,33 @@ async function enforceSpectatorReadonlyRole(
   await streamAdminPost(apiKey, secret, callUrl, {
     data: {
       members: [{ user_id: userId, role: "observer_readonly" }]
+    }
+  });
+}
+
+async function enforceObserverPublisherRole(
+  apiKey: string,
+  secret: string,
+  userId: string,
+  userName: string,
+  callType: string,
+  callId: string
+): Promise<void> {
+  const usersUrl = `https://video.stream-io-api.com/api/v2/users?api_key=${encodeURIComponent(apiKey)}`;
+  await streamAdminPost(apiKey, secret, usersUrl, {
+    users: {
+      [userId]: {
+        id: userId,
+        name: userName,
+        role: "user"
+      }
+    }
+  });
+
+  const callUrl = `https://video.stream-io-api.com/api/v2/video/call/${encodeURIComponent(callType)}/${encodeURIComponent(callId)}?api_key=${encodeURIComponent(apiKey)}`;
+  await streamAdminPost(apiKey, secret, callUrl, {
+    data: {
+      members: [{ user_id: userId, role: "user" }]
     }
   });
 }
@@ -455,6 +484,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         },
         { status: 503 }
       );
+    }
+  }
+
+  if (role === "spectator" && isInternalObserverDashboard) {
+    const publish = body.observerPublish !== false;
+    if (publish) {
+      try {
+        await enforceObserverPublisherRole(apiKey, secret, userId, userName, resolvedCallType, resolvedCallId);
+      } catch (error) {
+        console.error("[stream-token] observer publisher role enforcement failed", {
+          userId,
+          callType: resolvedCallType,
+          callId: resolvedCallId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+        return NextResponse.json(
+          { message: "Observer publish role is not ready yet.", code: "observer_publish_role_unavailable" },
+          { status: 503 }
+        );
+      }
     }
   }
 
