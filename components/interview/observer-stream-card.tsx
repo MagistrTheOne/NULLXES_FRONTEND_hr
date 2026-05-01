@@ -181,6 +181,35 @@ function ObserverSplitDashboard({
 
   useEffect(() => {
     if (process.env.NODE_ENV === "production") return;
+    console.info(
+      "[observer-participants]",
+      participants.map((p) => {
+        const userId = typeof p.userId === "string" ? p.userId : "";
+        const name = typeof (p as unknown as { name?: unknown }).name === "string" ? ((p as unknown as { name?: string }).name as string) : "";
+        const sessionId =
+          typeof (p as unknown as { sessionId?: unknown }).sessionId === "string"
+            ? ((p as unknown as { sessionId?: string }).sessionId as string)
+            : "";
+        const publishedTracks = (p as unknown as { publishedTracks?: unknown }).publishedTracks;
+        const publishedTracksArr = Array.isArray(publishedTracks) ? (publishedTracks as unknown[]) : [];
+        const hasVideo =
+          Boolean((p as unknown as { videoStream?: unknown }).videoStream) || publishedTracksArr.includes("video");
+        const hasAudio =
+          Boolean((p as unknown as { audioStream?: unknown }).audioStream) || publishedTracksArr.includes("audio");
+        return {
+          userId: userId || null,
+          name: name || null,
+          sessionId: sessionId || null,
+          hasVideo,
+          hasAudio,
+          isLocal: userId === localUserId
+        };
+      })
+    );
+  }, [localUserId, participants]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
     const snapshot = participants.map((p) => {
       const userId = typeof p.userId === "string" ? p.userId : "";
       const user = (p as unknown as { user?: { name?: string; role?: string } }).user;
@@ -221,14 +250,79 @@ function ObserverSplitDashboard({
   }, [onParticipantsDetected, remoteCount]);
 
   const { candidateParticipant, agentParticipant } = useMemo(() => {
-    const candidate =
-      participants.find((participant) => participant.userId?.startsWith("candidate-")) ?? null;
-    const agent =
-      participants.find((participant) => participant.userId?.startsWith("agent-")) ??
-      participants.find((participant) => participant.userId?.startsWith("agent_")) ??
+    const remotes = participants.filter((p) => {
+      const userId = typeof p.userId === "string" ? p.userId : "";
+      return Boolean(userId) && userId !== localUserId;
+    });
+
+    const getName = (p: (typeof participants)[number]): string => {
+      const direct = typeof (p as unknown as { name?: unknown }).name === "string" ? ((p as unknown as { name?: string }).name as string) : "";
+      const user = (p as unknown as { user?: { name?: string } }).user;
+      const fromUser = typeof user?.name === "string" ? user.name : "";
+      return (direct || fromUser || "").trim();
+    };
+
+    const hasPublished = (p: (typeof participants)[number], kind: "video" | "audio"): boolean => {
+      const publishedTracks = (p as unknown as { publishedTracks?: unknown }).publishedTracks;
+      const arr = Array.isArray(publishedTracks) ? (publishedTracks as unknown[]) : [];
+      return arr.includes(kind);
+    };
+
+    const hasVideo = (p: (typeof participants)[number]): boolean =>
+      Boolean((p as unknown as { videoStream?: unknown }).videoStream) || hasPublished(p, "video");
+
+    const normalize = (value: string) => value.toLowerCase();
+
+    const candidateBySignal =
+      remotes.find((p) => normalize(p.userId ?? "").includes("candidate")) ??
+      remotes.find((p) => {
+        const name = normalize(getName(p));
+        return name.includes("candidate") || name.includes("candidat") || name.includes("кандидат");
+      }) ??
+      remotes.find((p) => hasVideo(p)) ??
       null;
+
+    const agentBySignal =
+      remotes.find((p) => {
+        const id = normalize(p.userId ?? "");
+        return id.includes("agent") || id.includes("hr");
+      }) ??
+      remotes.find((p) => {
+        const name = normalize(getName(p));
+        return (
+          name.includes("hr") ||
+          name.includes("ассистент") ||
+          name.includes("assistant") ||
+          name.includes("agent") ||
+          name.includes("avatar")
+        );
+      }) ??
+      null;
+
+    const remotesWithVideo = remotes.filter((p) => hasVideo(p));
+
+    let candidate = candidateBySignal;
+    let agent = agentBySignal;
+
+    if (candidate && agent && candidate.userId === agent.userId) {
+      agent = null;
+    }
+
+    if (!candidate) {
+      candidate = remotesWithVideo[0] ?? remotes[0] ?? null;
+    }
+
+    if (!agent) {
+      const first = remotesWithVideo[0]?.userId;
+      agent = remotesWithVideo.find((p) => p.userId !== first) ?? remotes.find((p) => p.userId !== candidate?.userId) ?? null;
+    }
+
+    // Final guard: never return local participant.
+    if (candidate?.userId === localUserId) candidate = null;
+    if (agent?.userId === localUserId) agent = null;
+
     return { candidateParticipant: candidate, agentParticipant: agent };
-  }, [participants]);
+  }, [localUserId, participants]);
 
   const leftBadge = candidateParticipant ? "В эфире" : state === CallingState.JOINING ? "Подключение…" : "Ожидание";
   const rightBadge = agentParticipant ? "В эфире" : state === CallingState.JOINING ? "Подключение…" : "Ожидание";
@@ -346,11 +440,17 @@ function ObserverSplitDashboard({
                 <Badge variant="secondary">{candidateParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
               </div>
             ) : (
-              <ParticipantView participant={candidateParticipant} trackType="videoTrack" />
+              <ParticipantView participant={candidateParticipant} />
             )
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание кандидата</div>
           )}
+          {process.env.NODE_ENV !== "production" ? (
+            <div className="absolute bottom-2 left-2 right-2 z-10 rounded-md bg-black/55 px-2 py-1 text-[10px] leading-snug text-white">
+              candidate: {(candidateParticipant?.userId as string | undefined) ?? "—"} ·{" "}
+              {((candidateParticipant as unknown as { name?: unknown })?.name as string | undefined) ?? "—"}
+            </div>
+          ) : null}
         </div>
       </StreamParticipantShell>
       <StreamParticipantShell
@@ -374,11 +474,17 @@ function ObserverSplitDashboard({
               <Badge variant="secondary">{agentParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
             </div>
           ) : (
-            <ParticipantView participant={agentParticipant} trackType="videoTrack" />
+            <ParticipantView participant={agentParticipant} />
           )
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание HR аватара</div>
         )}
+        {process.env.NODE_ENV !== "production" ? (
+          <div className="absolute bottom-2 left-2 right-2 z-10 rounded-md bg-black/55 px-2 py-1 text-[10px] leading-snug text-white">
+            agent: {(agentParticipant?.userId as string | undefined) ?? "—"} ·{" "}
+            {((agentParticipant as unknown as { name?: unknown })?.name as string | undefined) ?? "—"}
+          </div>
+        ) : null}
       </StreamParticipantShell>
     </div>
   );
