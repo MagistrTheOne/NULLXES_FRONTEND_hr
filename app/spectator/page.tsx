@@ -735,6 +735,7 @@ function SpectatorBody() {
               title="Наблюдатель"
               participantName="Наблюдатель"
               candidateDisplayName={candidateName || "Кандидат"}
+              agentAvatarImageUrl="/anna.jpg"
               meetingId={effectiveMeetingId}
               streamCallId={resolvedStreamCallId || null}
               streamCallType={resolvedStreamCallType || null}

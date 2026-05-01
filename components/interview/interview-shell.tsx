@@ -1549,6 +1549,7 @@ export function InterviewShell() {
           <ObserverStreamCard
             title="Наблюдатель"
             participantName="Наблюдатель"
+            agentAvatarImageUrl="/anna.jpg"
             meetingId={recoveredMeetingId}
             observerAccessMode="internal_dashboard"
             enabled={streamSurfaceEnabled}

@@ -26,6 +26,7 @@ import {
   VolumeX
 } from "lucide-react";
 import { toast } from "sonner";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
@@ -153,6 +154,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 
 type ObserverCallBodyProps = {
   localUserId: string;
+  agentAvatarImageUrl?: string | null;
   onParticipantsDetected?: (hasParticipants: boolean) => void;
   sessionMirrorLayout?: boolean;
   audioOnly?: boolean;
@@ -163,6 +165,7 @@ type ObserverCallBodyProps = {
 type ObserverSplitDashboardProps = {
   localUserId: string;
   candidateDisplayName: string;
+  agentAvatarImageUrl?: string | null;
   onParticipantsDetected?: (hasParticipants: boolean) => void;
   audioOnly?: boolean;
   candidateVideoContainerRef?: { current: HTMLDivElement | null };
@@ -171,6 +174,7 @@ type ObserverSplitDashboardProps = {
 function ObserverSplitDashboard({
   localUserId,
   candidateDisplayName,
+  agentAvatarImageUrl = null,
   onParticipantsDetected,
   audioOnly = false,
   candidateVideoContainerRef
@@ -474,7 +478,36 @@ function ObserverSplitDashboard({
               <Badge variant="secondary">{agentParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
             </div>
           ) : (
-            <ParticipantView participant={agentParticipant} trackType="videoTrack" />
+            (() => {
+              const hasAgentVideo =
+                Boolean((agentParticipant as unknown as { videoStream?: unknown })?.videoStream) ||
+                (Array.isArray((agentParticipant as unknown as { publishedTracks?: unknown })?.publishedTracks) &&
+                  ((agentParticipant as unknown as { publishedTracks: unknown[] }).publishedTracks).includes("video"));
+              if (hasAgentVideo) {
+                return <ParticipantView participant={agentParticipant} trackType="videoTrack" />;
+              }
+              if (agentAvatarImageUrl) {
+                return (
+                  <div className="relative h-full w-full">
+                    <ParticipantView participant={agentParticipant} trackType="videoTrack" />
+                    <Image
+                      src={agentAvatarImageUrl}
+                      alt="HR ассистент"
+                      fill
+                      sizes="(max-width: 1024px) 100vw, 480px"
+                      className="object-cover"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                    {agentParticipant.isSpeaking ? (
+                      <Badge className="absolute right-3 top-3 bg-emerald-500/90 text-white">Говорит</Badge>
+                    ) : null}
+                  </div>
+                );
+              }
+              return <ParticipantView participant={agentParticipant} trackType="videoTrack" />;
+            })()
           )
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание HR аватара</div>
@@ -492,6 +525,7 @@ function ObserverSplitDashboard({
 
 function ObserverCallBody({
   localUserId,
+  agentAvatarImageUrl = null,
   onParticipantsDetected,
   sessionMirrorLayout = false,
   audioOnly = false,
@@ -556,7 +590,36 @@ function ObserverCallBody({
                 <Badge variant="secondary">{agentParticipant.isSpeaking ? "Говорит" : "Слушает"}</Badge>
               </div>
             ) : (
-              <ParticipantView participant={agentParticipant} trackType="videoTrack" />
+              (() => {
+                const hasAgentVideo =
+                  Boolean((agentParticipant as unknown as { videoStream?: unknown })?.videoStream) ||
+                  (Array.isArray((agentParticipant as unknown as { publishedTracks?: unknown })?.publishedTracks) &&
+                    ((agentParticipant as unknown as { publishedTracks: unknown[] }).publishedTracks).includes("video"));
+                if (hasAgentVideo) {
+                  return <ParticipantView participant={agentParticipant} trackType="videoTrack" />;
+                }
+                if (agentAvatarImageUrl) {
+                  return (
+                    <div className="relative h-full w-full">
+                      <ParticipantView participant={agentParticipant} trackType="videoTrack" />
+                      <Image
+                        src={agentAvatarImageUrl}
+                        alt="HR ассистент"
+                        fill
+                        sizes="(max-width: 1024px) 100vw, 480px"
+                        className="object-cover"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                      {agentParticipant.isSpeaking ? (
+                        <Badge className="absolute right-3 top-3 bg-emerald-500/90 text-white">Говорит</Badge>
+                      ) : null}
+                    </div>
+                  );
+                }
+                return <ParticipantView participant={agentParticipant} trackType="videoTrack" />;
+              })()
             )
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание HR аватара</div>
@@ -609,7 +672,36 @@ function ObserverCallBody({
                 <Badge variant="secondary">{avatar.isSpeaking ? "Говорит" : "Слушает"}</Badge>
               </div>
             ) : (
-              <ParticipantView participant={avatar} trackType="videoTrack" />
+              (() => {
+                const hasAgentVideo =
+                  Boolean((avatar as unknown as { videoStream?: unknown })?.videoStream) ||
+                  (Array.isArray((avatar as unknown as { publishedTracks?: unknown })?.publishedTracks) &&
+                    ((avatar as unknown as { publishedTracks: unknown[] }).publishedTracks).includes("video"));
+                if (hasAgentVideo) {
+                  return <ParticipantView participant={avatar} trackType="videoTrack" />;
+                }
+                if (agentAvatarImageUrl) {
+                  return (
+                    <div className="relative h-full w-full">
+                      <ParticipantView participant={avatar} trackType="videoTrack" />
+                      <Image
+                        src={agentAvatarImageUrl}
+                        alt="HR ассистент"
+                        fill
+                        sizes="(max-width: 1024px) 100vw, 480px"
+                        className="object-cover"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                      {avatar.isSpeaking ? (
+                        <Badge className="absolute right-3 top-3 bg-emerald-500/90 text-white">Говорит</Badge>
+                      ) : null}
+                    </div>
+                  );
+                }
+                return <ParticipantView participant={avatar} trackType="videoTrack" />;
+              })()
             )
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-slate-300">Ожидание HR аватара</div>
@@ -725,6 +817,8 @@ type ObserverStreamCardProps = {
   enabled: boolean;
   visible: boolean;
   talkMode: ObserverTalkMode;
+  /** Optional HR avatar image URL when agent has no video track. */
+  agentAvatarImageUrl?: string | null;
   onVisibleChange?: (nextVisible: boolean) => void;
   onTalkModeChange?: (nextTalkMode: ObserverTalkMode) => void;
   allowVisibilityToggle?: boolean;
@@ -768,6 +862,7 @@ export function ObserverStreamCard({
   enabled,
   visible,
   talkMode,
+  agentAvatarImageUrl = null,
   onVisibleChange,
   onTalkModeChange,
   allowVisibilityToggle = true,
@@ -2180,6 +2275,7 @@ export function ObserverStreamCard({
                     <ObserverSplitDashboard
                       localUserId={localUserId}
                       candidateDisplayName={resolvedCandidateDisplayName}
+                      agentAvatarImageUrl={agentAvatarImageUrl}
                       onParticipantsDetected={setHasParticipants}
                       audioOnly={audioOnlyMode}
                       candidateVideoContainerRef={candidateVideoContainerRef}
@@ -2340,6 +2436,7 @@ export function ObserverStreamCard({
                 />
                 <ObserverCallBody
                   localUserId={localUserId}
+                  agentAvatarImageUrl={agentAvatarImageUrl}
                   onParticipantsDetected={setHasParticipants}
                   sessionMirrorLayout={showSingleFeedMode ? false : sessionMirrorLayout}
                   audioOnly={audioOnlyMode}
