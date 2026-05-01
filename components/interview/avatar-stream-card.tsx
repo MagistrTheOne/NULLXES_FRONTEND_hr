@@ -329,34 +329,44 @@ export function AvatarStreamCard({
         }
 
         const payload = (await response.json()) as StreamTokenResponse;
-      // StreamClientOptions extends Partial<AxiosRequestConfig>. Дефолт axios
-      // внутри SDK — timeout=5000мс (см. @stream-io/video-client
-      // index.es.js:«timeout: 5000»). На живом интервью 5с бюджет на HTTP
-      // вызов Stream-API часто не хватает: бизнес-процесс ломается
-      // сообщением «timeout of 5000ms exceeded» посреди диалога.
-      // Переопределяем на 60_000мс — достаточно для любых штатных
-      // coordinator/SFU round-trip даже при плохой сети.
-      const streamClient = new StreamVideoClient({
-        apiKey: payload.apiKey,
-        token: payload.token,
-        user: payload.user,
-        options: { timeout: 60_000 }
-      });
-      const streamCall = streamClient.call(payload.callType, payload.callId);
-      await streamCall.camera.disable().catch(() => undefined);
-      await streamCall.microphone.disable().catch(() => undefined);
-        // Viewer must never create ghost calls. Join only existing call created by the session.
-        await streamCall.join({ create: false, video: false } as Parameters<typeof streamCall.join>[0]);
-      await streamCall.camera.disable().catch(() => undefined);
-      await streamCall.microphone.disable().catch(() => undefined);
+        // StreamClientOptions extends Partial<AxiosRequestConfig>. Дефолт axios
+        // внутри SDK — timeout=5000мс (см. @stream-io/video-client
+        // index.es.js:«timeout: 5000»). На живом интервью 5с бюджет на HTTP
+        // вызов Stream-API часто не хватает: бизнес-процесс ломается
+        // сообщением «timeout of 5000ms exceeded» посреди диалога.
+        // Переопределяем на 60_000мс — достаточно для любых штатных
+        // coordinator/SFU round-trip даже при плохой сети.
+        let streamClient: StreamVideoClient | null = new StreamVideoClient({
+          apiKey: payload.apiKey,
+          token: payload.token,
+          user: payload.user,
+          options: { timeout: 60_000 }
+        });
+        let streamCall: ReturnType<StreamVideoClient["call"]> | null = null;
+
+        try {
+          streamCall = streamClient.call(payload.callType, payload.callId);
+          await streamCall.camera.disable().catch(() => undefined);
+          await streamCall.microphone.disable().catch(() => undefined);
+          // Viewer must never create ghost calls. Join only existing call created by the session.
+          await streamCall.join({ create: false, video: false } as Parameters<typeof streamCall.join>[0]);
+          await streamCall.camera.disable().catch(() => undefined);
+          await streamCall.microphone.disable().catch(() => undefined);
+        } catch (err) {
+          await streamCall?.leave().catch(() => undefined);
+          await streamClient?.disconnectUser().catch(() => undefined);
+          streamCall = null;
+          streamClient = null;
+          throw err;
+        }
 
         if (connectEpochRef.current !== epoch) {
           await streamCall.leave().catch(() => undefined);
           await streamClient.disconnectUser().catch(() => undefined);
           return;
         }
-      setClient(streamClient);
-      setCall(streamCall);
+        setClient(streamClient);
+        setCall(streamCall);
         setInlineStatus(null);
         return;
       }
