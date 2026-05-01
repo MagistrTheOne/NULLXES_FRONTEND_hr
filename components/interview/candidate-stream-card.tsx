@@ -817,7 +817,7 @@ export function CandidateStreamCard({
                   </div>
                 </div>
               ) : null}
-              <p className="max-w-[280px] text-sm text-slate-600">
+              <p className="max-w-[320px] min-h-[34px] text-xs leading-snug text-slate-600">
                 {requireMediaCheckBeforeConnect
                   ? "Шаг 1: проверьте камеру и микрофон одной кнопкой внизу. Шаг 2: когда сессия активна — «Подключиться к видео»."
                   : autoConnectOnEntry

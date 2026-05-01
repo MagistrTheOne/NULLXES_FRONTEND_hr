@@ -2,10 +2,11 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ExternalLink } from "lucide-react";
+import { Copy, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -24,6 +25,32 @@ import {
   type InterviewListRow,
   type JoinLinkRole
 } from "@/lib/api";
+
+function normalizeText(v: unknown): string {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+function buildReferenceClipboardText(detail: InterviewDetail, orderedQuestions: { text: string; order: number }[]): string {
+  const vacancyText = normalizeText(detail.interview.vacancyText);
+  const greeting = normalizeText(detail.interview.greetingSpeechResolved ?? detail.interview.greetingSpeech);
+  const finalSpeech = normalizeText(detail.interview.finalSpeechResolved ?? detail.interview.finalSpeech);
+  const questionsText = orderedQuestions.map((q) => `- ${q.text}`).join("\n").trim();
+  return [
+    `JobAI ID: ${detail.interview.id}`,
+    "",
+    "Вакансия (vacancyText)",
+    vacancyText || "—",
+    "",
+    "Приветствие",
+    greeting || "—",
+    "",
+    "Прощание",
+    finalSpeech || "—",
+    "",
+    "Вопросы (specialty.questions)",
+    questionsText || "—"
+  ].join("\n");
+}
 
 type InterviewsTablePreviewProps = {
   rows: InterviewListRow[];
@@ -387,31 +414,70 @@ export function InterviewsTablePreview({
             {refError ? <p className="text-sm text-rose-700">{refError}</p> : null}
             {refDetail ? (
               <div className="space-y-4 text-sm text-slate-600">
-                <div>
-                  <p className="font-medium text-slate-700">Вакансия (vacancyText)</p>
-                  <p className="mt-1 whitespace-pre-wrap rounded-lg bg-white/60 p-2">{refDetail.interview.vacancyText ?? "—"}</p>
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/60 p-2">
+                  <div className="text-xs text-slate-600">
+                    <span className="font-medium text-slate-700">Сводка:</span>{" "}
+                    {orderedQuestions.length > 0 ? `вопросов ${orderedQuestions.length}` : "вопросов нет"}
+                    {normalizeText(refDetail.interview.vacancyText) ? ` · vacancyText ${normalizeText(refDetail.interview.vacancyText).length} символов` : ""}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="h-8 gap-2 rounded-lg px-3 text-xs"
+                    onClick={() => {
+                      const text = buildReferenceClipboardText(refDetail, orderedQuestions);
+                      void navigator.clipboard
+                        .writeText(text)
+                        .then(() => toast.success("Скопировано", { description: "Детали собеседования в буфере обмена." }))
+                        .catch(() => toast.error("Не удалось скопировать"));
+                    }}
+                  >
+                    <Copy className="size-4" aria-hidden />
+                    Копировать всё
+                  </Button>
                 </div>
-                <div>
-                  <p className="font-medium text-slate-700">Приветствие</p>
-                  <p className="mt-1 whitespace-pre-wrap rounded-lg bg-white/60 p-2">
-                    {refDetail.interview.greetingSpeechResolved ?? refDetail.interview.greetingSpeech ?? "—"}
-                  </p>
-                </div>
-                <div>
-                  <p className="font-medium text-slate-700">Прощание</p>
-                  <p className="mt-1 whitespace-pre-wrap rounded-lg bg-white/60 p-2">
-                    {refDetail.interview.finalSpeechResolved ?? refDetail.interview.finalSpeech ?? "—"}
-                  </p>
-                </div>
-                <div>
-                  <p className="font-medium text-slate-700">Вопросы (specialty.questions)</p>
-                  <ol className="mt-1 list-decimal space-y-1 pl-5">
-                    {orderedQuestions.length === 0 ? <li className="text-slate-500">Нет вопросов</li> : null}
-                    {orderedQuestions.map((q: { text: string; order: number }) => (
-                      <li key={`${q.order}-${q.text}`}>{q.text}</li>
-                    ))}
-                  </ol>
-                </div>
+
+                <Accordion multiple defaultValue={["vacancy"]}>
+                  <AccordionItem value="vacancy">
+                    <AccordionTrigger>Вакансия (vacancyText)</AccordionTrigger>
+                    <AccordionContent>
+                      <p className="whitespace-pre-wrap rounded-lg bg-white/60 p-2">
+                        {refDetail.interview.vacancyText ?? "—"}
+                      </p>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="greeting">
+                    <AccordionTrigger>Приветствие</AccordionTrigger>
+                    <AccordionContent>
+                      <p className="whitespace-pre-wrap rounded-lg bg-white/60 p-2">
+                        {refDetail.interview.greetingSpeechResolved ?? refDetail.interview.greetingSpeech ?? "—"}
+                      </p>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="final">
+                    <AccordionTrigger>Прощание</AccordionTrigger>
+                    <AccordionContent>
+                      <p className="whitespace-pre-wrap rounded-lg bg-white/60 p-2">
+                        {refDetail.interview.finalSpeechResolved ?? refDetail.interview.finalSpeech ?? "—"}
+                      </p>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="questions">
+                    <AccordionTrigger>Вопросы (specialty.questions)</AccordionTrigger>
+                    <AccordionContent>
+                      <ol className="list-decimal space-y-1 pl-5">
+                        {orderedQuestions.length === 0 ? <li className="text-slate-500">Нет вопросов</li> : null}
+                        {orderedQuestions.map((q: { text: string; order: number }) => (
+                          <li key={`${q.order}-${q.text}`}>{q.text}</li>
+                        ))}
+                      </ol>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
               </div>
             ) : null}
           </DialogContent>
