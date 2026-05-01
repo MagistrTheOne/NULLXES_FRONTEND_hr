@@ -32,6 +32,12 @@ import {
 import { getDefaultElevenLabsVoiceId, HR_ELEVENLABS_VOICE_STORAGE_KEY } from "@/lib/interview-voice-presets";
 import { playAgentUtteranceWithElevenLabs, stopAgentElevenLabsPlayback } from "@/lib/agent-elevenlabs-playback";
 
+type RuntimeEvent = {
+  type: string;
+  revision: number;
+  payload: Record<string, unknown>;
+};
+
 export type InterviewPhase = "idle" | "starting" | "connected" | "stopping" | "failed";
 export type InterviewStartResult = {
   meetingId: string;
@@ -516,6 +522,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   const [flowPhase, setFlowPhase] = useState<InterviewFlowPhase>("lobby");
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [questionsAsked, setQuestionsAsked] = useState(0);
+  const runtimeQuestionsRevisionRef = useRef(0);
   const [latestCaptions, setLatestCaptions] = useState<LiveCaptions>({});
   /**
    * Reactive mirror of `transcriptsRef.current` — identical data, but state so
@@ -532,6 +539,50 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     interviewCandidatePresentRef.current = present;
     setInterviewCandidatePresent(present);
   }, []);
+
+  useEffect(() => {
+    if (!meetingId) {
+      runtimeQuestionsRevisionRef.current = 0;
+      return;
+    }
+    let cancelled = false;
+    const poll = async (): Promise<void> => {
+      if (cancelled) return;
+      const afterRevision = runtimeQuestionsRevisionRef.current;
+      const res = await fetch(
+        `/api/gateway/runtime/${encodeURIComponent(meetingId)}/events?afterRevision=${afterRevision}`,
+        {
+          method: "GET",
+          credentials: "include"
+        }
+      ).catch(() => null);
+      if (!res?.ok) return;
+      const data = (await res.json().catch(() => null)) as { events?: RuntimeEvent[] } | null;
+      const events = Array.isArray(data?.events) ? (data!.events as RuntimeEvent[]) : [];
+      for (const event of events) {
+        if (typeof event?.revision === "number") {
+          runtimeQuestionsRevisionRef.current = Math.max(runtimeQuestionsRevisionRef.current, event.revision);
+        }
+        if (event?.type === "runtime.question_advanced") {
+          const idx = (event.payload as Record<string, unknown> | undefined)?.questionIndex;
+          if (typeof idx === "number" && Number.isFinite(idx) && idx >= 0) {
+            setQuestionsAsked(idx);
+            setFlowPhase((prev) => (prev === "lobby" ? "questions" : prev));
+          }
+        }
+      }
+    };
+
+    void poll().catch(() => undefined);
+    const timer = window.setInterval(() => {
+      void poll().catch(() => undefined);
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [meetingId]);
   const [sessionElevenLabsVoiceId, setSessionElevenLabsVoiceId] = useState(() => getDefaultElevenLabsVoiceId());
   const sessionElevenLabsVoiceIdRef = useRef(sessionElevenLabsVoiceId);
   const [forceOpenAiVoiceOutput, setForceOpenAiVoiceOutput] = useState(false);
@@ -1162,8 +1213,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         // Defensive reset: on reconnect/restore some "response.done" events may arrive
         // out-of-order, and we never want the first displayed question label to jump.
         setQuestionsAsked(0);
-      } else {
-        setQuestionsAsked((prev) => prev + 1);
       }
       lastResponseIdRef.current = null;
       return;
