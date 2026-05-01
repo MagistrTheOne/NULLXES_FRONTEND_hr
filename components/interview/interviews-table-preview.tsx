@@ -315,12 +315,12 @@ export function InterviewsTablePreview({
                             variant="outline"
                             onClick={() => navigateSameOrigin(router, spectatorEntryPath)}
                           >
-                            Вход наблюдателя
+                            Ссылка наблюдателя
                           </Button>
                           <Button
                             size="icon"
                             variant="secondary"
-                            aria-label="Открыть наблюдателя"
+                            aria-label="Открыть ссылку наблюдателя"
                             onClick={() => navigateSameOrigin(router, spectatorEntryPath)}
                           >
                             <ExternalLink className="size-4" />

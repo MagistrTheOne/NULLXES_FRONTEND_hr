@@ -108,6 +108,7 @@ export function MeetingHeader({
   const canonicalUrl = (prototypeEntryUrl ?? "").trim();
   const hasCopySource = Boolean(canonicalUrl || entryUrlInput.trim());
   const spectatorUrl = (spectatorEntryUrl ?? "").trim();
+  void spectatorUrl;
   const meetingAtAbsolute = meetingAt ? new Date(meetingAt).toLocaleString("ru-RU") : "—";
   const meetingAtRelative = useMemo(() => formatRelativeMeetingTime(meetingAt), [meetingAt]);
   const greeting = candidateFirstName?.trim() || candidateFio.split(" ")[0] || "";
@@ -193,21 +194,7 @@ export function MeetingHeader({
               <Copy className="size-4" />
             </Button>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={!spectatorUrl}
-              className="h-9 rounded-lg px-3 text-xs"
-              title={spectatorUrl ? "Скопировать и открыть ссылку наблюдателя" : "Ссылка наблюдателя появится после выбора интервью"}
-              onClick={() => {
-                if (!spectatorUrl) return;
-                void enterSpectator(spectatorUrl);
-              }}
-            >
-              Вход наблюдателя
-            </Button>
-          </div>
+          {null}
         </div>
       )}
 
