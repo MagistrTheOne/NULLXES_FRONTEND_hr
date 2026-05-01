@@ -12,6 +12,8 @@ import {
 } from "@stream-io/video-react-sdk";
 import {
   Loader2,
+  Mic,
+  MicOff,
   Video,
   VideoOff
 } from "lucide-react";
@@ -655,7 +657,10 @@ export function ObserverStreamCard({
   const [hasParticipants, setHasParticipants] = useState<boolean | null>(null);
   const [selfPreviewStream, setSelfPreviewStream] = useState<MediaStream | null>(null);
   const [selfCameraEnabled, setSelfCameraEnabled] = useState(true);
+  const [selfMicEnabled, setSelfMicEnabled] = useState(false);
   const [selfPreviewError, setSelfPreviewError] = useState<string | null>(null);
+  const [selfMicError, setSelfMicError] = useState<string | null>(null);
+  const selfMicStreamRef = useRef<MediaStream | null>(null);
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
   const splitPlaybackRootRef = useRef<HTMLDivElement | null>(null);
   const selfPreviewVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -921,6 +926,14 @@ export function ObserverStreamCard({
     });
   }, []);
 
+  const cleanupSelfMic = useCallback(() => {
+    const current = selfMicStreamRef.current;
+    if (current) {
+      current.getTracks().forEach((track) => track.stop());
+      selfMicStreamRef.current = null;
+    }
+  }, []);
+
   const ensureSelfPreview = useCallback(async () => {
     if (!showSelfPreview || selfPreviewStream) {
       return;
@@ -946,13 +959,40 @@ export function ObserverStreamCard({
     }
   }, [selfCameraEnabled, selfPreviewStream, showSelfPreview]);
 
+  const ensureSelfMic = useCallback(async () => {
+    if (!showSelfPreview || !selfMicEnabled) {
+      return;
+    }
+    if (selfMicStreamRef.current) {
+      return;
+    }
+    try {
+      setSelfMicError(null);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      selfMicStreamRef.current = stream;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      setSelfMicEnabled(false);
+      if (message.toLowerCase().includes("notallowed")) {
+        setSelfMicError("Нет доступа к микрофону. Разрешите доступ в браузере.");
+      } else if (message.toLowerCase().includes("notfound")) {
+        setSelfMicError("Микрофон не найден.");
+      } else {
+        setSelfMicError("Микрофон недоступен.");
+      }
+    }
+  }, [selfMicEnabled, showSelfPreview]);
+
   useEffect(() => {
     if (showSelfPreview) {
       return;
     }
     cleanupSelfPreview();
     setSelfPreviewError(null);
-  }, [cleanupSelfPreview, showSelfPreview]);
+    cleanupSelfMic();
+    setSelfMicError(null);
+    setSelfMicEnabled(false);
+  }, [cleanupSelfMic, cleanupSelfPreview, showSelfPreview]);
 
   useEffect(() => {
     const element = selfPreviewVideoRef.current;
@@ -974,6 +1014,14 @@ export function ObserverStreamCard({
       track.enabled = selfCameraEnabled;
     });
   }, [selfCameraEnabled, selfPreviewStream]);
+
+  useEffect(() => {
+    if (!selfMicEnabled) {
+      cleanupSelfMic();
+      return;
+    }
+    void ensureSelfMic();
+  }, [cleanupSelfMic, ensureSelfMic, selfMicEnabled]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1470,6 +1518,7 @@ export function ObserverStreamCard({
     () => () => {
       void disconnectStream();
       cleanupSelfPreview();
+      cleanupSelfMic();
       const c = clientRef.current;
       if (c) {
         void c.disconnectUser().catch(() => undefined);
@@ -1484,17 +1533,74 @@ export function ObserverStreamCard({
   const resolvedCandidateDisplayName = (candidateDisplayName?.trim() || "Кандидат").trim();
 
   const observerToolbar = (
-    <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
-      <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{participantName}</p>
-      <div className="flex items-center gap-2">
-        <InterviewStatusBadge status={videoStatusView} />
-        <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
-          <span className="mr-1 text-emerald-600" aria-hidden>
-            ●
-          </span>
-          {statusBadgeLabel}
-        </Badge>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+        <p className="min-h-5 min-w-0 flex-1 truncate text-sm font-medium leading-snug">{participantName}</p>
+        <div className="flex items-center gap-2">
+          <InterviewStatusBadge status={videoStatusView} />
+          <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+            <span className="mr-1 text-emerald-600" aria-hidden>
+              ●
+            </span>
+            {statusBadgeLabel}
+          </Badge>
+        </div>
       </div>
+
+      {showSelfPreview ? (
+        <div className="rounded-2xl border border-white/50 bg-white/55 p-3 shadow-sm">
+          <p className="text-center text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+            Self-preview (локально)
+          </p>
+          <div className="mt-2 overflow-hidden rounded-xl bg-black">
+            {selfPreviewStream && selfCameraEnabled ? (
+              <video ref={selfPreviewVideoRef} className="h-32 w-full object-cover" muted playsInline autoPlay />
+            ) : (
+              <div className="flex h-32 w-full items-center justify-center text-xs text-slate-300">Камера выключена</div>
+            )}
+          </div>
+          <p className="mt-2 text-center text-[10px] leading-snug text-slate-500">Не транслируется в звонок</p>
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+            <Button
+              type="button"
+              variant={selfMicEnabled ? "default" : "secondary"}
+              className="h-9 rounded-full px-3 text-xs"
+              onClick={() => setSelfMicEnabled((prev) => !prev)}
+              title={selfMicEnabled ? "Выключить микрофон" : "Включить микрофон"}
+            >
+              {selfMicEnabled ? <Mic className="mr-1 h-3.5 w-3.5" /> : <MicOff className="mr-1 h-3.5 w-3.5" />}
+              {selfMicEnabled ? "Мик: вкл" : "Мик: выкл"}
+            </Button>
+            <Button
+              type="button"
+              variant={selfCameraEnabled ? "default" : "secondary"}
+              className="h-9 rounded-full px-3 text-xs"
+              disabled={!selfPreviewStream}
+              onClick={() => setSelfCameraEnabled((prev) => !prev)}
+              title={selfCameraEnabled ? "Выключить камеру" : "Включить камеру"}
+            >
+              {selfCameraEnabled ? <Video className="mr-1 h-3.5 w-3.5" /> : <VideoOff className="mr-1 h-3.5 w-3.5" />}
+              {selfCameraEnabled ? "Кам: вкл" : "Кам: выкл"}
+            </Button>
+            {selfPreviewError ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8 rounded-full px-3 text-[11px]"
+                onClick={() => void ensureSelfPreview()}
+              >
+                Повторить доступ
+              </Button>
+            ) : null}
+          </div>
+          {selfPreviewError ? (
+            <p className="mt-2 rounded-lg bg-rose-100/90 px-2 py-1 text-[11px] leading-snug text-rose-700">{selfPreviewError}</p>
+          ) : null}
+          {selfMicError ? (
+            <p className="mt-2 rounded-lg bg-rose-100/90 px-2 py-1 text-[11px] leading-snug text-rose-700">{selfMicError}</p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 
@@ -1592,48 +1698,6 @@ export function ObserverStreamCard({
             <p className="text-center text-[10px] font-semibold uppercase tracking-wide text-slate-500">Наблюдатель</p>
             <div className="mt-2">{observerToolbar}</div>
           </div>
-
-          {showSelfPreview ? (
-            <div className="rounded-2xl border border-white/50 bg-white/55 p-3 shadow-sm">
-              <p className="text-center text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                Self-preview (локально)
-              </p>
-              <div className="mt-2 overflow-hidden rounded-xl bg-black">
-                {selfPreviewStream && selfCameraEnabled ? (
-                  <video ref={selfPreviewVideoRef} className="h-32 w-full object-cover" muted playsInline autoPlay />
-                ) : (
-                  <div className="flex h-32 w-full items-center justify-center text-xs text-slate-300">Камера выключена</div>
-                )}
-              </div>
-              <p className="mt-2 text-center text-[10px] leading-snug text-slate-500">Не транслируется в звонок</p>
-              <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-                <Button
-                  type="button"
-                  variant={selfCameraEnabled ? "default" : "secondary"}
-                  className="h-9 rounded-full px-3 text-xs"
-                  disabled={!selfPreviewStream}
-                  onClick={() => setSelfCameraEnabled((prev) => !prev)}
-                  title={selfCameraEnabled ? "Выключить камеру" : "Включить камеру"}
-                >
-                  {selfCameraEnabled ? <Video className="mr-1 h-3.5 w-3.5" /> : <VideoOff className="mr-1 h-3.5 w-3.5" />}
-                  {selfCameraEnabled ? "Камера: вкл" : "Камера: выкл"}
-                </Button>
-                {selfPreviewError ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-8 rounded-full px-3 text-[11px]"
-                    onClick={() => void ensureSelfPreview()}
-                  >
-                    Повторить доступ
-                  </Button>
-                ) : null}
-              </div>
-              {selfPreviewError ? (
-                <p className="mt-2 rounded-lg bg-rose-100/90 px-2 py-1 text-[11px] leading-snug text-rose-700">{selfPreviewError}</p>
-              ) : null}
-            </div>
-          ) : null}
 
           {error ? <p className="w-full rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
         </aside>
