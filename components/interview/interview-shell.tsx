@@ -5,12 +5,10 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useInterviewSession, type InterviewStartContext } from "@/hooks/use-interview-session";
 import {
   getCandidateAdmissionStatus,
-  getRuntimeSnapshot,
   getInterviewById,
   issueCandidateJoinLink,
   issueSpectatorJoinLink,
   listInterviews,
-  setMeetingOpenAiRealtimeVoice,
   type CandidateAdmissionStatus,
   type InterviewDetail,
   type InterviewListRow,
@@ -191,6 +189,8 @@ export function InterviewShell() {
   const [rowsError, setRowsError] = useState<string | null>(null);
   const [rowsWarning, setRowsWarning] = useState<string | null>(null);
   const [sessionOpenAiVoice, setSessionOpenAiVoice] = useState<string | null>(null);
+  void sessionOpenAiVoice;
+  void setSessionOpenAiVoice;
   const [detailError, setDetailError] = useState<string | null>(null);
   const [observerControl, setObserverControl] = useState<ObserverControlState>(DEFAULT_OBSERVER_CONTROL);
   const [candidateAdmission, setCandidateAdmission] = useState<CandidateAdmissionStatus | null>(null);
@@ -411,23 +411,7 @@ export function InterviewShell() {
   const hasInterviewSelection = Boolean(selectedRow || selectedInterviewDetailMatched);
   void isCandidateFlow;
 
-  useEffect(() => {
-    if (!recoveredMeetingId) {
-      setSessionOpenAiVoice(null);
-      return;
-    }
-    let cancelled = false;
-    void getRuntimeSnapshot(recoveredMeetingId)
-      .then((snapshot) => {
-        if (cancelled) return;
-        const voice = snapshot?.meeting?.metadata?.openai_realtime_voice;
-        setSessionOpenAiVoice(typeof voice === "string" ? voice : null);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [recoveredMeetingId]);
+  // OpenAI voice is configured by WebRTC/session defaults (no UI).
   // Recording UI/UX is removed intentionally (backend continues capturing automatically).
 
   useEffect(() => {
@@ -1112,19 +1096,7 @@ export function InterviewShell() {
             !meetingId ||
             (!isCandidateFlow && !interviewCandidatePresent)
           }
-          sessionOpenAiVoice={sessionOpenAiVoice}
-          onSessionOpenAiVoiceChange={
-            !isCandidateFlow
-              ? (voice) => {
-                  setSessionOpenAiVoice(typeof voice === "string" ? voice : null);
-                  if (!recoveredMeetingId) return;
-                  void setMeetingOpenAiRealtimeVoice(recoveredMeetingId, voice).catch((err) => {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    toast.error("Не удалось сохранить голос", { description: msg });
-                  });
-                }
-              : undefined
-          }
+          // OpenAI voice is configured by WebRTC/session defaults (no UI).
           onFail={markFailed}
           startDisabled={
             phase === "connected" ||

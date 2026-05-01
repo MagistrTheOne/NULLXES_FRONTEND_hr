@@ -53,9 +53,7 @@ type MeetingHeaderProps = {
     className?: string;
     tone?: "completed" | "blocked" | "lobby";
   } | null;
-  /** OpenAI Realtime voice override persisted per meeting (backend). */
-  sessionOpenAiVoice?: string | null;
-  onSessionOpenAiVoiceChange?: (voice: string | null) => void;
+  // OpenAI voice is configured by WebRTC/session defaults (no UI).
 };
 
 function formatRelativeMeetingTime(meetingAt: string | undefined): string | null {
@@ -95,8 +93,6 @@ export function MeetingHeader({
   candidateMode = false,
   interviewActive = false,
   technicalNotice = null,
-  sessionOpenAiVoice = null,
-  onSessionOpenAiVoiceChange
 }: MeetingHeaderProps) {
   void onStart;
   void startDisabled;
@@ -246,33 +242,7 @@ export function MeetingHeader({
             </div>
           )}
 
-          {candidateMode ? null : (
-            <div className="mt-2 flex flex-col gap-1.5 rounded-xl border border-white/60 bg-white/55 px-3 py-2">
-              <p className="text-[11px] font-semibold text-slate-700">Голос (OpenAI Realtime)</p>
-              <p className="text-[10px] leading-snug text-slate-500">
-                Сохраняется на бэке и применяется после «Стоп бота → Продолжить».
-              </p>
-              <div className="flex items-center gap-2">
-                <Input
-                  value={typeof sessionOpenAiVoice === "string" ? sessionOpenAiVoice : ""}
-                  onChange={(e) => onSessionOpenAiVoiceChange?.(e.target.value)}
-                  placeholder="coral"
-                  className="h-9 rounded-lg border border-white/60 bg-white/70 text-xs"
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="h-9 rounded-lg px-3 text-xs"
-                  onClick={() => {
-                    const v = (typeof sessionOpenAiVoice === "string" ? sessionOpenAiVoice : "").trim();
-                    onSessionOpenAiVoiceChange?.(v.length > 0 ? v : null);
-                  }}
-                >
-                  Применить
-                </Button>
-              </div>
-            </div>
-          )}
+          {null}
 
           {candidateMode ? (
             <div className="flex flex-wrap items-center gap-2 border-t border-slate-300/40 pt-4">
