@@ -93,6 +93,10 @@ export async function JoinResolver({ role, token }: JoinResolverProps) {
       params.set("entry", "candidate");
     }
     if (role === "spectator") {
+      // IMPORTANT: signed spectator flow must be explicit.
+      // `/spectator?jobAiId=...` is the internal observer dashboard and must not
+      // accidentally treat query params as signed credentials.
+      params.set("signed", "1");
       params.set("joinToken", token);
       const backendUrl = resolveBackendGatewayBaseUrl();
       if (backendUrl) {

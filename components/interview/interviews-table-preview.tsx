@@ -24,7 +24,6 @@ import {
   type InterviewListRow,
   type JoinLinkRole
 } from "@/lib/api";
-import { resolveHrCandidateEntryBasePath, withCandidateEntryQuery } from "@/lib/candidate-entry-url";
 
 type InterviewsTablePreviewProps = {
   rows: InterviewListRow[];
@@ -93,13 +92,6 @@ function navigateSameOrigin(router: ReturnType<typeof useRouter>, path: string):
   void router.push(normalized);
 }
 
-function copyText(text: string): void {
-  void navigator.clipboard.writeText(text);
-  toast.success("Скопировано", {
-    description: "Ссылка сохранена в буфер обмена."
-  });
-}
-
 function sanitizeEntryPath(value: unknown): string {
   if (typeof value !== "string") {
     return "";
@@ -125,21 +117,6 @@ function normalizeEntryPath(pathOrUrl: string): string {
     return `/${pathOrUrl}`;
   }
   return `/${pathOrUrl}`;
-}
-
-function toAbsoluteUrl(pathOrUrl: string): string {
-  if (typeof window === "undefined") {
-    return pathOrUrl;
-  }
-  if (/^https?:\/\//i.test(pathOrUrl)) {
-    return pathOrUrl;
-  }
-  return `${window.location.origin}${pathOrUrl}`;
-}
-
-function buildCandidateEntryPath(row: InterviewListRow): string {
-  const base = resolveHrCandidateEntryBasePath(row.candidateEntryPath, row.jobAiId);
-  return base === "/" ? base : withCandidateEntryQuery(base);
 }
 
 function buildSpectatorEntryPath(row: InterviewListRow): string {
@@ -279,7 +256,6 @@ export function InterviewsTablePreview({
               ) : null}
               {rows.map((row) => {
                 const nullxesBadge = resolveNullxesBadge(row);
-                const candidateEntryPath = buildCandidateEntryPath(row);
                 const spectatorEntryPath = buildSpectatorEntryPath(row);
                 return (
                   <TableRow key={row.jobAiId} className={selectedInterviewId === row.jobAiId ? "bg-sky-100/40" : ""}>
@@ -334,14 +310,6 @@ export function InterviewsTablePreview({
                       </Button>
                       {showSpectatorActions ? (
                         <>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => void issueAndCopyLink("spectator", row)}
-                            disabled={Boolean(linkBusy[`spectator:${row.jobAiId}`])}
-                          >
-                            {linkBusy[`spectator:${row.jobAiId}`] ? "Выпуск ссылки…" : "Ссылка наблюдателя"}
-                          </Button>
                           <Button
                             size="sm"
                             variant="outline"

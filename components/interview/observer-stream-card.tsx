@@ -848,6 +848,9 @@ export function ObserverStreamCard({
     if (call) {
       return "Подключение к звонку…";
     }
+    if (canConnect && !busy && !call) {
+      return "Нажмите «Подключиться», чтобы открыть наблюдение.";
+    }
     return waitingReason ?? "Ожидание запуска. Подключение выполнится автоматически, когда сессия будет доступна.";
   }, [
     busy,
@@ -857,6 +860,7 @@ export function ObserverStreamCard({
     ended,
     error,
     meetingId,
+    canConnect,
     observerAccessMode,
     observerTicket,
     status,

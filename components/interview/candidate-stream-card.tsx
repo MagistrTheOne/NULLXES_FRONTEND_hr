@@ -789,8 +789,10 @@ export function CandidateStreamCard({
                         autoPlay
                       />
                     ) : (
-                      <div className="absolute inset-0 flex items-center justify-center px-3 text-center text-xs text-slate-200/90">
-                        Нажмите «Проверить камеру и микрофон», чтобы увидеть превью
+                      <div className="absolute inset-0 flex items-center justify-center px-4 text-center text-[12px] leading-snug text-slate-200/90">
+                        <span className="block max-w-[260px] break-words">
+                          Нажмите «Проверить камеру и микрофон», чтобы увидеть превью
+                        </span>
                       </div>
                     )}
                   </div>

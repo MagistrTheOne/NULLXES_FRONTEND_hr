@@ -139,21 +139,22 @@ function SpectatorBody() {
     const parsed = Number(rawJobAiId);
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
   }, [rawJobAiId]);
+  const signedSpectator = useMemo(() => searchParams.get("signed") === "1", [searchParams]);
   const spectatorJoinToken = useMemo(() => {
     const raw = searchParams.get("joinToken");
     const t = typeof raw === "string" ? raw.trim() : "";
-    return t.length > 0 ? t : null;
-  }, [searchParams]);
+    return signedSpectator && t.length > 0 ? t : null;
+  }, [searchParams, signedSpectator]);
   const spectatorObserverTicketFromQuery = useMemo(() => {
     const raw = searchParams.get("observerTicket");
     const t = typeof raw === "string" ? raw.trim() : "";
-    return t.length > 0 ? t : null;
-  }, [searchParams]);
+    return signedSpectator && t.length > 0 ? t : null;
+  }, [searchParams, signedSpectator]);
   const spectatorViewerKey = useMemo(() => {
     const raw = searchParams.get("viewerKey");
     const t = typeof raw === "string" ? raw.trim() : "";
-    return t.length > 0 ? t : null;
-  }, [searchParams]);
+    return signedSpectator && t.length > 0 ? t : null;
+  }, [searchParams, signedSpectator]);
   const [spectatorObserverTicket, setSpectatorObserverTicket] = useState<string | null>(null);
   const [detail, setDetail] = useState<InterviewDetail | null>(null);
   const [loading, setLoading] = useState(false);
