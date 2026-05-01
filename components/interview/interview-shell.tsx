@@ -216,6 +216,7 @@ export function InterviewShell() {
   const [countdownDismissed, setCountdownDismissed] = useState(false);
   const autoEndFiredRef = useRef(false);
   const [connectionQuality, setConnectionQuality] = useState<ConnectionQualityReading | null>(null);
+  const [observerPresentInCall, setObserverPresentInCall] = useState(false);
   const poorSinceMsRef = useRef<number | null>(null);
   const lastPoorToastAtMsRef = useRef<number>(0);
   const lastQuestionStateLogRef = useRef<string>("");
@@ -1183,7 +1184,9 @@ export function InterviewShell() {
             <main
               className={cn(
                 "relative mt-3 grid min-w-0 grid-cols-1 gap-6 sm:mt-4 sm:gap-7 lg:items-stretch lg:gap-6",
-                isCandidateFlow || (!OBSERVER_PANEL_ENABLED && !HR_INSIGHT_PANEL_ENABLED)
+                isCandidateFlow ||
+                  (!OBSERVER_PANEL_ENABLED && !HR_INSIGHT_PANEL_ENABLED) ||
+                  (OBSERVER_PANEL_ENABLED && !observerPresentInCall)
                   ? "lg:grid-cols-2"
                   : "lg:grid-cols-3",
                 sessionUiState === "completed" && "pointer-events-none opacity-60"
@@ -1208,6 +1211,7 @@ export function InterviewShell() {
             onQualityChange={reportCandidateConnectionQuality}
             isCandidateFlow={isCandidateFlow}
             onInterviewCandidatePresenceChange={reportInterviewCandidatePresent}
+            onObserverPresenceChange={setObserverPresentInCall}
           />
           </div>
           <div
@@ -1255,7 +1259,7 @@ export function InterviewShell() {
             mobilePip={isCandidateFlow}
           />
           </div>
-          {isCandidateFlow ? null : OBSERVER_PANEL_ENABLED ? (
+          {isCandidateFlow ? null : OBSERVER_PANEL_ENABLED && observerPresentInCall ? (
           <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
           <ObserverStreamCard
             title="Наблюдатель"

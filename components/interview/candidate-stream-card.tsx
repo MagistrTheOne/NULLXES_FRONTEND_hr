@@ -44,6 +44,8 @@ type CandidateCallBodyProps = {
   onLeave?: (err?: Error) => void | Promise<void>;
   /** Bubble live connection quality up to the shell for banner / toast. */
   onQualityChange?: (reading: ConnectionQualityReading) => void;
+  /** Report whether an observer participant is present in the call. */
+  onObserverPresenceChange?: (present: boolean) => void;
 };
 
 function CandidateCallBody({
@@ -53,7 +55,8 @@ function CandidateCallBody({
   initialCameraEnabled: _initialCameraEnabled = false,
   initialMicEnabled: _initialMicEnabled = false,
   onLeave,
-  onQualityChange
+  onQualityChange,
+  onObserverPresenceChange
 }: CandidateCallBodyProps) {
   void _call;
   void _meetingId;
@@ -85,6 +88,18 @@ function CandidateCallBody({
   useEffect(() => {
     onQualityChange?.(quality);
   }, [onQualityChange, quality]);
+
+  const observerPresent = useMemo(() => {
+    if (!participants?.length) return false;
+    return participants.some((p) => {
+      const id = participantStreamUserId(p);
+      return id.startsWith("observer-") || id.startsWith("observer-dashboard-");
+    });
+  }, [participants]);
+
+  useEffect(() => {
+    onObserverPresenceChange?.(observerPresent);
+  }, [observerPresent, onObserverPresenceChange]);
   const [cameraBusy, setCameraBusy] = useState(false);
   const [micBusy, setMicBusy] = useState(false);
 
@@ -287,6 +302,8 @@ type CandidateStreamCardProps = {
    * the candidate-flow user is joined as `candidate-*` (self).
    */
   onInterviewCandidatePresenceChange?: (present: boolean) => void;
+  /** HR shell: observer column should be shown only when observer is present in the call. */
+  onObserverPresenceChange?: (present: boolean) => void;
   /**
    * Кандидат: сначала одна кнопка проверки камеры+микрофона (вкл/выкл превью),
    * затем ручное «Подключиться» к Stream; авто-join видео отключён.
@@ -310,7 +327,8 @@ export function CandidateStreamCard({
   uiState,
   onQualityChange,
   isCandidateFlow = false,
-  onInterviewCandidatePresenceChange
+  onInterviewCandidatePresenceChange,
+  onObserverPresenceChange
 }: CandidateStreamCardProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
@@ -779,6 +797,7 @@ export function CandidateStreamCard({
                   initialMicEnabled={requireMediaCheckBeforeConnect}
                   onLeave={handleLeaveFromControls}
                   onQualityChange={onQualityChange}
+                  onObserverPresenceChange={onObserverPresenceChange}
                 />
               </StreamCall>
             </StreamTheme>
