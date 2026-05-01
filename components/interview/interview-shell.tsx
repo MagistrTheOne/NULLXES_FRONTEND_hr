@@ -45,6 +45,7 @@ import {
 } from "@/lib/interview-context-diagnostics";
 import { deriveSessionUiState, type SessionUIState } from "@/lib/session-ui-state";
 import { cn } from "@/lib/utils";
+import { isRecordingUiEnabled } from "@/lib/feature-flags";
 import { toast } from "sonner";
 import { AvatarStreamCard } from "./avatar-stream-card";
 import { CandidateStreamCard } from "./candidate-stream-card";
@@ -1192,7 +1193,7 @@ export function InterviewShell() {
             ) : null}
           </div>
         ) : null}
-        {recoveredMeetingId && selectedInterviewId ? (
+        {isRecordingUiEnabled() && recoveredMeetingId && selectedInterviewId ? (
           <div className="w-full max-w-[420px] rounded-2xl border border-white/60 bg-[#dce2eb]/70 p-2 shadow-sm">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">

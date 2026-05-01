@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { extractJobAiIdFromEntryUrl } from "@/lib/candidate-entry-url";
+import { isElevenLabsUiEnabled } from "@/lib/feature-flags";
 import { cn } from "@/lib/utils";
 import type { InterviewStatusView } from "@/lib/interview-status";
 import { InterviewStatusBadge } from "./interview-status-badge";
@@ -224,6 +225,14 @@ export function MeetingHeader({
             </div>
           )}
 
+          {candidateMode || !isElevenLabsUiEnabled() ? null : (
+            <HrElevenLabsVoicePicker
+              committedVoiceId={sessionElevenLabsVoiceId ?? ""}
+              onSave={(voiceId) => onSessionElevenLabsVoiceIdChange?.(voiceId)}
+              className="mt-2"
+            />
+          )}
+
           {candidateMode ? (
             <div className="flex flex-wrap items-center gap-2 border-t border-slate-300/40 pt-4">
               <InterviewStatusBadge status={status} />
@@ -339,7 +348,9 @@ export function MeetingHeader({
                   </CollapsibleContent>
                 </Collapsible>
               </div>
-              {onSessionElevenLabsVoiceIdChange && typeof sessionElevenLabsVoiceId === "string" ? (
+              {isElevenLabsUiEnabled() &&
+              onSessionElevenLabsVoiceIdChange &&
+              typeof sessionElevenLabsVoiceId === "string" ? (
                 <HrElevenLabsVoicePicker
                   className="w-full min-w-0 shrink-0 md:max-w-sm md:flex-1 md:basis-0"
                   committedVoiceId={sessionElevenLabsVoiceId}
