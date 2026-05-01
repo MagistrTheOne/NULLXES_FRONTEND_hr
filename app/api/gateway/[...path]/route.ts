@@ -82,6 +82,9 @@ async function proxyRequest(
   const method = request.method.toUpperCase();
   const hasBody = !["GET", "HEAD"].includes(method);
   const body = hasBody ? await request.arrayBuffer() : undefined;
+  const accept = request.headers.get("accept") ?? "";
+  const isStreamingRequest = accept.includes("text/event-stream");
+  const signal = isStreamingRequest ? undefined : AbortSignal.timeout(60_000);
 
   let upstream: Response;
   try {
@@ -90,7 +93,7 @@ async function proxyRequest(
       headers,
       body,
       redirect: "manual",
-      signal: AbortSignal.timeout(60_000)
+      signal
     });
   } catch (err) {
     const dev = process.env.NODE_ENV === "development";
