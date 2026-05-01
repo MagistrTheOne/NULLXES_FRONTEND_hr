@@ -60,6 +60,17 @@ export type TranscriptTurn = {
   ts: number;
   itemId?: string;
 };
+
+type ResumeCheckpoint = {
+  phase: InterviewFlowPhase | null;
+  questionIndex: number | null;
+  questionText: string | null;
+  totalQuestions: number | null;
+  lastAssistantText: string | null;
+  lastCandidateText: string | null;
+  transcriptTail: string[];
+  pausedAt: number;
+};
 export type InterviewDegradationState = {
   telemetryUnavailable: boolean;
 };
@@ -487,6 +498,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   const lastRemoteAudioStreamRef = useRef<MediaStream | null>(null);
   const [agentInputEnabled, setAgentInputEnabled] = useState(true);
   const [agentPaused, setAgentPaused] = useState(false);
+  const pauseResumeBusyRef = useRef(false);
+  const [pauseResumeBusy, setPauseResumeBusy] = useState(false);
   const [runtimeRecoveryState, setRuntimeRecoveryState] = useState<RuntimeRecoveryState>("idle");
   const [activeInterviewId, setActiveInterviewId] = useState<number | null>(null);
   const [telemetryUnavailable, setTelemetryUnavailable] = useState(false);
@@ -507,6 +520,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
    * Kept as a ref-shaped array, not a Map, because transcript order is meaningful.
    */
   const [transcripts, setTranscripts] = useState<TranscriptTurn[]>([]);
+  const resumeCheckpointRef = useRef<ResumeCheckpoint | null>(null);
+  const [resumeCheckpoint, setResumeCheckpoint] = useState<ResumeCheckpoint | null>(null);
   const interviewCandidatePresentRef = useRef(false);
   const [interviewCandidatePresent, setInterviewCandidatePresent] = useState(false);
   const reportInterviewCandidatePresent = useCallback((present: boolean) => {
@@ -815,6 +830,45 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     }, 8000);
   }, []);
 
+  const buildResumeCheckpoint = useCallback(
+    (reason: "pause" | "before_resume" | "event_update"): ResumeCheckpoint => {
+      const turns = transcriptsRef.current;
+      const tail = turns
+        .slice(Math.max(0, turns.length - 10))
+        .map((t) => `${t.role === "agent" ? "HR" : "Кандидат"}: ${t.text.trim()}`.slice(0, 240));
+
+      const lastAgent = [...turns].reverse().find((t) => t.role === "agent") ?? null;
+      const lastCandidate = [...turns].reverse().find((t) => t.role === "candidate") ?? null;
+
+      const questionIndex = flowPhase === "questions" ? questionsAsked : null;
+      const questionText =
+        flowPhase === "questions" ? (lastAgent?.text?.trim() ? lastAgent.text.trim() : null) : null;
+
+      const checkpoint: ResumeCheckpoint = {
+        phase: flowPhase ?? null,
+        questionIndex,
+        questionText,
+        totalQuestions: null,
+        lastAssistantText: lastAgent?.text?.trim() ? lastAgent.text.trim() : null,
+        lastCandidateText: lastCandidate?.text?.trim() ? lastCandidate.text.trim() : null,
+        transcriptTail: tail,
+        pausedAt: Date.now()
+      };
+
+      if (process.env.NODE_ENV !== "production" && reason === "event_update") {
+        // Keep logs minimal: no full transcript, only counts and flags.
+        console.info("[resume-checkpoint-update]", {
+          phase: checkpoint.phase,
+          questionIndex: checkpoint.questionIndex,
+          hasQuestionText: Boolean(checkpoint.questionText),
+          transcriptTailCount: checkpoint.transcriptTail.length
+        });
+      }
+      return checkpoint;
+    },
+    [flowPhase, questionsAsked]
+  );
+
   /**
    * Reducer over the OpenAI Realtime DataChannel event stream. Drives:
    *  - flowPhase ("intro" → "questions" → "closing" → "completed")
@@ -920,6 +974,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           transcriptsRef.current.push(turn);
           setTranscripts((prev) => [...prev, turn]);
           scheduleCaptionUpdate("agent", transcript);
+          const checkpoint = buildResumeCheckpoint("event_update");
+          resumeCheckpointRef.current = checkpoint;
+          setResumeCheckpoint(checkpoint);
         }
         agentTranscriptBufferRef.current.delete(itemId);
 
@@ -975,6 +1032,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           transcriptsRef.current.push(turn);
           setTranscripts((prev) => [...prev, turn]);
           scheduleCaptionUpdate("agent", transcript);
+          const checkpoint = buildResumeCheckpoint("event_update");
+          resumeCheckpointRef.current = checkpoint;
+          setResumeCheckpoint(checkpoint);
         }
         agentTranscriptBufferRef.current.delete(itemId);
         return;
@@ -994,6 +1054,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         transcriptsRef.current.push(turn);
         setTranscripts((prev) => [...prev, turn]);
         scheduleCaptionUpdate("candidate", transcript);
+        const checkpoint = buildResumeCheckpoint("event_update");
+        resumeCheckpointRef.current = checkpoint;
+        setResumeCheckpoint(checkpoint);
       }
       return;
     }
@@ -1126,7 +1189,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       // We promote lobby → intro on the FIRST response.created (above).
       return;
     }
-  }, [clearElevenLabsQueue, drainElevenLabsQueue, emitFrontendTelemetry, scheduleCaptionUpdate]);
+  }, [buildResumeCheckpoint, clearElevenLabsQueue, drainElevenLabsQueue, emitFrontendTelemetry, scheduleCaptionUpdate]);
 
   const ensureClient = useCallback(() => {
     if (!rtcRef.current) {
@@ -1183,6 +1246,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   );
 
   const pauseAgent = useCallback(async () => {
+    if (pauseResumeBusyRef.current) {
+      return false;
+    }
     if (phase !== "connected") {
       return false;
     }
@@ -1190,6 +1256,21 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     const activeSessionId = rtc.getSessionId();
     if (!activeSessionId) {
       return false;
+    }
+
+    pauseResumeBusyRef.current = true;
+    setPauseResumeBusy(true);
+
+    const checkpoint = buildResumeCheckpoint("pause");
+    resumeCheckpointRef.current = checkpoint;
+    setResumeCheckpoint(checkpoint);
+    if (process.env.NODE_ENV !== "production") {
+      console.info("[pause-checkpoint]", {
+        phase: checkpoint.phase,
+        questionIndex: checkpoint.questionIndex,
+        hasQuestionText: Boolean(checkpoint.questionText),
+        transcriptTailCount: checkpoint.transcriptTail.length
+      });
     }
 
     setAgentPaused(true);
@@ -1225,23 +1306,54 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       const result = await issueRuntimeCommand(meetingId, {
         type: "agent.pause",
         issuedBy: "hr_ui",
-        payload: { sessionId: activeSessionId }
+        payload: {
+          sessionId: activeSessionId,
+          phase: checkpoint.phase,
+          questionIndex: checkpoint.questionIndex,
+          questionText: checkpoint.questionText,
+          totalQuestions: checkpoint.totalQuestions,
+          pausedAt: checkpoint.pausedAt
+        }
       }).catch(() => undefined);
       if (!result) {
         toast.error("Не удалось отправить команду паузы бота");
       }
     }
+    pauseResumeBusyRef.current = false;
+    setPauseResumeBusy(false);
     return true;
-  }, [ensureClient, meetingId, phase]);
+  }, [buildResumeCheckpoint, ensureClient, meetingId, phase]);
 
   const resumeAgent = useCallback(async () => {
+    if (pauseResumeBusyRef.current) {
+      return false;
+    }
     if (phase !== "connected") {
+      return false;
+    }
+    if (flowPhase === "completed") {
+      toast.info("Сессия завершена, продолжение недоступно");
       return false;
     }
     const rtc = ensureClient();
     const activeSessionId = rtc.getSessionId();
     if (!activeSessionId) {
       return false;
+    }
+
+    pauseResumeBusyRef.current = true;
+    setPauseResumeBusy(true);
+
+    const checkpoint = resumeCheckpointRef.current ?? buildResumeCheckpoint("before_resume");
+    resumeCheckpointRef.current = checkpoint;
+    setResumeCheckpoint(checkpoint);
+    if (process.env.NODE_ENV !== "production") {
+      console.info("[resume-checkpoint]", {
+        phase: checkpoint.phase,
+        questionIndex: checkpoint.questionIndex,
+        hasQuestionText: Boolean(checkpoint.questionText),
+        hasLastCandidateText: Boolean(checkpoint.lastCandidateText)
+      });
     }
 
     setAgentPaused(false);
@@ -1267,8 +1379,16 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
             forceOpenAiVoiceOutputRef.current
           ),
           instructions:
-            "Возобновляем после паузы. Продолжай интервью с текущего места: НЕ повторяй приветствие и НЕ возвращайся к intro. " +
-            "Не объявляй номер вопроса вслух. Просто задай следующий вопрос по списку и продолжай в том же тоне."
+            "Продолжи интервью после паузы. Не повторяй приветствие и intro. Не здоровайся заново. " +
+            "Не спрашивай «чем могу помочь». Говори только на русском языке. " +
+            `Текущая фаза: ${checkpoint.phase ?? "unknown"}. ` +
+            `Текущий индекс вопроса: ${checkpoint.questionIndex ?? "unknown"}. ` +
+            `Текущий вопрос: ${checkpoint.questionText ?? "unknown"}. ` +
+            `Последняя реплика ассистента: ${checkpoint.lastAssistantText ?? "unknown"}. ` +
+            `Последняя реплика кандидата: ${checkpoint.lastCandidateText ?? "unknown"}. ` +
+            "Если кандидат ещё не ответил на текущий вопрос — кратко повтори текущий вопрос. " +
+            "Если кандидат уже ответил — перейди к следующему вопросу из сценария. " +
+            "Не объявляй номер вопроса вслух и не говори «вопрос X из Y»."
         }
       });
     } catch {
@@ -1284,14 +1404,23 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       const result = await issueRuntimeCommand(meetingId, {
         type: "agent.resume",
         issuedBy: "hr_ui",
-        payload: { sessionId: activeSessionId }
+        payload: {
+          sessionId: activeSessionId,
+          phase: checkpoint.phase,
+          questionIndex: checkpoint.questionIndex,
+          questionText: checkpoint.questionText,
+          totalQuestions: checkpoint.totalQuestions,
+          pausedAt: checkpoint.pausedAt
+        }
       }).catch(() => undefined);
       if (!result) {
         toast.error("Не удалось отправить команду возобновления бота");
       }
     }
+    pauseResumeBusyRef.current = false;
+    setPauseResumeBusy(false);
     return true;
-  }, [ensureClient, meetingId, phase]);
+  }, [buildResumeCheckpoint, ensureClient, flowPhase, meetingId, phase]);
 
   useEffect(() => {
     activeSessionIdRef.current = sessionId;
@@ -1979,6 +2108,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     remoteAudioStream,
     agentInputEnabled,
     agentPaused,
+    pauseResumeBusy,
+    resumeCheckpoint,
     runtimeRecoveryState,
     promptSettingsSource,
     promptSettingsLastStatus,

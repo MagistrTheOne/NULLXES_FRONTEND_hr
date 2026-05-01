@@ -162,6 +162,7 @@ export function InterviewShell() {
     pauseAgent,
     resumeAgent,
     agentPaused,
+    pauseResumeBusy,
     hydrateActiveSession,
     runtimeRecoveryState,
     promptSettingsSource,
@@ -1535,7 +1536,7 @@ export function InterviewShell() {
                 }
               });
             }}
-            pauseAIDisabled={busy || phase !== "connected"}
+            pauseAIDisabled={busy || pauseResumeBusy || phase !== "connected" || flowPhase === "completed"}
             aiPaused={agentPaused}
             sessionEnded={completedInterviewLocked}
             uiState={sessionUiState}
