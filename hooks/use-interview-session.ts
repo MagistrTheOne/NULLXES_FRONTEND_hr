@@ -499,6 +499,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   const [agentInputEnabled, setAgentInputEnabled] = useState(true);
   const [agentPaused, setAgentPaused] = useState(false);
   const agentPausedRef = useRef(false);
+  const pendingPauseCancelRef = useRef<{ resolve: () => void; timeoutId: ReturnType<typeof setTimeout> | null } | null>(
+    null
+  );
   const pauseResumeBusyRef = useRef(false);
   const [pauseResumeBusy, setPauseResumeBusy] = useState(false);
   const [runtimeRecoveryState, setRuntimeRecoveryState] = useState<RuntimeRecoveryState>("idle");
@@ -1167,6 +1170,14 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     }
 
     if (type === "response.cancelled") {
+      if (pendingPauseCancelRef.current) {
+        const pending = pendingPauseCancelRef.current;
+        pendingPauseCancelRef.current = null;
+        if (pending.timeoutId) {
+          clearTimeout(pending.timeoutId);
+        }
+        pending.resolve();
+      }
       if (pendingCancelRef.current) {
         const pending = pendingCancelRef.current;
         const ackAtMs = Date.now();
@@ -1311,6 +1322,23 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     } catch {
       // Ignore no-op cancel failures: pause state remains local.
     }
+    await new Promise<void>((resolve) => {
+      if (pendingPauseCancelRef.current) {
+        const prev = pendingPauseCancelRef.current;
+        pendingPauseCancelRef.current = null;
+        if (prev.timeoutId) {
+          clearTimeout(prev.timeoutId);
+        }
+        prev.resolve();
+      }
+      const timeoutId = setTimeout(() => {
+        if (pendingPauseCancelRef.current) {
+          pendingPauseCancelRef.current = null;
+          resolve();
+        }
+      }, 800);
+      pendingPauseCancelRef.current = { resolve, timeoutId };
+    });
     elevenLabsUtteranceAbortRef.current?.abort();
     stopAgentElevenLabsPlayback();
     try {
@@ -1419,7 +1447,17 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         }
       });
     } catch {
-      // Agent will continue naturally on next candidate speech.
+      toast.error("Не удалось возобновить агента", {
+        description: "Попробуйте ещё раз или перезапустите сессию."
+      });
+      setAgentPaused(true);
+      agentPausedRef.current = true;
+      rtc.setAudioInputEnabled(false);
+      setAgentInputEnabled(false);
+      setAgentState("idle");
+      pauseResumeBusyRef.current = false;
+      setPauseResumeBusy(false);
+      return false;
     }
     await sendRealtimeEvent(activeSessionId, {
       type: "hr.agent.resume",
