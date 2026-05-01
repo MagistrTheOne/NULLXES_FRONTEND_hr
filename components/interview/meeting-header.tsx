@@ -22,6 +22,7 @@ type MeetingHeaderProps = {
   jobTitle?: string;
   meetingAt?: string;
   prototypeEntryUrl?: string;
+  spectatorEntryUrl?: string | null;
   onEntryUrlCommit?: (value: string) => void;
   candidateFio: string;
   candidateFirstName?: string;
@@ -80,6 +81,7 @@ export function MeetingHeader({
   jobTitle,
   meetingAt,
   prototypeEntryUrl,
+  spectatorEntryUrl = null,
   onEntryUrlCommit,
   candidateFio,
   candidateFirstName,
@@ -107,6 +109,7 @@ export function MeetingHeader({
 
   const canonicalUrl = (prototypeEntryUrl ?? "").trim();
   const hasCopySource = Boolean(canonicalUrl || entryUrlInput.trim());
+  const spectatorUrl = (spectatorEntryUrl ?? "").trim();
   const meetingAtAbsolute = meetingAt ? new Date(meetingAt).toLocaleString("ru-RU") : "—";
   const meetingAtRelative = useMemo(() => formatRelativeMeetingTime(meetingAt), [meetingAt]);
   const greeting = candidateFirstName?.trim() || candidateFio.split(" ")[0] || "";
@@ -127,7 +130,7 @@ export function MeetingHeader({
       {candidateMode ? null : (
         <div className="w-full min-w-0 max-w-xl space-y-2 px-0 sm:px-1 md:max-w-2xl">
           <p className="text-center text-xs leading-relaxed text-slate-500 sm:text-left">
-            Выберите интервью в списке ниже — здесь появится ссылка для отправки кандидату.
+            Выберите интервью в списке ниже — здесь появятся ссылки для кандидата и наблюдателя.
           </p>
           <div className="flex items-stretch gap-2 rounded-xl bg-[#d9dee7] p-2 shadow-[-8px_-8px_16px_rgba(255,255,255,.9),8px_8px_18px_rgba(163,177,198,.55)]">
             <Input
@@ -139,7 +142,7 @@ export function MeetingHeader({
                   onEntryUrlCommit?.(entryUrlInput);
                 }
               }}
-              placeholder="Ссылка для отправки кандидату"
+              placeholder="Ссылка для кандидата или наблюдателя"
               className="min-h-12 flex-1 rounded-lg border border-transparent bg-white/70 py-3 text-base leading-normal text-slate-800 shadow-none placeholder:text-slate-400 focus-visible:ring-1 focus-visible:ring-slate-300/60"
             />
             <Button
@@ -167,6 +170,24 @@ export function MeetingHeader({
               }}
             >
               <Copy className="size-4" />
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!spectatorUrl}
+              className="h-9 rounded-lg px-3 text-xs"
+              title={spectatorUrl ? "Скопировать ссылку наблюдателя" : "Ссылка наблюдателя появится после выбора интервью"}
+              onClick={() => {
+                if (!spectatorUrl) return;
+                void navigator.clipboard.writeText(spectatorUrl);
+                toast.success("Ссылка наблюдателя скопирована", {
+                  description: "Можно отправить наблюдателю по почте или мессенджеру."
+                });
+              }}
+            >
+              Скопировать ссылку наблюдателя
             </Button>
           </div>
         </div>

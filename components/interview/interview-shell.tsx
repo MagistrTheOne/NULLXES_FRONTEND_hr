@@ -9,6 +9,7 @@ import {
   getRuntimeSnapshot,
   getInterviewById,
   issueCandidateJoinLink,
+  issueSpectatorJoinLink,
   listInterviews,
   setMeetingOpenAiRealtimeVoice,
   type CandidateAdmissionStatus,
@@ -298,6 +299,10 @@ export function InterviewShell() {
     Record<number, JoinLinkIssued>
   >({});
   const signedLinkInflightRef = useRef<Set<number>>(new Set());
+  const [signedSpectatorLinks, setSignedSpectatorLinks] = useState<
+    Record<number, JoinLinkIssued>
+  >({});
+  const signedSpectatorLinkInflightRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     const id = selectedRow?.jobAiId;
@@ -328,11 +333,44 @@ export function InterviewShell() {
       });
   }, [selectedRow?.jobAiId, signedCandidateLinks]);
 
+  useEffect(() => {
+    const id = selectedRow?.jobAiId;
+    if (typeof id !== "number" || !Number.isInteger(id) || id <= 0) {
+      return;
+    }
+    const cached = signedSpectatorLinks[id];
+    const now = Date.now();
+    const valid = cached && cached.expiresAt - now > 5 * 60 * 1000;
+    if (valid) {
+      return;
+    }
+    if (signedSpectatorLinkInflightRef.current.has(id)) {
+      return;
+    }
+    signedSpectatorLinkInflightRef.current.add(id);
+    issueSpectatorJoinLink(id)
+      .then((issued) => {
+        setSignedSpectatorLinks((prev) => ({ ...prev, [id]: issued }));
+      })
+      .catch(() => {
+        // Silent fall-through: observer link can still be issued manually from the table if needed.
+      })
+      .finally(() => {
+        signedSpectatorLinkInflightRef.current.delete(id);
+      });
+  }, [selectedRow?.jobAiId, signedSpectatorLinks]);
+
   const selectedCandidateSignedUrl = useMemo(() => {
     const id = selectedRow?.jobAiId;
     if (typeof id !== "number") return null;
     return signedCandidateLinks[id]?.url ?? null;
   }, [selectedRow?.jobAiId, signedCandidateLinks]);
+
+  const selectedSpectatorSignedUrl = useMemo(() => {
+    const id = selectedRow?.jobAiId;
+    if (typeof id !== "number") return null;
+    return signedSpectatorLinks[id]?.url ?? null;
+  }, [selectedRow?.jobAiId, signedSpectatorLinks]);
 
   const selectedInterviewDetailMatched = useMemo(() => {
     if (!selectedInterviewDetail || !selectedInterviewId) {
@@ -1079,6 +1117,7 @@ export function InterviewShell() {
                 ?? (origin ? toAbsoluteUrl(selectedCandidateEntryPath, origin) : undefined)
               : undefined
           }
+          spectatorEntryUrl={selectedRow ? selectedSpectatorSignedUrl : null}
           onEntryUrlCommit={handleEntryUrlCommit}
           candidateFio={candidateFio}
           candidateFirstName={interviewStartContext?.candidateFirstName ?? candidateFio.split(" ")[0]}
