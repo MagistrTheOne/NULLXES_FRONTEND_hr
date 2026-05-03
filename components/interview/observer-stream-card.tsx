@@ -1157,16 +1157,6 @@ export function ObserverStreamCard({
               const participantsMap = (joinedCall as unknown as { state?: { participants?: Map<string, unknown> } })
                 .state?.participants;
               const participantsCount = participantsMap ? participantsMap.size : 0;
-              const hasAudioTracks = Boolean(
-                participantsMap &&
-                  [...(participantsMap.values() as Iterable<unknown>)].some((p) => {
-                    if (!p || typeof p !== "object") return false;
-                    const tracks = (p as { publishedTracks?: unknown }).publishedTracks;
-                    if (!tracks || typeof tracks !== "object") return false;
-                    const record = tracks as Record<string, unknown>;
-                    return Boolean(record.audio || record.audioTrack);
-                  })
-              );
               if (participantsCount === 0) {
                 void joinedCall
                   .leave()
