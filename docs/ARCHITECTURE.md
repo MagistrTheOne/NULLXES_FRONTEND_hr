@@ -1,5 +1,7 @@
 # NULLXES HR AI — архитектура фронтенда (`jobaidemo`)
 
+Сквозной обзор **фронт + `realtime-gateway` + API + голос/текст**: [SYSTEM_OVERVIEW.md](./SYSTEM_OVERVIEW.md).
+
 Документ описывает **как устроен фронтенд** в каталоге `frontend/jobaidemo`: страницы Next.js, прокси к `realtime-gateway`, поток интервью (WebRTC + Stream), основные хуки и компоненты. Цель — дать карту «от NULLXES до браузера» без привязки к конкретному коммиту.
 
 ---
