@@ -227,19 +227,21 @@ export function InterviewsTablePreview({
       </CardHeader>
       <CardContent>
         {error ? <p className="mb-3 rounded-lg bg-rose-100 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
-        <div className="min-w-0 overflow-x-hidden rounded-xl bg-white/50">
-          <Table className="w-full table-fixed">
+        <div className="min-w-0 rounded-xl bg-white/50">
+          <Table className="w-full min-w-[68rem] text-sm">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[220px]">ID Nullxes</TableHead>
-                <TableHead className="w-[90px]">ID JobAI</TableHead>
-                <TableHead className="w-[120px]">Имя</TableHead>
-                <TableHead className="w-[140px]">Фамилия</TableHead>
-                <TableHead>Компания</TableHead>
-                <TableHead className="w-[170px]">meetingAt</TableHead>
-                <TableHead className="w-[130px]">Nullxes</TableHead>
-                <TableHead className="w-[120px]">JobAI</TableHead>
-                <TableHead className="w-[220px] text-right">Действия</TableHead>
+                <TableHead className="w-[11rem] whitespace-nowrap">ID Nullxes</TableHead>
+                <TableHead className="w-[5.5rem] whitespace-nowrap">ID JobAI</TableHead>
+                <TableHead className="w-[6.5rem] whitespace-nowrap">Имя</TableHead>
+                <TableHead className="w-[7.5rem] whitespace-nowrap">Фамилия</TableHead>
+                <TableHead className="min-w-[12rem] max-w-[18rem] whitespace-normal align-bottom">
+                  Компания
+                </TableHead>
+                <TableHead className="w-[11rem] whitespace-nowrap">meetingAt</TableHead>
+                <TableHead className="min-w-[9rem] whitespace-normal align-bottom">Nullxes</TableHead>
+                <TableHead className="w-[6.5rem] whitespace-nowrap">JobAI</TableHead>
+                <TableHead className="min-w-[14rem] text-right whitespace-normal align-bottom">Действия</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -255,11 +257,13 @@ export function InterviewsTablePreview({
                 void buildSpectatorEntryPath;
                 return (
                   <TableRow key={row.jobAiId} className={selectedInterviewId === row.jobAiId ? "bg-sky-100/40" : ""}>
-                  <TableCell className="font-medium">
-                    <span className="block max-w-full truncate">{row.nullxesMeetingId ?? "—"}</span>
+                  <TableCell className="max-w-[11rem] font-medium align-top">
+                    <span className="block truncate" title={row.nullxesMeetingId ?? undefined}>
+                      {row.nullxesMeetingId ?? "—"}
+                    </span>
                   </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
+                  <TableCell className="align-top">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span>{row.jobAiId}</span>
                       {duplicateJobAiIds.includes(row.jobAiId) ? (
                         <Badge variant="secondary" className="bg-amber-100 text-amber-900">
@@ -268,23 +272,31 @@ export function InterviewsTablePreview({
                       ) : null}
                     </div>
                   </TableCell>
-                  <TableCell>{row.candidateFirstName}</TableCell>
-                  <TableCell>{row.candidateLastName}</TableCell>
-                  <TableCell>
-                    <span className="block max-w-full truncate">{row.companyName}</span>
+                  <TableCell className="max-w-[6.5rem] align-top">
+                    <span className="line-clamp-2 break-words">{row.candidateFirstName}</span>
                   </TableCell>
-                  <TableCell>
-                    <span className="block max-w-full truncate">{new Date(row.meetingAt).toLocaleString("ru-RU")}</span>
+                  <TableCell className="max-w-[7.5rem] align-top">
+                    <span className="line-clamp-2 break-words">{row.candidateLastName}</span>
                   </TableCell>
-                  <TableCell>
-                    <Badge variant="secondary" title={nullxesBadge.key}>
+                  <TableCell className="min-w-[12rem] max-w-[18rem] align-top">
+                    <span className="line-clamp-2 break-words text-slate-800" title={row.companyName || undefined}>
+                      {row.companyName || "—"}
+                    </span>
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap align-top text-xs text-slate-700">
+                    {new Date(row.meetingAt).toLocaleString("ru-RU")}
+                  </TableCell>
+                  <TableCell className="min-w-[9rem] align-top">
+                    <Badge variant="secondary" className="max-w-full whitespace-normal text-left" title={nullxesBadge.key}>
                       {nullxesBadge.label}
                     </Badge>
                   </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{row.jobAiStatus}</Badge>
+                  <TableCell className="align-top">
+                    <Badge variant="outline" className="whitespace-nowrap">
+                      {row.jobAiStatus}
+                    </Badge>
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="min-w-[14rem] text-right align-top">
                     <div className="flex flex-wrap justify-end gap-2">
                       <Button
                         size="sm"
