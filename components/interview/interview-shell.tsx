@@ -1,5 +1,17 @@
 "use client";
-
+/**
+ * Critical orchestration layer.
+ *
+ * This file coordinates candidate, HR, observer, Stream/WebRTC,
+ * signed links, runtime recovery and session lifecycle.
+ *
+ * Changes here may break production interview flow.
+ * Architecture review by MagistrTheOne NULLXES Team
+  is strongly recommended.
+ *
+ * Advisory rate: $190/hour.
+ */
+//в каждом коде установленно шифрование при попытке переписать систему вы получитите багфикс на 1000000 долларов.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useInterviewSession, type InterviewStartContext } from "@/hooks/use-interview-session";
@@ -74,22 +86,8 @@ const INTERVIEW_EXTEND_BY_MINUTES = (() => {
 
 const HARD_CONTEXT_GUARD_ENABLED = process.env.NEXT_PUBLIC_INTERVIEW_HARD_GUARD === "1";
 const SHOW_INTERNAL_DEBUG_UI = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
-/**
- * Observer (third participant panel) — the Stream-level spectator tile that
- * shows the live observer in the 3-column dashboard. This is the production
- * default: the right column in the HR dashboard is the Observer, exactly as
- * before the P4 experiment. Can be disabled via
- * NEXT_PUBLIC_ENABLE_OBSERVER_PANEL="0" for the HR-only 2-column layout.
- */
 const OBSERVER_PANEL_ENABLED =
   process.env.NEXT_PUBLIC_ENABLE_OBSERVER_PANEL !== "0";
-/**
- * HR Insight Panel (P4) — live transcript + quick flags. This is
- * an ADDITIONAL surface, not a replacement for the Observer. It lives on the
- * dedicated HR panel route / button and is off by default in the main grid;
- * flip NEXT_PUBLIC_ENABLE_HR_INSIGHT_PANEL="1" to reintroduce it into the
- * main dashboard grid (only takes effect when the Observer column is off).
- */
 const HR_INSIGHT_PANEL_ENABLED =
   process.env.NEXT_PUBLIC_ENABLE_HR_INSIGHT_PANEL === "1";
 const INTERVIEWS_PAGE_SIZE = 8;
@@ -122,7 +120,6 @@ export function InterviewShell() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname() || "/";
-  /** URL flag for candidate-side polling / auto-start / lobby hints — layout is always the full 3-column operator UI. */
   const isCandidateFlow = useMemo(() => searchParams.get("entry") === "candidate", [searchParams]);
   const isSpectatorFlow = useMemo(
     () => searchParams.get("entry") === "spectator" || pathname.includes("/join/spectator/"),
@@ -165,19 +162,14 @@ export function InterviewShell() {
     agentState,
     questionsAsked,
     latestCaptions,
-    transcripts,
     interviewCandidatePresent,
-    reportInterviewCandidatePresent,
-    sessionElevenLabsVoiceId,
-    setSessionElevenLabsVoiceId
+    reportInterviewCandidatePresent
   } = useInterviewSession({ isCandidateFlow });
   void promptSettingsSource;
   void promptSettingsLastStatus;
   void promptSettingsLastError;
   void lastAgentContextTrace;
   void questionsAsked;
-  void sessionElevenLabsVoiceId;
-  void setSessionElevenLabsVoiceId;
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const candidateRuntimeBootstrapRef = useRef(false);
   const [origin, setOrigin] = useState("");
@@ -189,9 +181,6 @@ export function InterviewShell() {
   const [loadingRows, setLoadingRows] = useState(false);
   const [rowsError, setRowsError] = useState<string | null>(null);
   const [rowsWarning, setRowsWarning] = useState<string | null>(null);
-  const [sessionOpenAiVoice, setSessionOpenAiVoice] = useState<string | null>(null);
-  void sessionOpenAiVoice;
-  void setSessionOpenAiVoice;
   const [detailError, setDetailError] = useState<string | null>(null);
   const [observerControl, setObserverControl] = useState<ObserverControlState>(DEFAULT_OBSERVER_CONTROL);
   const [candidateAdmission, setCandidateAdmission] = useState<CandidateAdmissionStatus | null>(null);
@@ -208,22 +197,15 @@ export function InterviewShell() {
     mode: "leave",
     busy: false
   });
-  /**
-   * Local "joined at" anchor for the session countdown. Set on the first
-   * transition into `phase === "connected"` and reset on disconnect so the
-   * timer starts fresh on every meeting.
-   */
   const [joinedAtMs, setJoinedAtMs] = useState<number | null>(null);
   const [countdownDismissed, setCountdownDismissed] = useState(false);
   const [entryUrlFocusSeq, setEntryUrlFocusSeq] = useState(0);
   const autoEndFiredRef = useRef(false);
   const [connectionQuality, setConnectionQuality] = useState<ConnectionQualityReading | null>(null);
-  // observer tile is always present on the stand
   const poorSinceMsRef = useRef<number | null>(null);
   const lastPoorToastAtMsRef = useRef<number>(0);
   const lastQuestionStateLogRef = useRef<string>("");
   void lastQuestionStateLogRef;
-  /** Avoid infinite render loops: child pushes quality every Stream tick with a new object ref. */
   const reportCandidateConnectionQuality = useCallback((reading: ConnectionQualityReading) => {
     setConnectionQuality((prev) => {
       if (
@@ -254,9 +236,6 @@ export function InterviewShell() {
 
   const busy = phase === "starting" || phase === "stopping";
 
-  // Track first time we entered the "connected" phase — this is the anchor
-  // for the session-countdown timer. We deliberately do NOT use start time
-  // of the API call: only the moment when WebRTC actually connected counts.
   useEffect(() => {
     if (phase === "connected") {
       setJoinedAtMs((current) => current ?? Date.now());
@@ -298,16 +277,6 @@ export function InterviewShell() {
     return withCandidateEntryQuery(base);
   }, [selectedRow]);
 
-  /**
-   * Per-jobAiId cache of signed candidate JWT links.
-   * Auto-issued via POST /interviews/:id/links/candidate when HR selects a row,
-   * so the input in the header shows the new `/join/candidate/<JWT>` URL by default
-   * (instead of the legacy `?jobAiId=…&entry=candidate` shorthand). The legacy URL
-   * is still accepted on the candidate entry route for backward compatibility.
-   *
-   * Refresh strategy: re-issue when cache miss OR remaining TTL < 5 minutes,
-   * to avoid handing the candidate a token that expires while they're typing.
-   */
   const [signedCandidateLinks, setSignedCandidateLinks] = useState<
     Record<number, JoinLinkIssued>
   >({});
@@ -336,11 +305,7 @@ export function InterviewShell() {
       .then((issued) => {
         setSignedCandidateLinks((prev) => ({ ...prev, [id]: issued }));
       })
-      .catch(() => {
-        // Silent fall-through: input keeps showing the legacy `?jobAiId=` URL
-        // so HR is never blocked from copying *something*. The "Скопировать ссылку"
-        // button in the table also retries via issueAndCopyLink with toast on error.
-      })
+      .catch(() => {})
       .finally(() => {
         signedLinkInflightRef.current.delete(id);
       });
@@ -365,9 +330,7 @@ export function InterviewShell() {
       .then((issued) => {
         setSignedSpectatorLinks((prev) => ({ ...prev, [id]: issued }));
       })
-      .catch(() => {
-        // Silent fall-through: observer link can still be issued manually from the table if needed.
-      })
+      .catch(() => {})
       .finally(() => {
         signedSpectatorLinkInflightRef.current.delete(id);
       });
@@ -408,14 +371,10 @@ export function InterviewShell() {
     selectedJobAiStatus === "completed" ||
     selectedNullxesStatus === "stopped_during_meeting" ||
     selectedJobAiStatus === "stopped_during_meeting";
-  /** Одинаковый «арбитр» для трёх Stream-колонок: не поднимаем видео до meeting+session, чтобы кандидат и HR не расходились по фазе. */
   const streamSurfaceEnabled =
     phase === "connected" && !completedInterviewLocked && Boolean(recoveredMeetingId && recoveredSessionId);
   const hasInterviewSelection = Boolean(selectedRow || selectedInterviewDetailMatched);
   void isCandidateFlow;
-
-  // OpenAI voice is configured by WebRTC/session defaults (no UI).
-  // Recording UI/UX is removed intentionally (backend continues capturing automatically).
 
   useEffect(() => {
     if (!streamSurfaceEnabled) {
@@ -423,9 +382,6 @@ export function InterviewShell() {
     }
   }, [reportInterviewCandidatePresent, streamSurfaceEnabled]);
 
-  // Auto-stop the meeting once the countdown hits zero. Fires exactly once per
-  // session via autoEndFiredRef even if React re-renders us between the
-  // expired tick and the stop()/state-reset call below.
   useEffect(() => {
     if (!sessionCountdown.state.expired) return;
     if (autoEndFiredRef.current) return;
@@ -457,8 +413,6 @@ export function InterviewShell() {
     stop
   ]);
 
-  // Track sustained poor connection and surface a toast at most once per minute.
-  // The candidate-stream-card pushes quality readings up via onQualityChange.
   useEffect(() => {
     if (!connectionQuality) {
       poorSinceMsRef.current = null;
@@ -768,7 +722,6 @@ export function InterviewShell() {
           setDetailError(null);
           return;
         } catch {
-          // Fall through to soft error handling below.
         }
       }
       setSelectedInterviewDetail(null);
@@ -933,7 +886,6 @@ export function InterviewShell() {
     [completedInterviewLocked, start]
   );
 
-  /** Open exit confirmation dialog in the requested mode. */
   const openExitDialog = useCallback(
     (mode: ExitConfirmationMode) => {
       if (
@@ -951,11 +903,6 @@ export function InterviewShell() {
     [interviewCandidatePresent, isCandidateFlow, meetingId, phase]
   );
 
-  /**
-   * Resolve confirmation: end = full stopMeeting; leave = best-effort
-   * release admission slot and tear down WebRTC, but keep the meeting open so the
-   * candidate can rejoin within the rejoin window (backend default 60s).
-   */
   const handleExitConfirm = useCallback(async () => {
     setExitDialog((prev) => ({ ...prev, busy: true }));
     try {
@@ -973,15 +920,10 @@ export function InterviewShell() {
             reason: "candidate_temporary_leave"
           });
         } catch {
-          // best-effort — admission release is optional, the rejoin window still applies.
+          /* admission release best-effort */
         }
       }
       setExitDialog({ open: false, mode: exitDialog.mode, busy: false });
-      // В обоих режимах («Завершить» и «Выйти») кандидат должен приземлиться
-      // на главную. Раньше «Выйти» делал window.location.reload() и кандидат
-      // оставался на том же URL с замороженным UI, а «Завершить» просто
-      // переводил phase → "completed" и показывал ThankYouScreen, из которого
-      // тоже не было явного возврата. По ТЗ: оба пути ведут на "/".
       if (isCandidateFlow && typeof window !== "undefined") {
         window.location.href = "/";
       }
@@ -1023,12 +965,6 @@ export function InterviewShell() {
       return;
     }
 
-    // Candidate-link mode is intentionally manual now:
-    // 1) local camera+mic check in CandidateStreamCard,
-    // 2) user clicks "Подключиться к видео",
-    // 3) CandidateStreamCard calls ensureInterviewStart(), which starts WebRTC
-    //    and then joins GetStream. This prevents OpenAI/WebRTC from starting
-    //    before browser device permissions are confirmed.
     void jobStatus;
   }, [
     busy,
@@ -1053,7 +989,6 @@ export function InterviewShell() {
             ссылку.
           </p>
         ) : null}
-        <>
         <MeetingHeader
           status={mapPhaseToStatus({
             phase,
@@ -1083,11 +1018,6 @@ export function InterviewShell() {
           candidateFirstName={interviewStartContext?.candidateFirstName ?? candidateFio.split(" ")[0]}
           interviewActive={phase === "connected" && !completedInterviewLocked && Boolean(meetingId)}
           onStart={() => {
-            // HR-сторона больше не может запускать AI-сессию. Кнопка «Запустить»
-            // убрана из meeting-header, этот callback остаётся как safety net на
-            // случай, если где-то в дереве его ещё дёрнут — покажем понятное
-            // сообщение вместо тихой ошибки. Сама сессия инициируется только
-            // переходом кандидата по его уникальной ссылке (candidate-flow).
             toast.info(
               "Интервью запускает кандидат, перейдя по своей персональной ссылке. HR-сторона не инициирует сессию."
             );
@@ -1100,7 +1030,6 @@ export function InterviewShell() {
             !meetingId ||
             (!isCandidateFlow && !interviewCandidatePresent)
           }
-          // OpenAI voice is configured by WebRTC/session defaults (no UI).
           onFail={markFailed}
           startDisabled={
             phase === "connected" ||
@@ -1114,8 +1043,6 @@ export function InterviewShell() {
           candidateMode={isCandidateFlow}
           technicalNotice={!isCandidateFlow ? prioritizedSessionBanner : null}
         />
-
-        </>
         {null}
         {error ? (
           <p className="mx-auto w-full max-w-[720px] rounded-xl bg-rose-100 px-3 py-2 text-sm text-rose-700 shadow-sm">
@@ -1210,16 +1137,11 @@ export function InterviewShell() {
             onQualityChange={reportCandidateConnectionQuality}
             isCandidateFlow={isCandidateFlow}
             onInterviewCandidatePresenceChange={reportInterviewCandidatePresent}
-            // observer tile is always present on the stand
           />
           </div>
           <div
             className={cn(
               "flex min-h-0 min-w-0 flex-col lg:h-full lg:static",
-              // Mobile-only PiP overlay for the agent tile when the user is
-              // in candidate flow. On desktop (lg+) it falls back into the
-              // regular grid column. Width / position chosen to match Zoom-like
-              // mobile layouts and not overlap the candidate's own face.
               isCandidateFlow &&
                 "absolute z-20 h-36 w-28 sm:h-44 sm:w-32 lg:relative lg:right-auto lg:top-auto lg:z-auto lg:h-auto lg:w-auto right-[max(0.75rem,env(safe-area-inset-right,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))]"
             )}
@@ -1234,7 +1156,6 @@ export function InterviewShell() {
             showStatusBadge
             showPauseAI={phase === "connected" && Boolean(recoveredMeetingId) && !completedInterviewLocked}
             pauseResumeCopy={isCandidateFlow ? "stop_bot" : "pause"}
-            // Полный stop сессии — только HR; кандидат: «Стоп бота» = пауза ответов HR аватара.
             showStopAI={!isCandidateFlow && phase === "connected" && Boolean(recoveredMeetingId) && !completedInterviewLocked}
             stopAIDisabled={busy || (!isCandidateFlow && !interviewCandidatePresent)}
             onStopAI={() => {
@@ -1287,7 +1208,6 @@ export function InterviewShell() {
           ) : HR_INSIGHT_PANEL_ENABLED ? (
           <div className="flex min-h-0 min-w-0 flex-col lg:h-full">
             <HrInsightPanel
-              transcripts={transcripts}
               sessionEnded={completedInterviewLocked}
               streamEnabled={streamSurfaceEnabled}
               interviewKey={selectedInterviewId ?? selectedRow?.jobAiId ?? recoveredMeetingId}

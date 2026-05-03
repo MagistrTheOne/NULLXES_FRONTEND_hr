@@ -46,9 +46,6 @@ export function JobAiSourceCard({ sourceStatus }: JobAiSourceCardProps) {
           </div>
         ))}
         <p className="rounded-lg bg-white/50 px-3 py-2 text-xs text-slate-500">
-          Payload storing mode: 1:1 raw JSON + table projection.
-        </p>
-        <p className="rounded-lg bg-white/50 px-3 py-2 text-xs text-slate-500">
           Last sync: {sourceStatus?.sync.lastSyncAt ? new Date(sourceStatus.sync.lastSyncAt).toLocaleString("ru-RU") : "—"}
           {" · "}
           Result: {sourceStatus?.sync.lastSyncResult ?? "idle"}

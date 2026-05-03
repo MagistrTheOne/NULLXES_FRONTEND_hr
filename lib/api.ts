@@ -850,7 +850,7 @@ export async function releaseCandidateAdmission(
   });
 }
 
-// ---------- M3: signed candidate / spectator join links ----------
+// Signed join links (gateway /interviews/:id/links/*, /join/*)
 
 export type JoinLinkRole = "candidate" | "spectator";
 

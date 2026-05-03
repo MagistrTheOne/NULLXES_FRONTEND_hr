@@ -11,9 +11,7 @@ import type { InterviewStatusView } from "@/lib/interview-status";
 import { InterviewStatusBadge } from "./interview-status-badge";
 
 type MeetingHeaderProps = {
-  /** Презентационный статус интервью (label + tone + icon). */
   status: InterviewStatusView;
-  /** Сырое значение InterviewPhase — для legacy debug-режима. */
   rawStatusLabel?: string;
   meetingId: string | null;
   sessionId: string | null;
@@ -24,7 +22,6 @@ type MeetingHeaderProps = {
   prototypeEntryUrl?: string;
   spectatorEntryUrl?: string | null;
   onEntryUrlCommit?: (value: string) => void;
-  /** Increment to force scroll+focus the entry URL field. */
   focusEntryUrlSeq?: number;
   candidateFio: string;
   candidateFirstName?: string;
@@ -35,27 +32,13 @@ type MeetingHeaderProps = {
   startDisabled?: boolean;
   failDisabled?: boolean;
   showDebugActions?: boolean;
-  /**
-   * Если true — рендерим карточку для кандидата (нарративный тон, без операторских
-   * кнопок, без технических идентификаторов, без URL-копирования).
-   */
   candidateMode?: boolean;
-  /**
-   * "Активная фаза" — true когда интервью идёт прямо сейчас. Используется для
-   * иерархии CTA: в idle Start = primary, Stop = disabled outline; в active
-   * наоборот, чтобы оператор не путался какая кнопка главная.
-   */
   interviewActive?: boolean;
-  /**
-   * Дополнительное системное уведомление для HR. Рендерится в секции
-   * «Технические детали», чтобы не перегружать верхнюю часть экрана.
-   */
   technicalNotice?: {
     body: string;
     className?: string;
     tone?: "completed" | "blocked" | "lobby";
   } | null;
-  // OpenAI voice is configured by WebRTC/session defaults (no UI).
 };
 
 function formatRelativeMeetingTime(meetingAt: string | undefined): string | null {
@@ -67,7 +50,6 @@ function formatRelativeMeetingTime(meetingAt: string | undefined): string | null
   if (Math.abs(diffMs) < 90_000) return "Сейчас";
   if (diffMs > 0 && absMin < 60) return `Через ${absMin} мин`;
   if (diffMs < 0 && absMin < 60) return `${absMin} мин назад`;
-  // fall back to absolute time
   return new Date(ts).toLocaleString("ru-RU");
 }
 
@@ -257,18 +239,6 @@ export function MeetingHeader({
             <div className="flex flex-col gap-3 border-t border-slate-300/40 pt-4">
               <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                 <InterviewStatusBadge status={status} />
-                {/*
-                  CTA hierarchy: в активной фазе главная кнопка — Завершить
-                  (filled red), Запустить уходит в outline-disabled. В idle —
-                  наоборот. Оператор глазами видит ровно одно primary-действие.
-                 */}
-                {/*
-                  HR-сторона БОЛЬШЕ НЕ инициирует AI-сессию.
-                  Интервью стартует только когда кандидат переходит по своей
-                  уникальной ссылке (candidate-flow). HR-dashboard — это
-                  исключительно surface наблюдения и управления завершением.
-                  См. use-interview-session.start()::CANDIDATE_INITIATED_TRIGGERS.
-                 */}
                 {interviewActive ? (
                   <>
                     <span className="inline-flex w-fit max-w-full items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200 sm:py-1">
@@ -331,10 +301,6 @@ export function MeetingHeader({
                     <ChevronDown className={`size-4 transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
                   </CollapsibleTrigger>
                   <CollapsibleContent className="min-w-0 pt-3">
-                    {/*
-                      Тех. id в одну колонку: при sm:grid-cols-2 длинные meeting/session id
-                      делили узкую половину карточки и «уезжали» за край рядом с блоком голоса.
-                    */}
                     <div className="grid min-w-0 grid-cols-1 gap-y-2 text-slate-500">
                       <p className="min-w-0 wrap-break-word">
                         Внутренний идентификатор ·{" "}

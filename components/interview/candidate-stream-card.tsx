@@ -42,7 +42,6 @@ type CandidateCallBodyProps = {
   initialCameraEnabled?: boolean;
   initialMicEnabled?: boolean;
   onLeave?: (err?: Error) => void | Promise<void>;
-  /** Bubble live connection quality up to the shell for banner / toast. */
   onQualityChange?: (reading: ConnectionQualityReading) => void;
 };
 
@@ -79,9 +78,6 @@ function CandidateCallBody({
   const micEnabled = !micPublishMuted;
   const quality = useConnectionQuality();
 
-  // Push quality readings up to the shell so banner / toast can react. Wrap
-  // in useEffect so we never trigger a parent re-render mid-render of this
-  // component.
   useEffect(() => {
     onQualityChange?.(quality);
   }, [onQualityChange, quality]);
@@ -146,8 +142,6 @@ function CandidateCallBody({
           <ParticipantView
             participant={localParticipant}
             trackType="videoTrack"
-            // Default Stream chrome reads SFU track flags and often disagrees with
-            // publishing toggles for a beat; we already show камера/микрофон below.
             ParticipantViewUI={() => null}
           />
         ) : (
@@ -219,10 +213,6 @@ function participantStreamUserId(p: { userId?: string; user?: { id?: string } })
   return id;
 }
 
-/**
- * HR dashboard joins Stream as a local `candidate-*` placeholder; real candidate
- * presence is a **remote** `candidate-*`. Candidate-flow uses the local candidate id.
- */
 function InterviewCandidatePresenceReporter({
   isCandidateFlow,
   onChange
@@ -275,23 +265,11 @@ type CandidateStreamCardProps = {
   }) => Promise<InterviewStartResult>;
   interviewContext?: InterviewStartContext;
   showControls?: boolean;
-  /** Сессия в статусе completed на gateway/JobAI — блок подключения и кнопки. */
   sessionEnded?: boolean;
-  /** Единый режим UI с interview-shell (дублирует sessionEnded при `completed`). */
   uiState?: SessionUIState;
-  /** Bubble live connection quality up to the shell (banner + toast hooks). */
   onQualityChange?: (reading: ConnectionQualityReading) => void;
-  /** Candidate entry URL flow (`?entry=candidate`) — local Stream user counts as interview candidate. */
   isCandidateFlow?: boolean;
-  /**
-   * Fires when a **real** remote candidate joins the Stream room (HR) or when
-   * the candidate-flow user is joined as `candidate-*` (self).
-   */
   onInterviewCandidatePresenceChange?: (present: boolean) => void;
-  /**
-   * Кандидат: сначала одна кнопка проверки камеры+микрофона (вкл/выкл превью),
-   * затем ручное «Подключиться» к Stream; авто-join видео отключён.
-   */
   requireMediaCheckBeforeConnect?: boolean;
 };
 
@@ -322,13 +300,6 @@ export function CandidateStreamCard({
   const [mediaCheckPassedOnce, setMediaCheckPassedOnce] = useState(false);
   const [mediaCheckWarning, setMediaCheckWarning] = useState<string | null>(null);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
-  // Фильтр: какие ошибки мы НЕ показываем кандидату красной плашкой.
-  // Технические транспорт-ошибки (timeout / network / stream-io) ничего
-  // полезного кандидату не сообщают, а только пугают его посреди интервью.
-  // Retry-логика live-рефреша токена и реконнект Stream разруливают
-  // это сами; если что-то действительно фатально — сессия всё равно
-  // переведётся в «завершено» по сигналу из хука. Оставляем только
-  // бизнес-сообщения (лобби/ожидание HR/отказ одобрения и т.п.).
   const isTransientTransportError = useCallback((message: string): boolean => {
     const lower = message.toLowerCase();
     return (
@@ -545,10 +516,7 @@ export function CandidateStreamCard({
       }
 
       const payload = (await response.json()) as StreamTokenResponse;
-      // Переопределяем дефолтный axios-timeout SDK (5000мс) на 60_000мс —
-      // см. комментарий в avatar-stream-card про источник «timeout of
-      // 5000ms exceeded». 5с недостаточно для coordinator round-trip на
-      // плохой сети и ломает сессию кандидата посреди интервью.
+      // Stream SDK HTTP client default timeout 5s; coordinator needs more headroom.
       const streamClient = new StreamVideoClient({
         apiKey: payload.apiKey,
         token: payload.token,
@@ -620,8 +588,6 @@ export function CandidateStreamCard({
   }, [disconnectStream, ended]);
 
   useEffect(() => {
-    // Match HR avatar card: join Stream as soon as meeting exists + session is connected.
-    // Do not require `sessionId` here — it can lag behind hook state and would block auto-join forever.
     if (!enabled || ended || !meetingId || call || busy) {
       return;
     }

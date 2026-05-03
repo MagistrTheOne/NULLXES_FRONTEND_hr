@@ -37,9 +37,7 @@ const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
   updatedAt: ""
 };
 
-// Internal debug UI removed (prod-only UX).
-// "Live" statuses can differ between projection/runtime snapshots.
-// Keep the gate permissive as long as Stream binding exists and session is not terminal.
+/** Meeting considered active for spectator join (projection vs runtime wording may differ). */
 const ACTIVE_MEETING_STATUSES = new Set(["starting", "in_meeting", "active", "live", "meeting_in_progress"]);
 const TERMINAL_MEETING_STATUSES = new Set(["completed", "stopped_during_meeting"]);
 const SPECTATOR_SSE_MAX_RETRIES = 5;
@@ -434,8 +432,6 @@ function SpectatorBody() {
       cancelled = true;
     };
   }, [spectatorJoinToken, spectatorObserverTicket]);
-
-  // prod: suppress debug logs
 
   const sseAttemptRef = useRef(0);
   const sseSlowModeRef = useRef(false);

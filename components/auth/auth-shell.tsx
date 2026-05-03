@@ -6,9 +6,6 @@ type Props = {
   children: ReactNode;
 };
 
-/**
- * Оболочка auth-страниц: фон в духе JobAI (#dfe4ed), без сетки; карточка контрастная для форм.
- */
 export function AuthShell({ title, subtitle, children }: Props) {
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#dfe4ed] px-4 py-12">

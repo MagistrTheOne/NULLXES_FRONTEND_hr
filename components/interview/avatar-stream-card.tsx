@@ -10,12 +10,6 @@ import { Badge } from "@/components/ui/badge";
 import type { SessionUIState } from "@/lib/session-ui-state";
 import { cn } from "@/lib/utils";
 
-/**
- * Временный placeholder для HR-аватара пока avatar-pod выключен / не успел
- * опубликовать видео в Stream. Файл лежит в /public/anna.jpg и отдаётся
- * Next'ом как статический asset. Убрать / заменить на live video, как
- * только RunPod avatar service начнёт публиковать `agent_<sessionId>`.
- */
 const AVATAR_PLACEHOLDER_SRC = "/anna.jpg";
 const STREAM_OPENAI_AGENT_MODE_ENABLED = process.env.NEXT_PUBLIC_STREAM_OPENAI_AGENT_MODE === "1";
 
@@ -55,7 +49,6 @@ type StreamTokenErrorPayload = {
 };
 
 type AvatarCallBodyProps = {
-  /** Stream SDK toolbar (mic/camera/layout/video mode). Off for HR avatar by default. */
   showStreamToolbar: boolean;
   meetingId: string;
   onLeave?: (err?: Error) => void | Promise<void>;
@@ -66,18 +59,7 @@ function AvatarCallBody({ showStreamToolbar, meetingId, onLeave }: AvatarCallBod
     const state = useCallCallingState();
     const participants = useParticipants();
 
-    // prod: suppress participant diagnostics logging
-
-    // HARD WHITELIST: показываем в HR-avatar tile ТОЛЬКО participants, чей
-    // userId относится к avatar-поду:
-    //   - `agent_<sessionId>` (production shape из RunPod avatar service)
-    //   - `agent-<meetingId>`  (legacy simulation)
-    //
-    // Никаких fallback'ов на «любого не-viewer participant» — раньше это
-    // приводило к тому, что когда avatar-pod офф, HR-avatar tile подхватывал
-    // видеопоток кандидата (он единственный не-viewer в комнате) и в двух
-    // колонках отображалось одно и то же лицо. Если pod не публикует —
-    // participant = null и выше по дереву рендерится Anna-placeholder.
+    // HR tile: only pod agent ids (`agent_*` or legacy `agent-<meetingId>`). No fallback to other remotes (would duplicate candidate video).
     const avatarParticipant =
       participants.find(
         (participant) =>
@@ -94,10 +76,6 @@ function AvatarCallBody({ showStreamToolbar, meetingId, onLeave }: AvatarCallBod
         ) : avatarParticipant ? (
           <ParticipantView participant={avatarParticipant} trackType="videoTrack" />
         ) : (
-          // Pod ещё не опубликовал свой video-track — показываем статичный
-          // портрет Анны как плейсхолдер, чтобы HR-колонка не выглядела
-          // пустой / "ломалась". Убрать когда avatar-service начнёт реально
-          // стримить видео.
           <AvatarPlaceholder />
         )}
       </div>
@@ -116,29 +94,19 @@ type AvatarStreamCardProps = {
   avatarReady: boolean;
   telemetryUnavailable?: boolean;
   meetingId: string | null;
-  /** Show mic/camera/layout controls from Stream (often includes «video mode»). Default off for HR. */
   showStreamToolbar?: boolean;
-  /** Status badge under the card title */
   showStatusBadge?: boolean;
-  /** Пауза / продолжить HR аватар (кандидат и HR). */
   showPauseAI?: boolean;
   onTogglePauseAI?: () => void;
   pauseAIDisabled?: boolean;
   aiPaused?: boolean;
-  /** Подписи на кнопке паузы: HR — «Пауза»/«Продолжить», кандидат — «Стоп бота»/«Продолжить бота». */
   pauseResumeCopy?: "pause" | "stop_bot";
-  /** Полный stop сессии (только оператор HR, не кандидат). */
   showStopAI?: boolean;
   onStopAI?: () => void;
   stopAIDisabled?: boolean;
   sessionEnded?: boolean;
   uiState?: SessionUIState;
-  /** Визуально выделить колонку HR как основную (AI-интервьюер). */
   emphasizePrimary?: boolean;
-  /**
-   * При true — компактный PiP для candidate-flow на узком экране (заголовок/подвал
-   * через compact). Кнопки паузы/стопа задаются отдельно через showPauseAI / showStopAI.
-   */
   mobilePip?: boolean;
 };
 
@@ -249,10 +217,6 @@ export function AvatarStreamCard({
     setInlineStatus("Ждём готовность Stream…");
     const epoch = ++connectEpochRef.current;
     try {
-      // We join the SFU as a passive viewer (`viewer-<meetingId>`). The avatar
-      // pod publishes its video as `agent_<sessionId>` from RunPod, so we MUST
-      // NOT reuse the same userId — Stream would treat us as a duplicate session
-      // of the agent and the candidate would see no video tile.
       const backoffMs = [1000, 2000, 4000, 8000, 15000];
       const maxAttempts = backoffMs.length + 1;
       let lastFailure: { status?: number; code?: string; message?: string } | null = null;
@@ -305,13 +269,7 @@ export function AvatarStreamCard({
         }
 
         const payload = (await response.json()) as StreamTokenResponse;
-        // StreamClientOptions extends Partial<AxiosRequestConfig>. Дефолт axios
-        // внутри SDK — timeout=5000мс (см. @stream-io/video-client
-        // index.es.js:«timeout: 5000»). На живом интервью 5с бюджет на HTTP
-        // вызов Stream-API часто не хватает: бизнес-процесс ломается
-        // сообщением «timeout of 5000ms exceeded» посреди диалога.
-        // Переопределяем на 60_000мс — достаточно для любых штатных
-        // coordinator/SFU round-trip даже при плохой сети.
+        // Stream SDK HTTP client default timeout 5s; coordinator needs more headroom.
         let streamClient: StreamVideoClient | null = new StreamVideoClient({
           apiKey: payload.apiKey,
           token: payload.token,
@@ -324,7 +282,6 @@ export function AvatarStreamCard({
           streamCall = streamClient.call(payload.callType, payload.callId);
           await streamCall.camera.disable().catch(() => undefined);
           await streamCall.microphone.disable().catch(() => undefined);
-          // Viewer must never create ghost calls. Join only existing call created by the session.
           await streamCall.join({ create: false, video: false } as Parameters<typeof streamCall.join>[0]);
           await streamCall.camera.disable().catch(() => undefined);
           await streamCall.microphone.disable().catch(() => undefined);
@@ -348,8 +305,6 @@ export function AvatarStreamCard({
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Не удалось подключить видео HR";
-      // Avoid spam: transient readiness errors are expected and handled by retry/backoff above.
-      // Toast only once per connect cycle for final non-transient failure.
       if (toastEpochRef.current !== epoch) {
         toastEpochRef.current = epoch;
         toast.error("Видео HR-аватара", { description: msg });
@@ -499,11 +454,6 @@ export function AvatarStreamCard({
           <p className="text-sm font-medium text-slate-700">{hrStatusLabel}</p>
         </div>
       ) : (
-        // До момента, пока viewer-клиент Stream не получил видео пода,
-        // показываем статичный портрет Анны + маленький overlay со
-        // статусом ("Подключаемся…" / "Ожидаем запуск"). Это визуально
-        // совпадает с финальным видео-аватаром и избавляет кандидата
-        // от пустой серой заглушки.
         <div className="relative h-full w-full">
           <AvatarPlaceholder emphasize={emphasizePrimary} />
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 px-4 pb-3 text-center">

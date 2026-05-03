@@ -4,20 +4,11 @@ import { Mic, MicOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface MicIndicatorProps {
-  /** True — микрофон спектатора в эфире (talkMode === "on"). */
   active: boolean;
   className?: string;
 }
 
-/**
- * Заметный live-индикатор «Ваш микрофон в эфире» для spectator/observer
- * UI. Когда spectator забывает выключить микрофон, эта плашка должна
- * не дать ему пропустить факт что его слышат участники интервью.
- *
- * Когда `active=false` рендерим тихую тонкую плашку «Микрофон выключен» —
- * это проектное решение чтобы spectator всегда видел текущее состояние,
- * а не "ничего" (что путает: «у меня микрофон вкл или выкл?»).
- */
+ 
 export function MicIndicator({ active, className }: MicIndicatorProps) {
   return active ? (
     <div

@@ -29,8 +29,8 @@ import {
   type OpenAiServerEvent,
   type WebRtcConnectionState
 } from "@/lib/webrtc-client";
-import { getDefaultElevenLabsVoiceId, HR_ELEVENLABS_VOICE_STORAGE_KEY } from "@/lib/interview-voice-presets";
-import { playAgentUtteranceWithElevenLabs, stopAgentElevenLabsPlayback } from "@/lib/agent-elevenlabs-playback";
+
+const OPENAI_RESPONSE_MODALITIES: ("audio" | "text")[] = ["audio", "text"];
 
 type RuntimeEvent = {
   type: string;
@@ -45,20 +45,11 @@ export type InterviewStartResult = {
 };
 export type RuntimeRecoveryState = "idle" | "recovering" | "failed";
 
-/**
- * Внутренняя модель прогресса интервью — производная от потока событий
- * OpenAI Realtime. Используется для phase indicator и thank-you screen.
- *
- *  - "lobby"      — соединение ещё не установлено / ожидание
- *  - "intro"      — агент произносит greeting (первая response.created)
- *  - "questions"  — greeting закончен, идёт цикл вопросов
- *  - "closing"    — meeting status перешёл в completed (финальный экран)
- *  - "completed"  — всё закрыто, можно показывать thank-you
- */
+/** UX phases derived from Realtime events (indicator + thank-you). */
 export type InterviewFlowPhase = "lobby" | "intro" | "questions" | "closing" | "completed";
 
 export type AgentState = "idle" | "listening" | "thinking" | "speaking";
-export type VoiceProvider = "openai" | "elevenlabs";
+export type VoiceProvider = "openai";
 
 export type TranscriptTurn = {
   role: "agent" | "candidate";
@@ -104,118 +95,16 @@ const AVATAR_READY_EVENT_TYPES = [
   "avatar.stream.joined"
 ];
 const HARD_CONTEXT_GUARD_ENABLED = process.env.NEXT_PUBLIC_INTERVIEW_HARD_GUARD === "1";
-/** Повторные попытки восстановления WebRTC после reload (экспоненциальная задержка между попытками). */
 const RECONNECT_ATTEMPTS = 3;
 const RECONNECT_BACKOFF_MS = [0, 450, 1400] as const;
-/** Интервал опроса готовности аватара до первого ready (после ready таймер останавливается). */
 const AVATAR_POLL_MS_ACTIVE = 2000;
 const PROMPT_SETTINGS_POLL_MS = 60_000;
 const DEFAULT_RUNTIME_PROMPT_SETTINGS: RuntimePromptSettings = {};
 
-/**
- * Best-effort field reader for arbitrary OpenAI server-event payloads. Realtime
- * responses use slightly different shapes between snapshots — we just want a
- * string if it exists, never throw on weird input.
- */
 function readString(source: unknown, key: string): string | undefined {
   if (!source || typeof source !== "object") return undefined;
   const value = (source as Record<string, unknown>)[key];
   return typeof value === "string" ? value : undefined;
-}
-
-type RealtimeAnyEvent = { type?: unknown; payload?: unknown };
-
-function extractAssistantTextFromRealtimeEvent(event: RealtimeAnyEvent): string | null {
-  const payload = event?.payload;
-  const trimOrNull = (value: unknown): string | null => {
-    if (typeof value !== "string") return null;
-    const t = value.trim();
-    return t.length > 0 ? t : null;
-  };
-
-  const maybeText = (obj: unknown): string | null => {
-    if (!obj || typeof obj !== "object") return null;
-    const rec = obj as Record<string, unknown>;
-    return (
-      trimOrNull(rec.delta) ??
-      trimOrNull(rec.text) ??
-      trimOrNull(rec.transcript) ??
-      (rec.part && typeof rec.part === "object"
-        ? trimOrNull((rec.part as Record<string, unknown>).text) ?? trimOrNull((rec.part as Record<string, unknown>).transcript)
-        : null)
-    );
-  };
-
-  // Direct string fields first (delta/text/transcript/part.text).
-  const direct = maybeText(payload);
-  if (direct) return direct;
-
-  // item.content[] shape (ignore user role).
-  if (payload && typeof payload === "object") {
-    const rec = payload as Record<string, unknown>;
-    const item = rec.item;
-    if (item && typeof item === "object") {
-      const itemRec = item as Record<string, unknown>;
-      const role = typeof itemRec.role === "string" ? itemRec.role : null;
-      if (role === "user") return null;
-      const content = itemRec.content;
-      if (Array.isArray(content)) {
-        for (const part of content) {
-          if (!part || typeof part !== "object") continue;
-          const p = part as Record<string, unknown>;
-          const extracted = trimOrNull(p.text) ?? trimOrNull(p.transcript);
-          if (extracted) return extracted;
-        }
-      }
-    }
-
-    // response.output[].content[] shape (ignore user role).
-    const response = rec.response;
-    if (response && typeof response === "object") {
-      const responseRec = response as Record<string, unknown>;
-      const outputs = responseRec.output;
-      if (Array.isArray(outputs)) {
-        for (const output of outputs) {
-          if (!output || typeof output !== "object") continue;
-          const outRec = output as Record<string, unknown>;
-          const role = typeof outRec.role === "string" ? outRec.role : null;
-          if (role === "user") continue;
-          const content = outRec.content;
-          if (Array.isArray(content)) {
-            for (const c of content) {
-              if (!c || typeof c !== "object") continue;
-              const cRec = c as Record<string, unknown>;
-              const extracted = trimOrNull(cRec.text) ?? trimOrNull(cRec.transcript);
-              if (extracted) return extracted;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return null;
-}
-
-function resolveVoiceProvider(voiceId?: string, forceOpenAi?: boolean): VoiceProvider {
-  const selected = typeof voiceId === "string" ? voiceId.trim() : "";
-  const flag = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT;
-  // Stable default: OpenAI voice. ElevenLabs is experimental and should be
-  // enabled explicitly via feature flag and (by default) only in dev/preview.
-  const allowProd = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT_ALLOW_PROD === "1";
-  const environmentAllows = process.env.NODE_ENV !== "production" || allowProd;
-  const enabled = flag === "1" && environmentAllows;
-  if (forceOpenAi) return "openai";
-  return enabled && selected.length > 0 ? "elevenlabs" : "openai";
-}
-
-/** When true, agent speech uses ElevenLabs (text-only OpenAI responses + local playback). */
-function elevenLabsAgentReplacesOpenAiAudio(voiceId?: string, forceOpenAi?: boolean): boolean {
-  return resolveVoiceProvider(voiceId, forceOpenAi) === "elevenlabs";
-}
-
-function openAiAgentResponseModalities(voiceId?: string, forceOpenAi?: boolean): ("audio" | "text")[] {
-  return resolveVoiceProvider(voiceId, forceOpenAi) === "elevenlabs" ? ["text"] : ["audio", "text"];
 }
 
 function isIgnorableStatusTransitionError(error: unknown): boolean {
@@ -333,30 +222,16 @@ async function postIntroResponseToRtc(
   effectiveContext: InterviewStartContext | undefined,
   mode: IntroMode = "first",
   runtimePromptSettings?: RuntimePromptSettings,
-  selectedVoiceId?: string,
-  forceOpenAiVoiceOutput?: boolean,
   gateOptions?: {
     getSessionUpdatedVersion: () => number;
     waitForSessionUpdatedAck: (previousVersion: number, timeoutMs: number) => Promise<boolean>;
   }
 ): Promise<void> {
   const runtimeInstructions = buildInterviewInstructions(effectiveContext, runtimePromptSettings);
-  // OpenAI Realtime GA requires session.type to be set on every session.update.
-  // Without it the API silently rejects the update and our instructions never
-  // reach the model, leaving the agent stuck on default behaviour.
-  //
-  // ВАЖНО — НЕ трогать состав этого `session.update`. Минимальный рабочий
-  // набор для GA endpoint это ровно `{ type: "realtime", instructions }`.
-  // Любая попытка добавить `turn_detection` (даже с только тремя core VAD
-  // полями, без create_response/interrupt_response) приводит к тому, что
-  // endpoint молча отклоняет ВЕСЬ update (в консоли видны 2 `[OpenAI
-  // Realtime] error` сразу после `session.updated`), и `instructions` в
-  // том же payload тоже теряются. Модель остаётся на дефолтном промпте и
-  // здоровается «Здравствуйте, чем могу помочь?» вместо JobAI-интро.
-  //
-  // Если понадобится тюнинг VAD для шумозащиты — делать это нужно в
-  // initial session config на backend (openaiRealtimeClient POST
-  // /v1/realtime/calls, multipart `session`), а не через runtime update.
+  /**
+   * Realtime GA: each `session.update` must include `session.type: "realtime"`.
+   * Keep payload minimal (`instructions` only) — adding `turn_detection` here can make the API reject the whole update (instructions lost). Tune VAD in gateway session create, not in this client update.
+   */
   const sessionUpdatePayload = {
     type: "session.update",
     session: {
@@ -378,10 +253,6 @@ async function postIntroResponseToRtc(
       if (acked) {
         break;
       }
-      // prod: suppress console noise; retries are internal
-    }
-    if (!acked) {
-      // prod: suppress console noise
     }
   }
 
@@ -408,13 +279,10 @@ async function postIntroResponseToRtc(
           "Не называй себя именем кандидата."
         ];
 
-  const modalities = openAiAgentResponseModalities(selectedVoiceId, forceOpenAiVoiceOutput);
-  void modalities;
-
   await rtc.postEvent({
     type: "response.create",
     response: {
-      modalities,
+      modalities: OPENAI_RESPONSE_MODALITIES,
       instructions: [
         ...baseInstructions,
         "",
@@ -514,7 +382,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   const [promptSettingsLastStatus, setPromptSettingsLastStatus] = useState<number | null>(null);
   const [promptSettingsLastError, setPromptSettingsLastError] = useState<string | null>(null);
 
-  // Phase indicator (B), agent state (C), live captions (F.3)
   const [flowPhase, setFlowPhase] = useState<InterviewFlowPhase>("lobby");
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [questionsAsked, setQuestionsAsked] = useState(0);
@@ -579,172 +446,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       window.clearInterval(timer);
     };
   }, [meetingId]);
-  const [sessionElevenLabsVoiceId, setSessionElevenLabsVoiceId] = useState(() => getDefaultElevenLabsVoiceId());
-  const sessionElevenLabsVoiceIdRef = useRef(sessionElevenLabsVoiceId);
-  const [forceOpenAiVoiceOutput, setForceOpenAiVoiceOutput] = useState(false);
-  const forceOpenAiVoiceOutputRef = useRef(forceOpenAiVoiceOutput);
-  const voiceProviderRef = useRef<VoiceProvider>(resolveVoiceProvider(sessionElevenLabsVoiceId, forceOpenAiVoiceOutput));
-  const lastReportedVoiceIdRef = useRef<string | null>(null);
-  const elevenLabsUtteranceAbortRef = useRef<AbortController | null>(null);
-  const elevenLabsQueueRef = useRef<string[]>([]);
-  const elevenLabsQueueDrainingRef = useRef(false);
-  const elevenLabsAlreadyQueuedResponseIdsRef = useRef<Set<string>>(new Set());
-  const elevenLabsTtsFailureToastShownRef = useRef(false);
-
-  const voiceProvider: VoiceProvider = useMemo(
-    () => resolveVoiceProvider(sessionElevenLabsVoiceId, forceOpenAiVoiceOutput),
-    [forceOpenAiVoiceOutput, sessionElevenLabsVoiceId]
-  );
-
-  useEffect(() => {
-    sessionElevenLabsVoiceIdRef.current = sessionElevenLabsVoiceId;
-    voiceProviderRef.current = resolveVoiceProvider(sessionElevenLabsVoiceId, forceOpenAiVoiceOutputRef.current);
-  }, [sessionElevenLabsVoiceId]);
-
-  useEffect(() => {
-    forceOpenAiVoiceOutputRef.current = forceOpenAiVoiceOutput;
-    voiceProviderRef.current = resolveVoiceProvider(sessionElevenLabsVoiceIdRef.current, forceOpenAiVoiceOutput);
-  }, [forceOpenAiVoiceOutput]);
-
-  useEffect(() => {
-    void sessionElevenLabsVoiceId;
-    void forceOpenAiVoiceOutput;
-  }, [forceOpenAiVoiceOutput, sessionElevenLabsVoiceId]);
-
-  const clearElevenLabsQueue = useCallback(() => {
-    elevenLabsQueueRef.current = [];
-    elevenLabsQueueDrainingRef.current = false;
-    elevenLabsAlreadyQueuedResponseIdsRef.current.clear();
-    elevenLabsUtteranceAbortRef.current?.abort();
-    elevenLabsUtteranceAbortRef.current = null;
-    stopAgentElevenLabsPlayback();
-  }, []);
-
-  useEffect(() => {
-    const flag = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_OUTPUT;
-    if (flag === "1") {
-      return;
-    }
-    // Stable mode: ensure no ElevenLabs playback can run at all.
-    elevenLabsTtsFailureToastShownRef.current = false;
-    setForceOpenAiVoiceOutput(false);
-    clearElevenLabsQueue();
-  }, [clearElevenLabsQueue]);
-
-  const drainElevenLabsQueue = useCallback(async () => {
-    if (elevenLabsQueueDrainingRef.current) return;
-    elevenLabsQueueDrainingRef.current = true;
-    try {
-      while (elevenLabsQueueRef.current.length > 0) {
-        const text = elevenLabsQueueRef.current.shift();
-        if (!text) continue;
-        const voiceId = sessionElevenLabsVoiceIdRef.current?.trim() ?? "";
-        if (!voiceId) continue;
-        const signal = elevenLabsUtteranceAbortRef.current?.signal;
-        if (signal?.aborted) {
-          elevenLabsQueueRef.current = [];
-          break;
-        }
-        try {
-          // NOTE: MVP = one utterance per response.text.done. Sentence-boundary splitting can be added later.
-          if (process.env.NODE_ENV !== "production" && voiceProviderRef.current === "elevenlabs") {
-            void voiceId;
-          }
-          await playAgentUtteranceWithElevenLabs(text, voiceId, { signal });
-        } catch (err) {
-          if (err instanceof DOMException && err.name === "AbortError") {
-            elevenLabsQueueRef.current = [];
-            break;
-          }
-          if (err instanceof Error && err.name === "AbortError") {
-            elevenLabsQueueRef.current = [];
-            break;
-          }
-          // Keep the session alive. If ElevenLabs fails, optionally fall back to OpenAI audio once.
-          void err;
-          if (!elevenLabsTtsFailureToastShownRef.current) {
-            elevenLabsTtsFailureToastShownRef.current = true;
-            toast.warning("Голос ElevenLabs временно недоступен. Переключаемся на OpenAI голос.");
-          }
-          if (!forceOpenAiVoiceOutputRef.current) {
-            setForceOpenAiVoiceOutput(true);
-          }
-        }
-      }
-    } finally {
-      elevenLabsQueueDrainingRef.current = false;
-    }
-  }, [setForceOpenAiVoiceOutput]);
-
-  useEffect(() => {
-    // Switching providers mid-session should not leave stale audio playing.
-    if (voiceProvider === "openai") {
-      clearElevenLabsQueue();
-    }
-  }, [clearElevenLabsQueue, voiceProvider]);
-
-  useEffect(() => {
-    // If we switch from ElevenLabs → OpenAI (fallback), the remote audio track
-    // may already be present; reuse the last seen stream.
-    if (voiceProvider === "openai") {
-      if (lastRemoteAudioStreamRef.current) {
-        setRemoteAudioStream(lastRemoteAudioStreamRef.current);
-      }
-      return;
-    }
-    setRemoteAudioStream(null);
-  }, [voiceProvider]);
-
-  useEffect(() => {
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      try {
-        const stored = window.localStorage.getItem(HR_ELEVENLABS_VOICE_STORAGE_KEY)?.trim();
-        if (stored) {
-          sessionElevenLabsVoiceIdRef.current = stored;
-          setSessionElevenLabsVoiceId(stored);
-        }
-      } catch {
-        /* noop */
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    try {
-      const v = sessionElevenLabsVoiceId.trim();
-      if (v) {
-        window.localStorage.setItem(HR_ELEVENLABS_VOICE_STORAGE_KEY, v);
-      }
-    } catch {
-      /* noop */
-    }
-  }, [sessionElevenLabsVoiceId]);
-
-  useEffect(() => {
-    const voiceId = sessionElevenLabsVoiceId.trim();
-    if (!voiceId) {
-      return;
-    }
-    if (lastReportedVoiceIdRef.current === voiceId) {
-      return;
-    }
-    const activeSessionId = activeSessionIdRef.current;
-    if (!activeSessionId || phase !== "connected") {
-      return;
-    }
-    lastReportedVoiceIdRef.current = voiceId;
-    void sendRealtimeEvent(activeSessionId, {
-      type: "hr.voice.changed",
-      source: "jobaidemo",
-      meetingId: meetingId ?? undefined,
-      voiceId
-    }).catch(() => undefined);
-  }, [meetingId, phase, sessionElevenLabsVoiceId]);
+  const voiceProvider: VoiceProvider = "openai";
 
   const rtcRef = useRef<WebRtcInterviewClient | null>(null);
   const reconnectAttemptForSessionRef = useRef<string | null>(null);
@@ -759,8 +461,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     Array<{ previousVersion: number; resolve: (acked: boolean) => void }>
   >([]);
 
-  // Transcript collection (F.2). We use refs so accumulation does not trigger
-  // re-renders on every audio-transcript delta — only the captions state does.
   const transcriptsRef = useRef<TranscriptTurn[]>([]);
   const agentTranscriptBufferRef = useRef<Map<string, string>>(new Map());
   const greetingDoneRef = useRef(false);
@@ -906,7 +606,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       };
 
       if (process.env.NODE_ENV !== "production" && reason === "event_update") {
-        // Keep logs minimal: no full transcript, only counts and flags.
         void checkpoint;
       }
       return checkpoint;
@@ -925,176 +624,63 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
    */
   const handleOpenAiEvent = useCallback((event: OpenAiServerEvent) => {
     const { type, payload } = event;
-    const isElevenLabsMode = elevenLabsAgentReplacesOpenAiAudio(
-      sessionElevenLabsVoiceIdRef.current,
-      forceOpenAiVoiceOutputRef.current
-    );
-
-    if (process.env.NODE_ENV !== "production" && isElevenLabsMode) {
-      const shouldLog =
-        type === "response.created" ||
-        type === "response.output_text.delta" ||
-        type === "response.output_text.done" ||
-        type === "response.text.delta" ||
-        type === "response.text.done" ||
-        type === "response.content_part.added" ||
-        type === "response.content_part.done" ||
-        type === "response.output_item.done" ||
-        type === "response.done" ||
-        type === "error";
-      if (shouldLog) {
-        const responseId =
-          readString(payload?.response, "id") ?? readString(payload, "response_id") ?? readString(payload, "id") ?? null;
-        const itemId = readString(payload, "item_id") ?? null;
-        const extractedText = extractAssistantTextFromRealtimeEvent({ type, payload });
-        void responseId;
-        void itemId;
-        void extractedText;
-      }
-    }
 
     if (type === "response.created") {
       const respId = readString(payload.response, "id") ?? readString(payload, "response_id") ?? null;
       lastResponseIdRef.current = respId;
       setAgentState("thinking");
       setFlowPhase((prev) => (prev === "lobby" ? "intro" : prev));
-      if (isElevenLabsMode) {
-        // One abort controller per "playback lifecycle" (cleared on stop/pause/reconnect).
-        // Do NOT abort here: we queue utterances and must not cut off the previous one.
-        if (!elevenLabsUtteranceAbortRef.current || elevenLabsUtteranceAbortRef.current.signal.aborted) {
-          elevenLabsUtteranceAbortRef.current = new AbortController();
-        }
+      return;
+    }
+
+    if (type === "response.output_audio.delta" || type === "response.audio.delta") {
+      setAgentState((prev) => (prev === "thinking" ? "speaking" : prev === "idle" ? "speaking" : prev));
+      return;
+    }
+
+    if (
+      type === "response.output_audio_transcript.delta" ||
+      type === "response.audio_transcript.delta"
+    ) {
+      if (agentPausedRef.current) {
+        return;
+      }
+      const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
+      const delta = readString(payload, "delta") ?? "";
+      if (delta) {
+        const current = agentTranscriptBufferRef.current.get(itemId) ?? "";
+        agentTranscriptBufferRef.current.set(itemId, current + delta);
+        scheduleCaptionUpdate("agent", current + delta);
       }
       return;
     }
 
-    if (isElevenLabsMode) {
-      if (type === "response.output_text.delta" || type === "response.text.delta") {
-        if (agentPausedRef.current) {
-          return;
-        }
-        const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
-        const delta = readString(payload, "delta") ?? "";
-        if (delta) {
-          const current = agentTranscriptBufferRef.current.get(itemId) ?? "";
-          agentTranscriptBufferRef.current.set(itemId, current + delta);
-          scheduleCaptionUpdate("agent", current + delta);
-        }
-        setAgentState((prev) => (prev === "thinking" ? "speaking" : prev === "idle" ? "speaking" : prev));
+    if (
+      type === "response.output_audio_transcript.done" ||
+      type === "response.audio_transcript.done"
+    ) {
+      if (agentPausedRef.current) {
         return;
       }
-
-      if (
-        type === "response.content_part.added" ||
-        type === "response.content_part.done" ||
-        type === "response.output_item.done"
-      ) {
-        if (agentPausedRef.current) {
-          return;
-        }
-        const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
-        const extracted = extractAssistantTextFromRealtimeEvent({ type, payload });
-        if (extracted) {
-          const current = agentTranscriptBufferRef.current.get(itemId) ?? "";
-          const next = current ? `${current} ${extracted}` : extracted;
-          agentTranscriptBufferRef.current.set(itemId, next);
-          scheduleCaptionUpdate("agent", next);
-          setAgentState((prev) => (prev === "thinking" ? "speaking" : prev === "idle" ? "speaking" : prev));
-        }
-        return;
+      const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
+      const transcript =
+        readString(payload, "transcript") ?? agentTranscriptBufferRef.current.get(itemId) ?? "";
+      if (transcript.trim().length > 0) {
+        const turn: TranscriptTurn = {
+          role: "agent",
+          text: transcript,
+          ts: Date.now(),
+          itemId
+        };
+        transcriptsRef.current.push(turn);
+        setTranscripts((prev) => [...prev, turn]);
+        scheduleCaptionUpdate("agent", transcript);
+        const checkpoint = buildResumeCheckpoint("event_update");
+        resumeCheckpointRef.current = checkpoint;
+        setResumeCheckpoint(checkpoint);
       }
-
-      if (type === "response.output_text.done" || type === "response.text.done") {
-        if (agentPausedRef.current) {
-          return;
-        }
-        const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
-        const transcript =
-          readString(payload, "text") ??
-          readString(payload, "transcript") ??
-          agentTranscriptBufferRef.current.get(itemId) ??
-          "";
-        if (transcript.trim().length > 0) {
-          const turn: TranscriptTurn = {
-            role: "agent",
-            text: transcript,
-            ts: Date.now(),
-            itemId
-          };
-          transcriptsRef.current.push(turn);
-          setTranscripts((prev) => [...prev, turn]);
-          scheduleCaptionUpdate("agent", transcript);
-          const checkpoint = buildResumeCheckpoint("event_update");
-          resumeCheckpointRef.current = checkpoint;
-          setResumeCheckpoint(checkpoint);
-        }
-        agentTranscriptBufferRef.current.delete(itemId);
-
-        const trimmed = transcript.trim();
-        if (trimmed.length > 0) {
-          const responseId =
-            readString(payload?.response, "id") ?? readString(payload, "response_id") ?? readString(payload, "id") ?? null;
-          if (responseId) {
-            elevenLabsAlreadyQueuedResponseIdsRef.current.add(responseId);
-          }
-          // Enqueue full utterance (MVP). TODO: sentence-boundary splitting for lower latency.
-          elevenLabsQueueRef.current.push(trimmed);
-          void drainElevenLabsQueue();
-        }
-        return;
-      }
-    }
-
-    if (!isElevenLabsMode) {
-      if (type === "response.output_audio.delta" || type === "response.audio.delta") {
-        setAgentState((prev) => (prev === "thinking" ? "speaking" : prev === "idle" ? "speaking" : prev));
-        return;
-      }
-
-      if (
-        type === "response.output_audio_transcript.delta" ||
-        type === "response.audio_transcript.delta"
-      ) {
-        if (agentPausedRef.current) {
-          return;
-        }
-        const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
-        const delta = readString(payload, "delta") ?? "";
-        if (delta) {
-          const current = agentTranscriptBufferRef.current.get(itemId) ?? "";
-          agentTranscriptBufferRef.current.set(itemId, current + delta);
-          scheduleCaptionUpdate("agent", current + delta);
-        }
-        return;
-      }
-
-      if (
-        type === "response.output_audio_transcript.done" ||
-        type === "response.audio_transcript.done"
-      ) {
-        if (agentPausedRef.current) {
-          return;
-        }
-        const itemId = readString(payload, "item_id") ?? readString(payload, "response_id") ?? "current";
-        const transcript =
-          readString(payload, "transcript") ?? agentTranscriptBufferRef.current.get(itemId) ?? "";
-        if (transcript.trim().length > 0) {
-          const turn: TranscriptTurn = {
-            role: "agent",
-            text: transcript,
-            ts: Date.now(),
-            itemId
-          };
-          transcriptsRef.current.push(turn);
-          setTranscripts((prev) => [...prev, turn]);
-          scheduleCaptionUpdate("agent", transcript);
-          const checkpoint = buildResumeCheckpoint("event_update");
-          resumeCheckpointRef.current = checkpoint;
-          setResumeCheckpoint(checkpoint);
-        }
-        agentTranscriptBufferRef.current.delete(itemId);
-        return;
-      }
+      agentTranscriptBufferRef.current.delete(itemId);
+      return;
     }
 
     if (type === "conversation.item.input_audio_transcription.completed") {
@@ -1155,22 +741,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     }
 
     if (type === "response.done") {
-      if (isElevenLabsMode) {
-        const responseId =
-          readString(payload?.response, "id") ?? readString(payload, "response_id") ?? readString(payload, "id") ?? null;
-        const alreadyQueued = responseId ? elevenLabsAlreadyQueuedResponseIdsRef.current.has(responseId) : false;
-        if (!alreadyQueued) {
-          const extracted = extractAssistantTextFromRealtimeEvent({ type, payload });
-          const trimmed = extracted?.trim() ?? "";
-          if (trimmed.length > 0) {
-            if (responseId) {
-              elevenLabsAlreadyQueuedResponseIdsRef.current.add(responseId);
-            }
-            elevenLabsQueueRef.current.push(trimmed);
-            void drainElevenLabsQueue();
-          }
-        }
-      }
       if (pendingCancelRef.current) {
         const pending = pendingCancelRef.current;
         const ackAtMs = Date.now();
@@ -1190,13 +760,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         pendingCancelRef.current = null;
       }
       setAgentState("listening");
-      // First response.done = end of greeting → switch to questions phase.
-      // Subsequent ones are answers to interview questions; count them.
       if (!greetingDoneRef.current) {
         greetingDoneRef.current = true;
         setFlowPhase("questions");
-        // Defensive reset: on reconnect/restore some "response.done" events may arrive
-        // out-of-order, and we never want the first displayed question label to jump.
         setQuestionsAsked(0);
       }
       lastResponseIdRef.current = null;
@@ -1231,7 +797,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         pendingCancelRef.current = null;
       }
       setAgentState("listening");
-      clearElevenLabsQueue();
       return;
     }
 
@@ -1250,11 +815,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     }
 
     if (type === "session.created") {
-      // Session is live but agent has not yet generated greeting.
-      // We promote lobby → intro on the FIRST response.created (above).
       return;
     }
-  }, [buildResumeCheckpoint, clearElevenLabsQueue, drainElevenLabsQueue, emitFrontendTelemetry, scheduleCaptionUpdate]);
+  }, [buildResumeCheckpoint, emitFrontendTelemetry, scheduleCaptionUpdate]);
 
   const ensureClient = useCallback(() => {
     if (!rtcRef.current) {
@@ -1262,18 +825,11 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         onStateChange: setRtcState,
         onRemoteStream: (stream) => {
           lastRemoteAudioStreamRef.current = stream;
-          // Prevent double sound: in ElevenLabs mode OpenAI should be text-only, but we also
-          // defensively avoid attaching any remote audio stream to the UI audio element.
-          if (voiceProviderRef.current === "openai") {
-            setRemoteAudioStream(stream);
-          } else {
-            setRemoteAudioStream(null);
-          }
+          setRemoteAudioStream(stream);
         },
         onOpenAiEvent: handleOpenAiEvent
       });
     } else {
-      // Re-bind in case React Fast Refresh / hot reload created a new closure.
       rtcRef.current.setOpenAiEventListener(handleOpenAiEvent);
     }
     return rtcRef.current;
@@ -1304,7 +860,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           agentInputEnabled: nextAgentInputEnabled
         });
       } catch {
-        // Ignore telemetry delivery errors; isolation is enforced locally.
       }
     },
     [ensureClient]
@@ -1347,7 +902,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         type: "response.cancel"
       });
     } catch {
-      // Ignore no-op cancel failures: pause state remains local.
     }
     await new Promise<void>((resolve) => {
       if (pendingPauseCancelRef.current) {
@@ -1366,8 +920,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       }, 800);
       pendingPauseCancelRef.current = { resolve, timeoutId };
     });
-    elevenLabsUtteranceAbortRef.current?.abort();
-    stopAgentElevenLabsPlayback();
     try {
       await rtc.postEvent({
         type: "session.update",
@@ -1375,7 +927,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         message: "agent_paused"
       });
     } catch {
-      // Breadcrumb only.
     }
     await sendRealtimeEvent(activeSessionId, {
       type: "hr.agent.pause",
@@ -1443,16 +994,12 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         message: "agent_resumed"
       });
     } catch {
-      // Breadcrumb only.
     }
     try {
       await rtc.postEvent({
         type: "response.create",
         response: {
-          modalities: openAiAgentResponseModalities(
-            sessionElevenLabsVoiceIdRef.current,
-            forceOpenAiVoiceOutputRef.current
-          ),
+          modalities: OPENAI_RESPONSE_MODALITIES,
           instructions:
             "Продолжи интервью после паузы. Не повторяй приветствие и intro. Не здоровайся заново. " +
             "Не спрашивай «чем могу помочь». Говори только на русском языке. " +
@@ -1547,7 +1094,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         if (cancelled) {
           return;
         }
-        // Gateway без GET /realtime/session/:id отдаёт 404 — это не «аватар мёртв», а отсутствие телеметрии.
+        // 404 on GET /realtime/session/:id means no telemetry row — not necessarily a dead avatar.
         if (error instanceof ApiRequestError && error.status === 404) {
           setTelemetryUnavailable(true);
           setAvatarReady(false);
@@ -1664,11 +1211,9 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
                     effectiveContext,
                     "reconnect",
                     effectivePromptSettings,
-                    sessionElevenLabsVoiceIdRef.current,
-                    forceOpenAiVoiceOutputRef.current,
                     {
-                    getSessionUpdatedVersion,
-                    waitForSessionUpdatedAck
+                      getSessionUpdatedVersion,
+                      waitForSessionUpdatedAck
                     }
                   );
                 }
@@ -1695,9 +1240,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       );
     };
 
-    // Не добавлять `runtimeRecoveryState` в deps ниже: при setState("recovering") эффект
-    // перезапускался бы, cleanup ставил cancelled=true и обрывал in-flight connect(),
-    // а повторный вход блокировался reconnectAttemptForSessionRef — вечное «Восстановление…».
+    // Do not list runtimeRecoveryState in deps: effect rerun would cancel in-flight reconnect and stall UI.
     void restoreRuntime();
     return () => {
       cancelled = true;
@@ -1752,10 +1295,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
                   triggerSource: options?.triggerSource
                 })
               );
-              // See postIntroResponseToRtc above — minimal safe payload only.
-              // Никаких turn_detection на runtime update: endpoint silently
-              // отклонит whole update вместе с instructions, и при reconnect
-              // агент опять уедет в дефолтное приветствие.
               await rtc.postEvent({
                 type: "session.update",
                 session: {
@@ -1778,20 +1317,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     const internalMeetingId = `meeting-${Date.now()}`;
     const triggerSource = options?.triggerSource ?? "frontend_manual";
 
-    // HARD ROLE GUARD: создать новую AI-сессию (meeting + OpenAI Realtime
-    // peer) имеет право ТОЛЬКО кандидат, зашедший по своей уникальной
-    // ссылке. Раньше HR из dashboard мог нажать «Запустить интервью» →
-    // хук поднимал meeting без кандидата в комнате, AI говорил с HR как
-    // с кандидатом, а реальный кандидат потом получал «сессия уже
-    // завершена». Whitelist легальных инициаторов:
-    //   - candidate_auto_start  (candidate-flow, переход по ссылке)
-    //   - join_stream           (кандидат присоединился к stream-room,
-    //                            в реальном стеке попадает в hydrate
-    //                            path раньше чем сюда)
-    //   - webrtc_restore        (внутренняя реконнект-логика хука)
-    //   - candidate_*           (любой наш future candidate trigger)
-    // Все прочие источники (manual_start_button из HR-dashboard, любой
-    // внешний вызов) — блокируются с явной ошибкой.
+    /** New meeting + Realtime peer: only candidate-originated triggerSource values (not HR dashboard). */
     const CANDIDATE_INITIATED_TRIGGERS = new Set<string>([
       "candidate_auto_start",
       "join_stream",
@@ -1850,7 +1376,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     setTelemetryUnavailable(false);
     sessionUpdatedVersionRef.current = 0;
     flushSessionUpdatedWaiters(false);
-    // Reset flow / agent / transcript state — fresh interview from scratch.
     setFlowPhase("intro");
     setAgentState("idle");
     setQuestionsAsked(0);
@@ -1890,9 +1415,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       setSessionId(connected.sessionId);
 
       if (STREAM_OPENAI_AGENT_MODE_ENABLED) {
-        // Phase 2 guard: in Stream OpenAI agent mode the browser must NOT act as a speaking agent.
-        // We still establish a gateway sessionId for orchestration / Stream tokens, but we disable
-        // browser audio input and skip response.create / greeting.
+        // Stream OpenAI agent mode: browser is not the speaking agent; skip greeting / mic-driven responses.
         rtc.setAudioInputEnabled(false);
         setAgentInputEnabled(false);
         setAgentState("idle");
@@ -1932,8 +1455,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           effectiveContext,
           "first",
           effectivePromptSettings,
-          sessionElevenLabsVoiceIdRef.current,
-          forceOpenAiVoiceOutputRef.current,
           {
             getSessionUpdatedVersion,
             waitForSessionUpdatedAck
@@ -1962,7 +1483,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
             }
           });
         } catch {
-          // Ignore secondary fail-notification errors in prototype.
         }
       }
       throw startError;
@@ -2043,7 +1563,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
             type: "response.cancel"
           })
           .catch(() => undefined);
-        // Telemetry breadcrumb for gateway logs (gateway-only, OpenAI ignores).
         await rtc
           .postEvent({
             type: "session.update",
@@ -2093,8 +1612,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
           }
         }
       }
-      clearElevenLabsQueue();
-      elevenLabsUtteranceAbortRef.current = null;
       rtc?.close();
       if (activeSessionId) {
         await closeRealtimeSession(activeSessionId).catch(() => undefined);
@@ -2128,7 +1645,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       setError(err instanceof Error ? err.message : "Failed to stop session");
       return false;
     }
-  }, [activeInterviewId, clearElevenLabsQueue, emitFrontendTelemetry, flushSessionUpdatedWaiters, isCandidateFlow, meetingId, sessionId]);
+  }, [activeInterviewId, emitFrontendTelemetry, flushSessionUpdatedWaiters, isCandidateFlow, meetingId, sessionId]);
 
   const markFailed = useCallback(async () => {
     if (!meetingId) {
@@ -2162,7 +1679,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     return "Failed";
   }, [phase, runtimeRecoveryState]);
 
-  // Cleanup caption fade timers on unmount.
   useEffect(() => {
     const timers = captionFadeTimerRef.current;
     return () => {
@@ -2210,8 +1726,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     stop,
     interviewCandidatePresent,
     reportInterviewCandidatePresent,
-    sessionElevenLabsVoiceId,
-    setSessionElevenLabsVoiceId,
     markFailed,
     pauseAgent,
     resumeAgent,

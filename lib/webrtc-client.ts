@@ -9,10 +9,7 @@ export type MediaDevicesCheckResult =
   | { ok: true; stream: MediaStream; hasVideo: boolean; hasAudio: boolean; warning?: string }
   | { ok: false; code: "permission_denied" | "device_unavailable" | "unknown"; message: string };
 
-/**
- * Одна проверка камеры + микрофона для лобби кандидата (до Stream/WebRTC интервью).
- * Вызывающий обязан остановить треки, когда превью больше не нужно.
- */
+/** Candidate lobby: single getUserMedia for mic+cam; caller must stop tracks when done. */
 export async function acquireLocalMediaPreviewStream(): Promise<MediaDevicesCheckResult> {
   const audioConstraints: MediaTrackConstraints = {
     echoCancellation: true,
@@ -33,8 +30,6 @@ export async function acquireLocalMediaPreviewStream(): Promise<MediaDevicesChec
     });
     return { ok: true, stream, hasAudio: true, hasVideo: stream.getVideoTracks().length > 0 };
   } catch (error) {
-    // Camera may be absent/blocked while microphone is still available.
-    // Fallback to audio-only so candidate can continue without hard stop.
     try {
       const audioOnlyStream = await navigator.mediaDevices.getUserMedia({
         audio: audioConstraints,
@@ -228,10 +223,6 @@ export class WebRtcInterviewClient {
     pc.addTransceiver("audio", { direction: "sendrecv" });
 
     try {
-      // Explicit audio constraints — browser defaults vary across Chrome/Safari/Firefox.
-      // For HR-interview UX we MUST have noise suppression and AEC on (room noise, fan,
-      // keyboard, distant TV). channelCount=1 keeps payload small for OpenAI Realtime
-      // and avoids stereo dropouts on flaky uplinks.
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -253,7 +244,6 @@ export class WebRtcInterviewClient {
       this.setAudioInputEnabled(this.audioInputEnabled);
     } catch (mediaErr) {
       if (this.peerConnection !== pc) throw mediaErr;
-      // Audio capture is optional for initial prototype.
     }
 
     pc.ontrack = (event) => {
@@ -263,10 +253,7 @@ export class WebRtcInterviewClient {
       }
     };
 
-    // OpenAI Realtime API GA requires the DataChannel name to be exactly "oai-events".
-    // Any other name causes OpenAI to silently ignore both client events AND server events
-    // sent over the channel — symptom: agent never speaks, session.update / response.create
-    // appear successful in our logs but never trigger any response from the model.
+    // Realtime GA: DataChannel label must be "oai-events" or OpenAI ignores the channel.
     const dataChannel = pc.createDataChannel("oai-events");
     this.dataChannel = dataChannel;
     dataChannel.onopen = () => {
@@ -279,9 +266,6 @@ export class WebRtcInterviewClient {
       }
       this.flushPendingEvents();
     };
-    // Listen to OpenAI Realtime events sent back over the same DataChannel.
-    // Without this we never see `response.error`, `error`, `response.done`, etc. —
-    // and silent failures (e.g. invalid session.update) make the agent appear "stuck".
     dataChannel.onmessage = (event: MessageEvent<string>) => {
       let parsed: { type?: string; [k: string]: unknown } | null = null;
       try {
@@ -300,24 +284,18 @@ export class WebRtcInterviewClient {
         type === "session.created" ||
         type === "session.updated" ||
         type === "rate_limits.updated";
-      // prod: suppress console noise; UI surfaces errors via state/toasts
       if (isCritical && this.sessionId) {
         void sendRealtimeEvent(this.sessionId, {
           type: `openai.${type}`,
           source: "openai",
           payload: parsed
-        }).catch(() => {
-          // best-effort telemetry; never let upstream errors block the agent
-        });
+        }).catch(() => undefined);
       }
-      // Always notify local listener — UI uses these for phase / agent-state /
-      // captions even when we don't ship them to the gateway. Wrap in try so
-      // a misbehaving listener can never break the realtime loop.
       if (this.onOpenAiEvent) {
         try {
           this.onOpenAiEvent({ type, payload: parsed });
         } catch {
-          // ignore: listener errors must not break realtime loop
+          /* listener must not break channel loop */
         }
       }
     };
@@ -356,8 +334,6 @@ export class WebRtcInterviewClient {
     const normalizedLocalSdp = normalizeSdp(localSdp);
     const { answerSdp, sessionId } = await createRealtimeSession(normalizedLocalSdp);
     if (isAborted(pc.signalingState)) {
-      // Gateway answered but our PC was torn down meanwhile (page refresh, double-connect, etc).
-      // Drop the orphaned session id silently — server-side idle sweeper will close it.
       throw new Error("connect aborted: peer connection closed before applying SDP answer");
     }
     if (!sessionId) {
@@ -376,10 +352,7 @@ export class WebRtcInterviewClient {
   }
 
   async postEvent(payload: Record<string, unknown>): Promise<void> {
-    // Only forward events with types that OpenAI Realtime API actually understands.
-    // Our internal telemetry (observer.*, candidate.stream.*, hr.agent.*, etc.)
-    // is gateway-only — sending it to OpenAI causes "unknown_event_type" errors that
-    // pollute the session and may interfere with response generation.
+    // Forward only OpenAI-recognized client event types; internal telemetry goes gateway-only via sendRealtimeEvent.
     if (isOpenAiClientEventType(payload.type)) {
       this.sendToOpenAiDataChannel(payload);
     }

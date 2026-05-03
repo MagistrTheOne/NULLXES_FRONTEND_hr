@@ -156,7 +156,6 @@ async function enforceObserverPublisherRole(
 
   const callUrl = `https://video.stream-io-api.com/api/v2/video/call/${encodeURIComponent(callType)}/${encodeURIComponent(callId)}?api_key=${encodeURIComponent(apiKey)}`;
   try {
-    // Fast path: call exists, just upsert member role.
     await streamAdminPost(apiKey, secret, callUrl, {
       data: {
         members: [{ user_id: userId, role: "user" }]
@@ -164,8 +163,7 @@ async function enforceObserverPublisherRole(
     });
     return;
   } catch (error) {
-    // Slow path: call may not be created yet (observer opens before candidate),
-    // or Stream may require created_by_id when creating a call.
+    // Slow path: call missing yet, or Stream needs created_by_id.
     const status = parseStreamAdminStatus(error);
     if (status !== 404 && status !== 400) {
       throw error;
@@ -235,8 +233,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const isInternalAvatarViewer = role === "spectator" && viewerKind === "hr_avatar_panel";
   const isInternalObserverDashboard = role === "spectator" && viewerKind === "internal_observer_dashboard";
   const isExternalSpectator = role === "spectator" && !isInternalAvatarViewer && !isInternalObserverDashboard;
-  // `role` comes from the client request body, so it must be allowlisted server-side.
-  // Unknown roles must never receive Stream tokens (prevents role escalation).
+  // role: from client body — allowlist only (no escalation).
   if (role !== "candidate" && role !== "spectator") {
     return NextResponse.json(
       { message: "Invalid role", code: "role.invalid" },
@@ -369,7 +366,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   if (role === "spectator") {
     const joinTokenRaw = typeof body.joinToken === "string" ? body.joinToken.trim() : "";
-    // External spectator flow must keep strict auth; internal viewers must not depend on it.
     if (isExternalSpectator && !joinTokenRaw) {
       return NextResponse.json(
         {
@@ -418,9 +414,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const meetingBoundCallId = sanitizeIdentifier(meetingBoundCallIdRaw, "");
     const meetingBoundCallType = sanitizeIdentifier(meetingBoundCallTypeRaw, "");
 
-    // Spectator call binding is authoritative from runtime snapshot when ready,
-    // but runtime can lag (sessionId not persisted yet). If runtime isn't ready
-    // and meeting already carries Stream binding, fall back to meeting metadata.
+    // Prefer runtime snapshot for call binding; fall back to meeting metadata if runtime lags.
     const runtimeResponse = await fetch(`${backendUrl}/runtime/${encodeURIComponent(meetingId)}`, {
       method: "GET",
       cache: "no-store"
@@ -570,8 +564,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // Internal avatar viewer must never take callId/callType from the client as a source of truth.
-  // If the client provided them, treat it only as an optional consistency check.
+  // Internal HR avatar: callId/callType from server snapshot, not from client (optional consistency check only).
   if (isInternalAvatarViewer || isInternalObserverDashboard) {
     const clientCallId = sanitizeIdentifier(body.callId ?? "", "");
     const clientCallType = sanitizeIdentifier(body.callType ?? "", "");
@@ -590,7 +583,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   if (isInternalObserverDashboard) {
-    // TODO(auth): internal observer dashboard should require authenticated HR/operator session before production.
+    // Production: bind internal_dashboard tokens to authenticated HR session when auth is wired.
   }
 
   const serverClient = new StreamClient(apiKey, secret);

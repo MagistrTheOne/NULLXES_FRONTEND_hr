@@ -56,7 +56,7 @@ export type ObserverConnectionStatus =
 type ObserverConnectionPhase = "connecting" | "connected" | "reconnecting" | "failed";
 
 const OBSERVER_TOKEN_TIMEOUT_MS = 20_000;
-// Stream SFU join for readonly spectators can take longer (role propagation + SFU WS).
+/** Readonly spectator join: SFU + role propagation can exceed default client timeouts. */
 const OBSERVER_JOIN_TIMEOUT_MS = 45_000;
 const OBSERVER_MAX_ATTEMPTS = 6;
 const OBSERVER_RETRY_BACKOFF_MS = 1_200;
@@ -134,7 +134,7 @@ type ObserverCallBodyProps = {
   candidateVideoContainerRef?: { current: HTMLDivElement | null };
 };
 
-/** Две колонки как у кандидата: кандидат | HR (внутри одного StreamCall). */
+/** Spectator dashboard: candidate | HR inside one StreamCall. */
 type ObserverSplitDashboardProps = {
   localUserId: string;
   candidateDisplayName: string;
@@ -231,7 +231,6 @@ function ObserverSplitDashboard({
       agent = remotesWithVideo.find((p) => p.userId !== first) ?? remotes.find((p) => p.userId !== candidate?.userId) ?? null;
     }
 
-    // Final guard: never return local participant.
     if (candidate?.userId === localUserId) candidate = null;
     if (agent?.userId === localUserId) agent = null;
 
@@ -583,7 +582,6 @@ type ObserverStreamCardProps = {
   enabled: boolean;
   visible: boolean;
   talkMode: ObserverTalkMode;
-  /** Optional HR avatar image URL when agent has no video track. */
   agentAvatarImageUrl?: string | null;
   onTalkModeChange?: (nextTalkMode: ObserverTalkMode) => void;
   allowVisibilityToggle?: boolean;
@@ -591,28 +589,15 @@ type ObserverStreamCardProps = {
   onStatusChange?: (status: ObserverConnectionStatus) => void;
   sessionEnded?: boolean;
   uiState?: SessionUIState;
-  /** External signed spectator join token (from /join/spectator/:token). */
   joinToken?: string | null;
-  /** One-time observer session ticket for external signed spectators. */
   observerTicket?: string | null;
-  /** Stable spectator key for reconnect identity (if available from URL/parent). */
   viewerKey?: string | null;
-  /** Called when observerTicket was refreshed and should be persisted by parent. */
   onObserverTicketRefresh?: (ticket: string) => void;
-  /** Called when observerTicket is no longer usable and should be cleared by parent. */
   onObserverTicketInvalid?: () => void;
-  /** Компоновка в стиле "полотно сессии": кандидат слева, аватар справа. */
   sessionMirrorLayout?: boolean;
-  /** Мини self-view наблюдателя (локальная камера/микрофон) поверх потока. */
   showSelfPreview?: boolean;
-  /** Точный статус ожидания из родительского orchestration-слоя spectator page. */
   waitingReason?: string | null;
-  /**
-   * Раскладка страницы наблюдателя: две колонки «Кандидат | HR аватар» как у кандидата,
-   * общая панель управления и PiP «наблюдатель». Для HR-колонки в interview-shell не включать.
-   */
   spectatorDashboardLayout?: boolean;
-  /** Подпись под колонкой «Кандидат» (имя из JobAI). */
   candidateDisplayName?: string | null;
 };
 
@@ -734,10 +719,6 @@ export function ObserverStreamCard({
     return "waiting_meeting";
   }, [allowVisibilityToggle, busy, call, enabled, error, hasParticipants, meetingId, visible]);
 
-  /**
-   * Маппинг внутреннего ObserverConnectionStatus в локальный VideoConnectionState
-   * (унифицированная семантика с остальной системой статусов).
-   */
   const videoState: VideoConnectionState = useMemo(() => {
     if (ended) return "idle";
     if (status === "idle_hidden") return "hidden";
@@ -818,18 +799,11 @@ export function ObserverStreamCard({
     return "Не в эфире";
   }, [busy, call, connectionPhase, enabled, ended, error, meetingId, status]);
 
-  // TODO(stream-audio): add explicit remote audio renderer for observer; ParticipantView trackType="videoTrack" may not bind audio tracks.
-
   useEffect(() => {
     onStatusChange?.(status);
   }, [onStatusChange, status]);
 
-  // IMPORTANT: keep this callback STABLE (empty deps).
-  // If we put `call` into deps, every successful join recreates `disconnectStream`,
-  // which then re-runs every effect that has `disconnectStream` in deps and the
-  // STALE cleanup of those effects calls `disconnectStream()` again — which
-  // unconditionally calls `setCall(null) / setClient(null)` and tears down the
-  // observer right after a successful join. We read the latest call via callRef.
+  /** Stable: empty deps. Effects must not depend on `call` here or StrictMode teardown will drop a live join (use callRef). */
   const disconnectStream = useCallback(async () => {
     connectEpochRef.current += 1;
     if (participantWatchdogRef.current) {
@@ -840,11 +814,6 @@ export function ObserverStreamCard({
     if (activeCall) {
       await activeCall.leave().catch(() => undefined);
     }
-    // Do NOT call client.disconnectUser() on transient disconnects.
-    // The observer client is a singleton via StreamVideoClient.getOrCreateInstance(...);
-    // disconnecting the user here makes the next getOrCreateInstance return a stale,
-    // disconnected client and triggers double-connectUser warnings.
-    // Final cleanup happens only on full unmount via the dedicated effect below.
     callRef.current = null;
     setCall(null);
     setClient(null);
@@ -888,11 +857,9 @@ export function ObserverStreamCard({
         if (now - lastSfuRejoinAtMsRef.current < 15_000) return;
         lastSfuRejoinAtMsRef.current = now;
         sfuRejoinInFlightRef.current = true;
-        // prod: suppress console noise; auto-rejoin is enough
         void (async () => {
           try {
             await disconnectStream();
-            // Allow auto-join to re-run after a forced SFU rejoin.
             autoJoinAttemptForRef.current = null;
             connectInFlightRef.current = false;
           } finally {
@@ -900,7 +867,7 @@ export function ObserverStreamCard({
           }
         })();
       } catch {
-        // ignore
+        /* noop */
       }
     });
     return () => {
@@ -1006,8 +973,6 @@ export function ObserverStreamCard({
 
   useEffect(() => {
     if (!error) return;
-    // If credentials/binding change after an error (e.g. observerTicket refreshed),
-    // allow auto-join to retry without forcing user interaction.
     setError(null);
     setTransientStatus(null);
     autoJoinAttemptForRef.current = null;
@@ -1032,15 +997,12 @@ export function ObserverStreamCard({
       return;
     }
     reconnectLockUntilRef.current = now + OBSERVER_RECONNECT_LOCK_MS;
-    // Sync lock: must be set BEFORE any await so a second mount in StrictMode
-    // (or a fast re-render) cannot enter this function in parallel.
     connectInFlightRef.current = true;
     setBusy(true);
     setError(null);
     setTransientStatus(null);
     setConnectionPhase(call ? "reconnecting" : "connecting");
     const epoch = ++connectEpochRef.current;
-    // Runtime command is advisory; never block Stream join on it.
     void issueRuntimeCommand(meetingId, {
       type: "observer.reconnect",
       issuedBy: "observer_ui",
@@ -1123,7 +1085,6 @@ export function ObserverStreamCard({
           }
 
           const payload = (await response.json()) as StreamTokenResponse;
-          // External tickets are consume-once; do not accept late responses for an old ticket.
           if (observerAccessMode === "external_signed") {
             const refTicket = currentTicketRef.current?.trim() || null;
             const usedTicket = activeObserverTicket?.trim() || null;
@@ -1131,19 +1092,7 @@ export function ObserverStreamCard({
               throw new Error("observer.ticket.mismatch");
             }
           }
-          // TODO(stream-auth): Stream рекомендует `tokenProvider` (auto-refresh) для long-lived клиентов.
-          // Сейчас у нас одноразовый `observerTicket` (consume-once), поэтому нельзя просто
-          // переиспользовать его в tokenProvider для повторного обновления токена.
-          // Правильный будущий вариант: backend endpoint для observer refresh, который выдаёт новый Stream token
-          // без повторного consume observerTicket (например, через серверную spectator-session + refresh).
-          // См. avatar-stream-card: переопределяем axios-timeout Stream SDK
-          // с дефолтных 5с на 60с, чтобы observer не падал посреди сессии
-          // сообщением «timeout of 5000ms exceeded».
-          // IMPORTANT: use getOrCreateInstance to avoid creating a second
-          // StreamVideoClient for the same user (warning: "A StreamVideoClient
-          // already exists ..."). When apiKey + token + user are passed,
-          // the SDK connects automatically — do NOT call connectUser explicitly,
-          // otherwise coordinator logs "Consecutive calls to connectUser".
+          // StreamVideoClient.getOrCreateInstance: singleton; SDK auto-connects — do not call connectUser. options.timeout 60s (default 5s).
           streamClient = StreamVideoClient.getOrCreateInstance({
             apiKey: payload.apiKey,
             token: payload.token,
@@ -1153,16 +1102,10 @@ export function ObserverStreamCard({
           streamCall = streamClient.call(payload.callType, payload.callId);
           await streamCall.camera.disable().catch(() => undefined);
           await streamCall.microphone.disable().catch(() => undefined);
-          // Join timing: try twice with delay to reduce \"joined but empty\" races.
           let joined = false;
           for (let joinAttempt = 1; joinAttempt <= OBSERVER_JOIN_RETRY_ATTEMPTS; joinAttempt += 1) {
             try {
               await withTimeout(
-                // Observer is read-only and must never create ghost calls.
-                // Join only existing call created by candidate/HR flow.
-                // Spectator does not publish mic/camera to SFU.
-                // Do NOT pass `audio: false` here: in Stream SDK it may disable receiving
-                // remote audio tracks, which breaks the requirement "spectator hears Stream audio".
                 streamCall.join({ create: false, video: false } as Parameters<typeof streamCall.join>[0]),
                 OBSERVER_JOIN_TIMEOUT_MS,
                 "Observer stream join timeout"
@@ -1181,7 +1124,6 @@ export function ObserverStreamCard({
           }
           await streamCall.microphone.disable().catch(() => undefined);
           await streamCall.camera.disable().catch(() => undefined);
-          // Best-effort: enable receiving remote audio if supported by SDK build.
           await (streamCall as unknown as { audio?: { enable?: () => Promise<unknown> } }).audio?.enable?.().catch(() => undefined);
           setConnectionPhase("connected");
 
@@ -1203,7 +1145,6 @@ export function ObserverStreamCard({
           });
           void applyPublishToggles();
 
-          // Watchdog: if still no participants after join, soft retry (leave+join).
           const joinedCall = streamCall;
           if (participantWatchdogRef.current) {
             window.clearTimeout(participantWatchdogRef.current);
@@ -1227,12 +1168,6 @@ export function ObserverStreamCard({
                   })
               );
               if (participantsCount === 0) {
-                // prod: suppress console noise (self-healing retry)
-              }
-              if (!hasAudioTracks) {
-                // prod: suppress console noise (self-healing retry)
-              }
-              if (participantsCount === 0) {
                 void joinedCall
                   .leave()
                   .catch(() => undefined)
@@ -1243,7 +1178,7 @@ export function ObserverStreamCard({
                   .catch(() => undefined);
               }
             } catch {
-              // ignore
+              /* noop */
             }
           }, OBSERVER_PARTICIPANT_WATCHDOG_MS);
           participantWatchdogRef.current = watchdogTimer;
@@ -1251,7 +1186,6 @@ export function ObserverStreamCard({
         } catch (err) {
           lastError = err instanceof Error ? err : new Error("Failed to start observer stream");
           await streamCall?.leave().catch(() => undefined);
-          // Keep singleton client alive for retries (getOrCreateInstance reuses).
           const lower = lastError.message.toLowerCase();
           const transient =
             lower.includes("timeout") ||
@@ -1274,7 +1208,6 @@ export function ObserverStreamCard({
               throw new Error("Сессия еще запускается. Повторите подключение через 2-3 секунды.");
             }
             if (lower.includes("stream.binding_missing") && suppressErrorToasts) {
-              // Internal dashboard: treat as waiting state, no hard failure toast.
               throw new Error("Ждём конфигурацию Stream call.");
             }
             throw lastError;
@@ -1296,7 +1229,6 @@ export function ObserverStreamCard({
       const msgRaw = err instanceof Error ? err.message : "Failed to start observer stream";
       const msg = normalizeObserverStreamError(msgRaw);
       if (isObserverTransientMessage(msg)) {
-        // Transient failures must not block auto-join via `error` state.
         setError(null);
         setTransientStatus(
           msg.includes("observer_role_unavailable") ||
@@ -1306,7 +1238,6 @@ export function ObserverStreamCard({
             : msg
         );
         setConnectionPhase(call ? "reconnecting" : "connecting");
-    // prod: suppress console noise
         autoJoinAttemptForRef.current = null;
         return;
       }
@@ -1316,7 +1247,6 @@ export function ObserverStreamCard({
       if (!suppressErrorToasts) {
         toast.error("Видео наблюдателя", { description: msg });
       }
-      // prod: suppress console noise
       autoJoinAttemptForRef.current = null;
     } finally {
       connectInFlightRef.current = false;
@@ -1424,9 +1354,7 @@ export function ObserverStreamCard({
     }
   }, [onTalkModeChange, status, talkMode]);
 
-  // Single unmount-only cleanup. disconnectStream is stable
-  // (empty deps), so deps array is intentionally empty: this effect must run its
-  // teardown ONLY when the component unmounts, never when transient state changes.
+  /** Unmount-only: disconnectStream is stable; do not add deps or teardown runs on every call change. */
   useEffect(
     () => () => {
       void disconnectStream();

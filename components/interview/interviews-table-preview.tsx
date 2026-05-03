@@ -63,7 +63,6 @@ type InterviewsTablePreviewProps = {
   onRefresh?: () => void;
   onSelect?: (row: InterviewListRow) => void;
   onPageChange?: (nextPage: number) => void;
-  /** После копирования ссылки — синхронизация поля в шапке и `?jobAiId=` (как при вводе + Enter). */
   onEntryUrlCopied?: (absoluteUrl: string) => void;
 };
 
@@ -150,11 +149,6 @@ export function InterviewsTablePreview({
   const [refBusy, setRefBusy] = useState(false);
   const [refDetail, setRefDetail] = useState<InterviewDetail | null>(null);
   const [refError, setRefError] = useState<string | null>(null);
-  /**
-   * Per-row "loading" markers for signed-link issuance buttons. Keyed by `${role}:${jobAiId}`
-   * so two HRs cannot accidentally double-issue, and clicking spectator while candidate
-   * is still being issued does not break the UI.
-   */
   const [linkBusy, setLinkBusy] = useState<Record<string, boolean>>({});
 
   const issueAndCopyLink = useCallback(
