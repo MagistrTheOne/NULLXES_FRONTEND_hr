@@ -64,6 +64,27 @@ flowchart TB
 - **Голосовой агент** — браузер держит **WebRTC** к OpenAI: SDP обмен идёт через gateway (`POST /realtime/session`), дальше медиа и события идут **напрямую** по peer (см. `lib/webrtc-client.ts`).
 - **Stream** — SDK получает server-minted token с Next (`/api/stream/token`), дальше клиент ↔ GetStream.
 
+### 2.1. Этап 1 (упрощённо): голос / видео / управление
+
+**Да, по сути верно**, с одной оговоркой: для голоса **первый шаг** (SDP offer/answer и `client_secret`) идёт **через Next → Gateway → OpenAI**; после установления peer connection **аудио RTP** и **DataChannel** идут **напрямую браузер ↔ OpenAI**, шлюз в эту «трубу» уже не вставлен.
+
+```mermaid
+flowchart TB
+  B[Браузер]
+
+  B ==>|"① голос WebRTC"| OAI[OpenAI Realtime]
+  B ==>|"② видео Stream SDK"| GS[GetStream]
+  B -->|"③ управление JSON"| NX[Next /api/gateway]
+  NX --> GW[Gateway]
+  GW --> J[JobAI и оркестрация]
+```
+
+| Поток | Что несёт | Где «толстый» трафик |
+|--------|-----------|----------------------|
+| **① Голос** | Агент и микрофон кандидата, STT/текст по событиям Realtime | **Браузер ↔ OpenAI** (WebRTC). |
+| **② Видео** | Камера/тайлы HR/наблюдатель в комнате Stream | **Браузер ↔ GetStream**. Токен комнаты выдаёт **Next** (`/api/stream/token`). |
+| **③ Управление** | Интервью, meeting start/stop, runtime, admission, телеметрия `POST …/events` | **Браузер → Next → Gateway**; дальше gateway ↔ JobAI, Redis, запись встречи и т.д. |
+
 ---
 
 ## 3. Allowlist прокси gateway (фронт → шлюз)
