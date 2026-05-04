@@ -1,6 +1,6 @@
 # NULLXES HR AI — системный обзор (фронт + бэкенд + API + голос/текст)
 
-Единый документ по **монорепозиторию NULLXES HR AI**: как связаны **Next.js (`frontend/jobaidemo`)** и **`realtime-gateway` (`backend/realtime-gateway`)**, куда ходят запросы, где живёт «STT» и смежная логика. Для деталей по фронту см. [ARCHITECTURE.md](./ARCHITECTURE.md); по шлюзу — `backend/realtime-gateway/README.md` и `backend/realtime-gateway/docs/ARCHITECTURE.md` (из корня монорепо).
+Единый документ по **монорепозиторию NULLXES HR AI**: как связаны **Next.js (`frontend/jobaidemo`)** и **`realtime-gateway` (`backend/realtime-gateway`)**, куда ходят запросы, где живёт «STT» и смежная логика. Для деталей по фронту см. [ARCHITECTURE.md](./ARCHITECTURE.md); по шлюзу — `backend/realtime-gateway/README.md` и `backend/realtime-gateway/docs/ARCHITECTURE.md` (из корня монорепо). **Контракты для внешней интеграции (avatar, runtime, Stream):** [INTEGRATION_AVATAR_AND_RUNTIME.md](./INTEGRATION_AVATAR_AND_RUNTIME.md).
 
 ---
 
