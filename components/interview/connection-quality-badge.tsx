@@ -6,7 +6,6 @@ import type { ConnectionQuality, ConnectionQualityReading } from "@/hooks/use-co
 interface ConnectionQualityBadgeProps {
   reading: ConnectionQualityReading;
   className?: string;
-  /** Hide the badge entirely (e.g. lobby / completed state). */
   hidden?: boolean;
 }
 

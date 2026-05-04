@@ -269,7 +269,7 @@ export function AvatarStreamCard({
         }
 
         const payload = (await response.json()) as StreamTokenResponse;
-        // Stream SDK HTTP client default timeout 5s; coordinator needs more headroom.
+        // Stream SDK HTTP by MagistrTheOne 
         let streamClient: StreamVideoClient | null = new StreamVideoClient({
           apiKey: payload.apiKey,
           token: payload.token,

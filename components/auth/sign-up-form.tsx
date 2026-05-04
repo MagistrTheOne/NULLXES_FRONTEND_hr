@@ -119,7 +119,7 @@ export function SignUpForm() {
         setForm((f) => ({ ...f, role: saved }));
       }
     } catch {
-      /* ignore */
+   
     }
   }, []);
 
@@ -127,7 +127,7 @@ export function SignUpForm() {
     try {
       localStorage.setItem(STORAGE_LAST_ROLE, form.role);
     } catch {
-      /* ignore */
+
     }
   }, [form.role]);
 

@@ -2,11 +2,7 @@ import type { ReactNode, RefObject } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-/**
- * Единая сетка трёх колонок: на mobile-portrait тайл подстраивается под ширину
- * (16:9 aspect-ratio, чтобы кандидат не тянул вертикальный скролл), на sm+
- * фиксированная высота 420px как раньше — десктоп-layout не меняется.
- */
+//Сетка трёх колонок: на mobile-portrait тайл подстраивается под ширину.
 export const STREAM_VIDEO_BOX_CLASS =
   "stream-card-viewport relative aspect-video w-full min-h-[180px] shrink-0 overflow-hidden rounded-xl border border-white/50 bg-[#d0d6e0] sm:aspect-auto sm:h-[420px] sm:min-h-[420px]";
 
@@ -14,18 +10,13 @@ export const STREAM_CARD_FOOTER_CLASS = "flex min-h-[56px] w-full shrink-0 flex-
 
 type StreamParticipantShellProps = {
   title: string;
-  /** Подзаголовок под названием колонки (подсказка, UX). */
   description?: ReactNode;
   children: ReactNode;
   footer: ReactNode;
   error?: ReactNode;
   videoRef?: RefObject<HTMLDivElement | null>;
   videoClassName?: string;
-  /**
-   * Compact "PiP" режим для mobile-portrait: скрывает заголовок и подвал на
-   * экранах меньше lg, ужимает padding. На lg+ карточка возвращается в полный
-   * режим автоматически — все скрытые элементы становятся видимыми.
-   */
+//для фронтенда от магистра это режим PIP -полезешь руками сломаешь мозги.
   compact?: boolean;
 };
 

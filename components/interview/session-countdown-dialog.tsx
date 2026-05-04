@@ -13,9 +13,7 @@ import {
 
 interface SessionCountdownDialogProps {
   open: boolean;
-  /** Remaining ms until auto-end. Renders as mm:ss. */
   msLeft: number;
-  /** Default extend amount, shown on the button label. */
   extendByMinutes: number;
   busy?: boolean;
   onExtend: () => void;
@@ -29,14 +27,6 @@ function formatMs(ms: number): string {
   const ss = String(total % 60).padStart(2, "0");
   return `${mm}:${ss}`;
 }
-
-/**
- * Custom warning dialog that replaces the default GetStream session-timeout
- * notification. Shown when the candidate's session is about to auto-end —
- * gives them the option to extend (within reason) or end immediately, and
- * wires the actual countdown handling to our own stop() flow rather than
- * relying on undocumented SDK behavior.
- */
 export function SessionCountdownDialog({
   open,
   msLeft,

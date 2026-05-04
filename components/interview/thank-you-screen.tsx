@@ -9,12 +9,7 @@ interface ThankYouScreenProps {
   jobTitle?: string;
   companyName?: string;
 }
-
-/**
- * Финальный экран для кандидата после `phase === "completed"`.
- * Заменяет grid `Кандидат / HR аватар / Наблюдатель` чтобы кандидат не видел
- * замороженный UI с микро/камерой и не путался кнопкой «Завершить».
- */
+ 
 export function ThankYouScreen({
   candidateFirstName,
   jobTitle,
@@ -29,13 +24,7 @@ export function ThankYouScreen({
     return () => clearTimeout(timer);
   }, [secondsLeft]);
 
-  /**
-   * "Завершить" / "Закрыть вкладку" — всегда отправляем на главную. Раньше
-   * пробовали window.close(), но современные браузеры блокируют close() на
-   * вкладках, не открытых через JS, и кандидат оставался залипшим на
-   * экране. По ТЗ клиента: оба пути («Завершить» в интервью и «Закрыть
-   * вкладку» на thank-you) ведут на "/".
-   */
+ //Вкладка спасибо. и пошел вон с кода.
   const handleLeave = (): void => {
     router.push("/");
   };

@@ -6,7 +6,6 @@ import { authClient } from "@/lib/auth-client";
 import { cleanupBeforeLogout } from "@/lib/logout-cleanup";
 
 type SignOutButtonProps = {
-  /** Показать window.confirm перед выходом (рекомендуется при возможной потере прогресса). */
   confirmBeforeLogout?: boolean;
 };
 

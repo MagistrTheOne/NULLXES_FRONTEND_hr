@@ -27,8 +27,6 @@ const ICONS: Record<InterviewStatusIcon, LucideIcon> = {
   refresh: RefreshCw,
   checkCircle: CheckCircle2
 };
-
-/** Tone → tailwind classes для бейджа (фон + текст + dot). */
 const TONES: Record<InterviewStatusTone, { container: string; dot: string; icon: string }> = {
   slate: {
     container: "bg-slate-200/80 text-slate-700 ring-1 ring-inset ring-slate-300/60",
@@ -57,13 +55,11 @@ const TONES: Record<InterviewStatusTone, { container: string; dot: string; icon:
   }
 };
 
-/** Иконки которые должны крутиться. */
 const SPINNING: Partial<Record<InterviewStatusIcon, true>> = {
   loader: true,
   refresh: true
 };
 
-/** Иконки с пульсацией (live indicator). */
 const PULSING: Partial<Record<InterviewStatusIcon, true>> = {
   radio: true
 };
@@ -71,7 +67,6 @@ const PULSING: Partial<Record<InterviewStatusIcon, true>> = {
 interface InterviewStatusBadgeProps {
   status: InterviewStatusView;
   className?: string;
-  /** Compact-режим — только дотик и иконка, без лейбла (для overlay'ев). */
   compact?: boolean;
 }
 
