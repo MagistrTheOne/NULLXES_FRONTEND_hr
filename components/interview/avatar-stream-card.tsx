@@ -92,6 +92,8 @@ type AvatarStreamCardProps = {
   participantName: string;
   enabled: boolean;
   avatarReady: boolean;
+  activeSpeaker?: "assistant" | "candidate" | null;
+  degradationLevel?: "none" | "soft" | "hard" | "fallback" | null;
   telemetryUnavailable?: boolean;
   meetingId: string | null;
   showStreamToolbar?: boolean;
@@ -114,6 +116,8 @@ export function AvatarStreamCard({
   participantName,
   enabled,
   avatarReady,
+  activeSpeaker = null,
+  degradationLevel = null,
   telemetryUnavailable = false,
   meetingId,
   showStreamToolbar = false,
@@ -332,6 +336,22 @@ export function AvatarStreamCard({
     return "Подключаемся…";
   }, [busy, call, canRenderAvatarWindow, enabled, ended, meetingId]);
 
+  const speakerBadge = useMemo(() => {
+    if (!enabled || !meetingId || ended) return null;
+    if (!activeSpeaker) return null;
+    return activeSpeaker === "candidate" ? "Кандидат говорит" : "HR говорит";
+  }, [activeSpeaker, enabled, ended, meetingId]);
+
+  const degradationBadge = useMemo(() => {
+    if (!enabled || !meetingId || ended) return null;
+    if (!degradationLevel || degradationLevel === "none") return null;
+    return degradationLevel === "fallback"
+      ? "Fallback"
+      : degradationLevel === "hard"
+        ? "Degrade: hard"
+        : "Degrade: soft";
+  }, [degradationLevel, enabled, ended, meetingId]);
+
   useEffect(() => {
     if (!enabled || ended || !meetingId || call || busy) {
       return;
@@ -387,6 +407,16 @@ export function AvatarStreamCard({
                   ●
                 </span>
                 {hrStatusLabel}
+              </Badge>
+            ) : null}
+            {speakerBadge ? (
+              <Badge variant="outline" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+                {speakerBadge}
+              </Badge>
+            ) : null}
+            {degradationBadge ? (
+              <Badge variant="outline" className="shrink-0 rounded-full px-2.5 text-xs font-normal">
+                {degradationBadge}
               </Badge>
             ) : null}
           </div>

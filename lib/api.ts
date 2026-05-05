@@ -631,6 +631,10 @@ export type RuntimeSnapshot = {
     agentUserId?: string;
     phase: string;
     avatarReady: boolean;
+    activeSpeaker?: "assistant" | "candidate";
+    duplexMode?: "single_assistant" | "duplex";
+    videoAudioSource?: "tts" | "mic" | "auto";
+    degradationLevel?: "none" | "soft" | "hard" | "fallback";
     lastEventAt: number;
     lastError?: string;
     startedAt: number;

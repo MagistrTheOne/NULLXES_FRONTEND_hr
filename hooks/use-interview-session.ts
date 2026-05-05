@@ -355,6 +355,10 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [avatarReady, setAvatarReady] = useState(false);
+  const [avatarActiveSpeaker, setAvatarActiveSpeaker] = useState<"assistant" | "candidate" | null>(null);
+  const [avatarDegradationLevel, setAvatarDegradationLevel] = useState<
+    "none" | "soft" | "hard" | "fallback" | null
+  >(null);
   const [lastAgentContextTrace, setLastAgentContextTrace] = useState<AgentContextTrace | null>(null);
   const [rtcState, setRtcState] = useState<WebRtcConnectionState>("idle");
   const [remoteAudioStream, setRemoteAudioStream] = useState<MediaStream | null>(null);
@@ -1059,6 +1063,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     if (!meetingId || phase !== "connected") {
       queueMicrotask(() => {
         setAvatarReady(false);
+        setAvatarActiveSpeaker(null);
+        setAvatarDegradationLevel(null);
         setTelemetryUnavailable(false);
       });
       if (avatarPollTimerRef.current) {
@@ -1074,9 +1080,27 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       try {
         const runtime = await getRuntimeSnapshot(meetingId);
         const isReady = Boolean(runtime.avatar?.avatarReady);
+        const speaker =
+          runtime.avatar?.activeSpeaker === "candidate"
+            ? "candidate"
+            : runtime.avatar?.activeSpeaker === "assistant"
+              ? "assistant"
+              : null;
+        const degradation =
+          runtime.avatar?.degradationLevel === "fallback"
+            ? "fallback"
+            : runtime.avatar?.degradationLevel === "hard"
+              ? "hard"
+              : runtime.avatar?.degradationLevel === "soft"
+                ? "soft"
+                : runtime.avatar?.degradationLevel === "none"
+                  ? "none"
+                  : null;
         if (!cancelled) {
           setTelemetryUnavailable(false);
           setAvatarReady(isReady);
+          setAvatarActiveSpeaker(speaker);
+          setAvatarDegradationLevel(degradation);
           if (isReady && avatarPollTimerRef.current) {
             clearInterval(avatarPollTimerRef.current);
             avatarPollTimerRef.current = null;
@@ -1090,6 +1114,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         if (error instanceof ApiRequestError && error.status === 404) {
           setTelemetryUnavailable(true);
           setAvatarReady(false);
+          setAvatarActiveSpeaker(null);
+          setAvatarDegradationLevel(null);
           if (avatarPollTimerRef.current) {
             clearInterval(avatarPollTimerRef.current);
             avatarPollTimerRef.current = null;
@@ -1098,6 +1124,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         }
         setTelemetryUnavailable(false);
         setAvatarReady(false);
+        setAvatarActiveSpeaker(null);
+        setAvatarDegradationLevel(null);
       }
     };
 
@@ -1691,6 +1719,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     meetingId,
     sessionId,
     avatarReady,
+    avatarActiveSpeaker,
+    avatarDegradationLevel,
     degradationState,
     lastAgentContextTrace,
     rtcState,

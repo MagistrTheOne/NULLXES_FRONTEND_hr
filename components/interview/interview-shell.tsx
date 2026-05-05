@@ -141,6 +141,8 @@ export function InterviewShell() {
     meetingId,
     sessionId,
     avatarReady,
+    avatarActiveSpeaker,
+    avatarDegradationLevel,
     degradationState,
     statusLabel,
     phase,
@@ -1150,6 +1152,8 @@ export function InterviewShell() {
             participantName="HR ассистент"
             enabled={streamSurfaceEnabled}
             avatarReady={avatarReady}
+            activeSpeaker={avatarActiveSpeaker}
+            degradationLevel={avatarDegradationLevel}
             telemetryUnavailable={degradationState.telemetryUnavailable}
             meetingId={recoveredMeetingId}
             showStreamToolbar={false}
