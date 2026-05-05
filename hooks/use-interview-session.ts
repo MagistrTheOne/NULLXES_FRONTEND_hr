@@ -6,8 +6,8 @@ import {
   ApiRequestError,
   closeRealtimeSession,
   failMeeting,
-  getRealtimeSessionState,
   getRuntimePromptSettingsSoft,
+  getRuntimeSnapshot,
   getInterviewById,
   issueRuntimeCommand,
   linkInterviewSession,
@@ -87,13 +87,6 @@ type StartOptions = {
   bypassMeetingAtGuard?: boolean;
   interviewContext?: InterviewStartContext;
 };
-
-const AVATAR_READY_EVENT_TYPES = [
-  "avatar_ready",
-  "avatar.ready",
-  "agent.avatar.ready",
-  "avatar.stream.joined"
-];
 const HARD_CONTEXT_GUARD_ENABLED = process.env.NEXT_PUBLIC_INTERVIEW_HARD_GUARD === "1";
 const RECONNECT_ATTEMPTS = 3;
 const RECONNECT_BACKOFF_MS = [0, 450, 1400] as const;
@@ -1063,7 +1056,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   }, [agentState]);
 
   useEffect(() => {
-    if (!sessionId || phase !== "connected") {
+    if (!meetingId || phase !== "connected") {
       queueMicrotask(() => {
         setAvatarReady(false);
         setTelemetryUnavailable(false);
@@ -1079,9 +1072,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
 
     const checkAvatarReady = async () => {
       try {
-        const state = await getRealtimeSessionState(sessionId);
-        const counts = state.session.eventTypeCounts ?? {};
-        const isReady = AVATAR_READY_EVENT_TYPES.some((type) => (counts[type] ?? 0) > 0);
+        const runtime = await getRuntimeSnapshot(meetingId);
+        const isReady = Boolean(runtime.avatar?.avatarReady);
         if (!cancelled) {
           setTelemetryUnavailable(false);
           setAvatarReady(isReady);
@@ -1094,7 +1086,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         if (cancelled) {
           return;
         }
-        // 404 on GET /realtime/session/:id means no telemetry row — not necessarily a dead avatar.
+        // 404 on GET /runtime/:meetingId means meeting is not known to gateway (stale UI).
         if (error instanceof ApiRequestError && error.status === 404) {
           setTelemetryUnavailable(true);
           setAvatarReady(false);
@@ -1124,7 +1116,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         avatarPollTimerRef.current = null;
       }
     };
-  }, [phase, sessionId]);
+  }, [phase, meetingId]);
 
   useEffect(() => {
     if (phase !== "connected" || !meetingId || !sessionId) {
