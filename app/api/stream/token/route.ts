@@ -79,7 +79,8 @@ async function streamAdminPost(
   apiKey: string,
   secret: string,
   url: string,
-  body: unknown
+  body: unknown,
+  options?: { treat409AsSuccess?: boolean }
 ): Promise<Response> {
   const adminToken = mintStreamAdminToken(secret);
   const response = await fetch(url, {
@@ -92,6 +93,9 @@ async function streamAdminPost(
     body: JSON.stringify(body)
   });
   if (!response.ok) {
+    if (options?.treat409AsSuccess && response.status === 409) {
+      return response;
+    }
     const detail = (await response.text().catch(() => "")).slice(0, 500);
     throw new Error(
       `Stream admin request failed (${response.status})${detail ? `: ${detail}` : ""}`
@@ -117,22 +121,34 @@ async function enforceSpectatorReadonlyRole(
   callId: string
 ): Promise<void> {
   const usersUrl = `https://video.stream-io-api.com/api/v2/users?api_key=${encodeURIComponent(apiKey)}`;
-  await streamAdminPost(apiKey, secret, usersUrl, {
-    users: {
-      [userId]: {
-        id: userId,
-        name: userName,
-        role: "observer_readonly"
+  await streamAdminPost(
+    apiKey,
+    secret,
+    usersUrl,
+    {
+      users: {
+        [userId]: {
+          id: userId,
+          name: userName,
+          role: "observer_readonly"
+        }
       }
-    }
-  });
+    },
+    { treat409AsSuccess: true }
+  );
 
   const callUrl = `https://video.stream-io-api.com/api/v2/video/call/${encodeURIComponent(callType)}/${encodeURIComponent(callId)}?api_key=${encodeURIComponent(apiKey)}`;
-  await streamAdminPost(apiKey, secret, callUrl, {
-    data: {
-      members: [{ user_id: userId, role: "observer_readonly" }]
-    }
-  });
+  await streamAdminPost(
+    apiKey,
+    secret,
+    callUrl,
+    {
+      data: {
+        members: [{ user_id: userId, role: "observer_readonly" }]
+      }
+    },
+    { treat409AsSuccess: true }
+  );
 }
 
 async function enforceObserverPublisherRole(
@@ -144,23 +160,35 @@ async function enforceObserverPublisherRole(
   callId: string
 ): Promise<void> {
   const usersUrl = `https://video.stream-io-api.com/api/v2/users?api_key=${encodeURIComponent(apiKey)}`;
-  await streamAdminPost(apiKey, secret, usersUrl, {
-    users: {
-      [userId]: {
-        id: userId,
-        name: userName,
-        role: "user"
+  await streamAdminPost(
+    apiKey,
+    secret,
+    usersUrl,
+    {
+      users: {
+        [userId]: {
+          id: userId,
+          name: userName,
+          role: "user"
+        }
       }
-    }
-  });
+    },
+    { treat409AsSuccess: true }
+  );
 
   const callUrl = `https://video.stream-io-api.com/api/v2/video/call/${encodeURIComponent(callType)}/${encodeURIComponent(callId)}?api_key=${encodeURIComponent(apiKey)}`;
   try {
-    await streamAdminPost(apiKey, secret, callUrl, {
-      data: {
-        members: [{ user_id: userId, role: "user" }]
-      }
-    });
+    await streamAdminPost(
+      apiKey,
+      secret,
+      callUrl,
+      {
+        data: {
+          members: [{ user_id: userId, role: "user" }]
+        }
+      },
+      { treat409AsSuccess: true }
+    );
     return;
   } catch (error) {
     // Slow path: call missing yet, or Stream needs created_by_id.
@@ -170,12 +198,18 @@ async function enforceObserverPublisherRole(
     }
   }
 
-  await streamAdminPost(apiKey, secret, callUrl, {
-    data: {
-      created_by_id: userId,
-      members: [{ user_id: userId, role: "user" }]
-    }
-  });
+  await streamAdminPost(
+    apiKey,
+    secret,
+    callUrl,
+    {
+      data: {
+        created_by_id: userId,
+        members: [{ user_id: userId, role: "user" }]
+      }
+    },
+    { treat409AsSuccess: true }
+  );
 }
 
 async function verifySpectatorJoinTokenToMeeting(
