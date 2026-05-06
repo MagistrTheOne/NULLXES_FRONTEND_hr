@@ -30,7 +30,8 @@ import {
   type WebRtcConnectionState
 } from "@/lib/webrtc-client";
 
-const OPENAI_RESPONSE_MODALITIES: ("audio" | "text")[] = ["audio", "text"];
+// Realtime GA: per-response modalities are not supported. Configure only via session.update.output_modalities.
+const OPENAI_OUTPUT_MODALITIES: ("audio")[] = ["audio"];
 
 type RuntimeEvent = {
   type: string;
@@ -229,6 +230,7 @@ async function postIntroResponseToRtc(
     type: "session.update",
     session: {
       type: "realtime",
+      output_modalities: OPENAI_OUTPUT_MODALITIES,
       instructions: runtimeInstructions
     }
   } as const;
@@ -275,7 +277,6 @@ async function postIntroResponseToRtc(
   await rtc.postEvent({
     type: "response.create",
     response: {
-      modalities: OPENAI_RESPONSE_MODALITIES,
       instructions: [
         ...baseInstructions,
         "",
@@ -992,7 +993,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       await rtc.postEvent({
         type: "response.create",
         response: {
-          modalities: OPENAI_RESPONSE_MODALITIES,
           instructions:
             "Продолжи интервью после паузы. Не повторяй приветствие и intro. Не здоровайся заново. " +
             "Не спрашивай «чем могу помочь». Говори только на русском языке. " +
