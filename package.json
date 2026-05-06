@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint",
     "db:push": "drizzle-kit push",
     "auth:generate": "auth generate --yes --config ./lib/auth.ts"

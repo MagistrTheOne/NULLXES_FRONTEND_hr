@@ -141,6 +141,24 @@ function isOpenAiClientEventType(value: unknown): boolean {
   return typeof value === "string" && OPENAI_CLIENT_EVENT_TYPES.has(value);
 }
 
+/** OpenAI Realtime rejects `response.modalities`; never forward it on the data channel. */
+function sanitizeClientEventForOpenAi(payload: Record<string, unknown>): Record<string, unknown> {
+  if (payload.type !== "response.create") {
+    return payload;
+  }
+  const response = payload.response;
+  if (!response || typeof response !== "object") {
+    return payload;
+  }
+  const r = { ...(response as Record<string, unknown>) };
+  if ("modalities" in r) {
+    delete r.modalities;
+  }
+  return { ...payload, response: r };
+}
+
+const BROWSER_OPENAI_AUDIO_DELTA_LOG_MS = 500;
+
 function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
   if (pc.iceGatheringState === "complete") {
     return Promise.resolve();
@@ -177,9 +195,25 @@ export class WebRtcInterviewClient {
   private sessionId: string | null = null;
   private audioInputEnabled = true;
   private state: WebRtcConnectionState = "idle";
+  private lastBrowserAudioDeltaLogMs = 0;
   private onState?: (state: WebRtcConnectionState) => void;
   private onRemoteStream?: (stream: MediaStream) => void;
   private onOpenAiEvent?: (event: OpenAiServerEvent) => void;
+
+  /** Production-friendly structured logs (JSON lines) for the browser console. */
+  private logBrowserStructured(level: "info" | "warn" | "error", payload: Record<string, unknown>): void {
+    if (typeof console === "undefined") {
+      return;
+    }
+    const line = JSON.stringify(payload);
+    if (level === "error") {
+      console.error(line);
+    } else if (level === "warn") {
+      console.warn(line);
+    } else {
+      console.info(line);
+    }
+  }
 
   constructor(options?: {
     onStateChange?: (state: WebRtcConnectionState) => void;
@@ -275,6 +309,58 @@ export class WebRtcInterviewClient {
       }
       if (!parsed || typeof parsed.type !== "string") return;
       const type = parsed.type;
+
+      const isAudioDelta =
+        type === "response.audio.delta" ||
+        type === "response.output_audio.delta" ||
+        type === "output_audio.delta";
+      if (isAudioDelta) {
+        const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+        if (now - this.lastBrowserAudioDeltaLogMs >= BROWSER_OPENAI_AUDIO_DELTA_LOG_MS) {
+          this.lastBrowserAudioDeltaLogMs = now;
+          this.logBrowserStructured("info", {
+            msg: "openai_response_audio_delta_received",
+            event: "openai_response_audio_delta_received",
+            sessionId: this.sessionId,
+            eventType: type
+          });
+        }
+      }
+
+      if (type === "response.done") {
+        this.logBrowserStructured("info", {
+          msg: "openai_response_done",
+          event: "openai_response_done",
+          sessionId: this.sessionId,
+          eventType: type
+        });
+      }
+
+      if (type === "error" || type.endsWith(".error")) {
+        const rawErr = (parsed as { error?: unknown }).error;
+        const errObj =
+          rawErr && typeof rawErr === "object" && rawErr !== null
+            ? (rawErr as Record<string, unknown>)
+            : (parsed as Record<string, unknown>);
+        const code = errObj.code ?? errObj.type;
+        const param = errObj.param;
+        const message =
+          typeof errObj.message === "string"
+            ? errObj.message
+            : typeof errObj.text === "string"
+              ? errObj.text
+              : undefined;
+        this.logBrowserStructured("error", {
+          msg: "openai_error",
+          event: "openai_error",
+          code,
+          param,
+          message,
+          eventType: type,
+          sessionId: this.sessionId
+        });
+      }
+
       const isCritical =
         type === "error" ||
         type.endsWith(".error") ||
@@ -353,11 +439,27 @@ export class WebRtcInterviewClient {
 
   async postEvent(payload: Record<string, unknown>): Promise<void> {
     // Forward only OpenAI-recognized client event types; internal telemetry goes gateway-only via sendRealtimeEvent.
-    if (isOpenAiClientEventType(payload.type)) {
-      this.sendToOpenAiDataChannel(payload);
+    const openAiPayload = isOpenAiClientEventType(payload.type) ? sanitizeClientEventForOpenAi(payload) : null;
+
+    if (payload.type === "response.create") {
+      const rawResp =
+        payload.response && typeof payload.response === "object" && payload.response !== null
+          ? (payload.response as Record<string, unknown>)
+          : undefined;
+      if (rawResp && "modalities" in rawResp) {
+        this.logBrowserStructured("warn", {
+          msg: "openai_legacy_response_modalities_stripped",
+          event: "openai_legacy_response_modalities_stripped",
+          sessionId: this.sessionId
+        });
+      }
+    }
+
+    if (openAiPayload) {
+      this.sendToOpenAiDataChannel(openAiPayload);
     }
     if (this.sessionId) {
-      await sendRealtimeEvent(this.sessionId, payload);
+      await sendRealtimeEvent(this.sessionId, openAiPayload ?? payload);
     }
   }
 
@@ -403,6 +505,22 @@ export class WebRtcInterviewClient {
   }
 
   private sendToOpenAiDataChannel(payload: Record<string, unknown>): void {
+    const pType = payload.type;
+
+    if (pType === "session.update") {
+      this.logBrowserStructured("info", {
+        msg: "openai_session_update_sent",
+        event: "openai_session_update_sent",
+        sessionId: this.sessionId
+      });
+    } else if (pType === "response.create") {
+      this.logBrowserStructured("info", {
+        msg: "openai_response_create_sent",
+        event: "openai_response_create_sent",
+        sessionId: this.sessionId
+      });
+    }
+
     const serialized = JSON.stringify(payload);
     if (this.dataChannel && this.dataChannel.readyState === "open") {
       this.dataChannel.send(serialized);

@@ -30,8 +30,20 @@ import {
   type WebRtcConnectionState
 } from "@/lib/webrtc-client";
 
-// Realtime GA: per-response modalities are not supported. Configure only via session.update.output_modalities.
-const OPENAI_OUTPUT_MODALITIES: ("audio")[] = ["audio"];
+/** Must match gateway `OPENAI_REALTIME_VOICE` / session create defaults when unset. */
+const DEFAULT_BROWSER_REALTIME_VOICE =
+  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_OPENAI_REALTIME_VOICE?.trim()) || "coral";
+
+function buildOpenAiSessionAudioAndOutput(voice: string = DEFAULT_BROWSER_REALTIME_VOICE) {
+  return {
+    type: "realtime" as const,
+    output_modalities: ["audio"] as const,
+    audio: {
+      input: { format: { type: "audio/pcm" as const, rate: 24000 as const } },
+      output: { format: { type: "audio/pcm" as const, rate: 24000 as const }, voice }
+    }
+  };
+}
 
 type RuntimeEvent = {
   type: string;
@@ -229,8 +241,7 @@ async function postIntroResponseToRtc(
   const sessionUpdatePayload = {
     type: "session.update",
     session: {
-      type: "realtime",
-      output_modalities: OPENAI_OUTPUT_MODALITIES,
+      ...buildOpenAiSessionAudioAndOutput(),
       instructions: runtimeInstructions
     }
   } as const;
@@ -914,14 +925,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
       }, 800);
       pendingPauseCancelRef.current = { resolve, timeoutId };
     });
-    try {
-      await rtc.postEvent({
-        type: "session.update",
-        source: "frontend",
-        message: "agent_paused"
-      });
-    } catch {
-    }
     await sendRealtimeEvent(activeSessionId, {
       type: "hr.agent.pause",
       source: "jobaidemo",
@@ -984,8 +987,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     try {
       await rtc.postEvent({
         type: "session.update",
-        source: "frontend",
-        message: "agent_resumed"
+        session: buildOpenAiSessionAudioAndOutput()
       });
     } catch {
     }
@@ -1290,7 +1292,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
               await rtc.postEvent({
                 type: "session.update",
                 session: {
-                  type: "realtime",
+                  ...buildOpenAiSessionAudioAndOutput(),
                   instructions: runtimeInstructions
                 }
               });
@@ -1553,13 +1555,6 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         await rtc
           .postEvent({
             type: "response.cancel"
-          })
-          .catch(() => undefined);
-        await rtc
-          .postEvent({
-            type: "session.update",
-            source: "frontend",
-            message: "session_stopping"
           })
           .catch(() => undefined);
       }
