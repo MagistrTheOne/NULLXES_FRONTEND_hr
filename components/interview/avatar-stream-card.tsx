@@ -13,6 +13,22 @@ import { cn } from "@/lib/utils";
 const AVATAR_PLACEHOLDER_SRC = "/anna.jpg";
 const STREAM_OPENAI_AGENT_MODE_ENABLED = process.env.NEXT_PUBLIC_STREAM_OPENAI_AGENT_MODE === "1";
 
+function getQueryFlag(name: string): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get(name) === "1";
+}
+
+function logHrAvatarEvent(event: string, payload: Record<string, unknown>) {
+  if (typeof console === "undefined") return;
+  console.info(
+    JSON.stringify({
+      msg: event,
+      event,
+      ...payload
+    })
+  );
+}
+
 function AvatarPlaceholder({ emphasize }: { emphasize?: boolean }) {
   return (
     <div className="relative h-full w-full overflow-hidden">
@@ -59,22 +75,106 @@ function AvatarCallBody({ showStreamToolbar, meetingId, onLeave }: AvatarCallBod
     const state = useCallCallingState();
     const participants = useParticipants();
 
-    // HR tile: only pod agent ids (`agent_*` or legacy `agent-<meetingId>`). No fallback to other remotes (would duplicate candidate video).
-    const avatarParticipant =
-      participants.find(
-        (participant) =>
-          participant.userId.startsWith("agent_") || participant.userId === `agent-${meetingId}`
-      ) ?? null;
+    const debugAvatar = useMemo(() => getQueryFlag("debugAvatar"), []);
+    const muteAvatar = useMemo(() => getQueryFlag("muteAvatar"), []);
+
+    const avatarParticipant = useMemo(() => {
+      // HR tile: only pod agent ids (`agent_*` or legacy `agent-<meetingId>`). No fallback to other remotes (would duplicate candidate video).
+      const agentMatches = participants.filter((participant) => {
+        const id = participant.userId ?? "";
+        const name = (participant.name ?? "").toLowerCase();
+        return (
+          id.startsWith("agent_") ||
+          id === `agent-${meetingId}` ||
+          id.startsWith("agent-") ||
+          name.includes("hr avatar") ||
+          name.includes("hr ассист")
+        );
+      });
+
+      const getHasVideo = (p: unknown): boolean => {
+        const maybe = p as { videoStream?: unknown; publishedTracks?: unknown };
+        if (Boolean(maybe?.videoStream)) return true;
+        if (Array.isArray(maybe?.publishedTracks) && maybe.publishedTracks.includes("video")) return true;
+        return false;
+      };
+      const getHasAudio = (p: unknown): boolean => {
+        const maybe = p as { audioStream?: unknown; publishedTracks?: unknown };
+        if (Boolean(maybe?.audioStream)) return true;
+        if (Array.isArray(maybe?.publishedTracks) && maybe.publishedTracks.includes("audio")) return true;
+        return false;
+      };
+
+      // Prefer agent with video; then agent with audio; else first match.
+      return (
+        agentMatches.find((p) => getHasVideo(p)) ??
+        agentMatches.find((p) => getHasAudio(p)) ??
+        agentMatches[0] ??
+        null
+      );
+    }, [meetingId, participants]);
+
+    const trackSummary = useMemo(() => {
+      if (!avatarParticipant) return null;
+      const p = avatarParticipant as unknown as { userId?: string; name?: string; publishedTracks?: unknown; videoStream?: unknown; audioStream?: unknown };
+      const publishedTracks = Array.isArray(p.publishedTracks) ? p.publishedTracks : [];
+      return {
+        userId: p.userId,
+        name: p.name,
+        publishedTracks,
+        hasVideoStream: Boolean(p.videoStream) || publishedTracks.includes("video"),
+        hasAudioStream: Boolean(p.audioStream) || publishedTracks.includes("audio")
+      };
+    }, [avatarParticipant]);
+
+    useEffect(() => {
+      logHrAvatarEvent("hr_avatar_participant_search", {
+        meetingId,
+        participants: participants.map((p) => ({
+          userId: p.userId,
+          name: p.name,
+          publishedTracks: (p as unknown as { publishedTracks?: unknown })?.publishedTracks
+        }))
+      });
+    }, [meetingId, participants]);
+
+    useEffect(() => {
+      if (!avatarParticipant) {
+        logHrAvatarEvent("hr_avatar_agent_found", { meetingId, agentFound: false });
+        return;
+      }
+      logHrAvatarEvent("hr_avatar_agent_found", { meetingId, agentFound: true, ...(trackSummary ?? {}) });
+    }, [avatarParticipant, meetingId, trackSummary]);
+
+    const lastTrackKeyRef = useRef<string>("");
+    useEffect(() => {
+      const key = trackSummary ? JSON.stringify(trackSummary) : "none";
+      if (key === lastTrackKeyRef.current) return;
+      lastTrackKeyRef.current = key;
+      logHrAvatarEvent("hr_avatar_agent_tracks_changed", { meetingId, tracks: trackSummary });
+    }, [meetingId, trackSummary]);
+
   if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
     return <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание потока аватара…</div>;
   }
+
   return (
     <div className="stream-call-ui h-full w-full">
       <div className="stream-call-layout">
-        {STREAM_OPENAI_AGENT_MODE_ENABLED ? (
+        {avatarParticipant ? (
+          (() => {
+            const hasVideo = Boolean(trackSummary?.hasVideoStream);
+            if (hasVideo) {
+              logHrAvatarEvent("hr_avatar_live_video_rendered", { meetingId, ...(trackSummary ?? {}) });
+              return <ParticipantView participant={avatarParticipant} trackType="videoTrack" />;
+            }
+            logHrAvatarEvent("hr_avatar_static_fallback_rendered", { meetingId, ...(trackSummary ?? {}) });
+            // If agent exists but video isn't published yet (or degraded), show static fallback.
+            // Once video appears, `useParticipants()` will update and we will switch to ParticipantView automatically.
+            return <AvatarPlaceholder />;
+          })()
+        ) : STREAM_OPENAI_AGENT_MODE_ENABLED ? (
           <AvatarPlaceholder />
-        ) : avatarParticipant ? (
-          <ParticipantView participant={avatarParticipant} trackType="videoTrack" />
         ) : (
           <AvatarPlaceholder />
         )}
@@ -82,6 +182,21 @@ function AvatarCallBody({ showStreamToolbar, meetingId, onLeave }: AvatarCallBod
       {showStreamToolbar ? (
         <div className="stream-call-controls">
           <CallControls onLeave={onLeave} />
+        </div>
+      ) : null}
+      {debugAvatar ? (
+        <div className="pointer-events-none absolute left-3 top-3 z-10 max-w-[90%] rounded-xl bg-black/55 px-3 py-2 text-[11px] text-white backdrop-blur-sm">
+          <div className="font-semibold">debugAvatar</div>
+          <div>agentFound: {avatarParticipant ? "true" : "false"}</div>
+          {trackSummary ? (
+            <>
+              <div>agentUserId: {String(trackSummary.userId ?? "")}</div>
+              <div>publishedTracks: {JSON.stringify(trackSummary.publishedTracks)}</div>
+              <div>hasVideoStream: {trackSummary.hasVideoStream ? "true" : "false"}</div>
+              <div>hasAudioStream: {trackSummary.hasAudioStream ? "true" : "false"}</div>
+            </>
+          ) : null}
+          <div>muteAvatar: {muteAvatar ? "true" : "false"}</div>
         </div>
       ) : null}
     </div>
@@ -171,10 +286,12 @@ export function AvatarStreamCard({
   }, []);
 
   useEffect(() => {
+    // By default, do NOT forcibly mute the avatar panel; HR/spectator should be able to hear agent audio.
+    // If needed for debugging / no-echo scenarios: add `?muteAvatar=1`.
+    if (typeof window === "undefined") return;
+    if (!getQueryFlag("muteAvatar")) return;
     const root = streamViewportRef.current;
-    if (!root) {
-      return;
-    }
+    if (!root) return;
     const muteMedia = () => {
       root.querySelectorAll("audio, video").forEach((element) => {
         const media = element as HTMLMediaElement;
