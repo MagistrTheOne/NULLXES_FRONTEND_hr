@@ -63,6 +63,19 @@ export type InterviewFlowPhase = "lobby" | "intro" | "questions" | "closing" | "
 
 export type AgentState = "idle" | "listening" | "thinking" | "speaking";
 export type VoiceProvider = "openai";
+export type AgentSpeechEvent =
+  | {
+      seq: number;
+      itemId: string;
+      delta: string;
+      done: false;
+    }
+  | {
+      seq: number;
+      itemId: string;
+      text: string;
+      done: true;
+    };
 
 export type TranscriptTurn = {
   role: "agent" | "candidate";
@@ -392,6 +405,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   const [questionsAsked, setQuestionsAsked] = useState(0);
   const runtimeQuestionsRevisionRef = useRef(0);
   const [latestCaptions, setLatestCaptions] = useState<LiveCaptions>({});
+  const [agentSpeechEvent, setAgentSpeechEvent] = useState<AgentSpeechEvent | null>(null);
   /**
    * Reactive mirror of `transcriptsRef.current` — identical data, but state so
    * the HR insight panel can re-render when new turns arrive. We push to BOTH
@@ -585,6 +599,25 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     }, 8000);
   }, []);
 
+  const emitAgentSpeechDelta = useCallback((itemId: string, delta: string) => {
+    if (!delta) return;
+    setAgentSpeechEvent((prev) => ({
+      seq: (prev?.seq ?? 0) + 1,
+      itemId,
+      delta,
+      done: false
+    }));
+  }, []);
+
+  const emitAgentSpeechDone = useCallback((itemId: string, text: string) => {
+    setAgentSpeechEvent((prev) => ({
+      seq: (prev?.seq ?? 0) + 1,
+      itemId,
+      text,
+      done: true
+    }));
+  }, []);
+
   const buildResumeCheckpoint = useCallback(
     (reason: "pause" | "before_resume" | "event_update"): ResumeCheckpoint => {
       const turns = transcriptsRef.current;
@@ -656,6 +689,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         const current = agentTranscriptBufferRef.current.get(itemId) ?? "";
         agentTranscriptBufferRef.current.set(itemId, current + delta);
         scheduleCaptionUpdate("agent", current + delta);
+        emitAgentSpeechDelta(itemId, delta);
       }
       return;
     }
@@ -684,6 +718,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
         resumeCheckpointRef.current = checkpoint;
         setResumeCheckpoint(checkpoint);
       }
+      emitAgentSpeechDone(itemId, transcript);
       agentTranscriptBufferRef.current.delete(itemId);
       return;
     }
@@ -822,7 +857,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     if (type === "session.created") {
       return;
     }
-  }, [buildResumeCheckpoint, emitFrontendTelemetry, scheduleCaptionUpdate]);
+  }, [buildResumeCheckpoint, emitAgentSpeechDelta, emitAgentSpeechDone, emitFrontendTelemetry, scheduleCaptionUpdate]);
 
   const ensureClient = useCallback(() => {
     if (!rtcRef.current) {
@@ -1374,6 +1409,7 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     setAgentState("idle");
     setQuestionsAsked(0);
     setLatestCaptions({});
+    setAgentSpeechEvent(null);
     transcriptsRef.current = [];
     setTranscripts([]);
     agentTranscriptBufferRef.current.clear();
@@ -1707,6 +1743,8 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
     questionsAsked,
     /** Latest single-turn caption per role; keys disappear after ~8s of silence. */
     latestCaptions,
+    /** Assistant speech chunks from the existing OpenAI Realtime session; consumed by Anam overlay. */
+    agentSpeechEvent,
     /** Accumulated per-turn transcript history (agent + candidate). Reactive. */
     transcripts,
     start,
