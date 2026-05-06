@@ -1152,6 +1152,7 @@ export function InterviewShell() {
             avatarReady={avatarReady}
             telemetryUnavailable={degradationState.telemetryUnavailable}
             meetingId={recoveredMeetingId}
+            realtimeSessionId={recoveredSessionId}
             showStreamToolbar={false}
             showStatusBadge
             showPauseAI={phase === "connected" && Boolean(recoveredMeetingId) && !completedInterviewLocked}

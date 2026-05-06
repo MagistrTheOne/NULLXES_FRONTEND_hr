@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { StreamVideoParticipant } from "@stream-io/video-client";
 import { CallControls, CallingState, ParticipantView, StreamCall, StreamTheme, StreamVideo, StreamVideoClient, useCallStateHooks } from "@stream-io/video-react-sdk";
 import Image from "next/image";
 import { Loader2 } from "lucide-react";
@@ -26,6 +27,61 @@ function logHrAvatarEvent(event: string, payload: Record<string, unknown>) {
       event,
       ...payload
     })
+  );
+}
+
+function shouldExcludeFromHrAvatarAgentPick(userId: string): boolean {
+  const id = userId.toLowerCase();
+  return (
+    id.startsWith("candidate-") ||
+    id.startsWith("spectator-") ||
+    id.startsWith("avatar-viewer-") ||
+    id.startsWith("observer-") ||
+    id.startsWith("viewer-")
+  );
+}
+
+function pickHrAvatarStreamAgentParticipant(
+  participants: StreamVideoParticipant[],
+  streamCallId: string,
+  realtimeSessionId: string | null | undefined
+): StreamVideoParticipant | null {
+  const agentPool = participants.filter((p) => {
+    const id = p.userId ?? "";
+    if (!id) return false;
+    if (shouldExcludeFromHrAvatarAgentPick(id)) return false;
+    return id.startsWith("agent_") || id.startsWith("agent-");
+  });
+
+  const preferredIds = [
+    realtimeSessionId ? `agent_${realtimeSessionId}` : undefined,
+    `agent_${streamCallId}`,
+    `agent-${streamCallId}`
+  ].filter((x): x is string => Boolean(x));
+
+  for (const pid of preferredIds) {
+    const hit = agentPool.find((p) => p.userId === pid);
+    if (hit) return hit;
+  }
+
+  const getHasVideo = (p: StreamVideoParticipant): boolean => {
+    const maybe = p as { videoStream?: unknown; publishedTracks?: unknown };
+    if (Boolean(maybe?.videoStream)) return true;
+    if (Array.isArray(maybe?.publishedTracks) && maybe.publishedTracks.includes("video")) return true;
+    return false;
+  };
+  const getHasAudio = (p: StreamVideoParticipant): boolean => {
+    const maybe = p as { audioStream?: unknown; publishedTracks?: unknown };
+    if (Boolean(maybe?.audioStream)) return true;
+    if (Array.isArray(maybe?.publishedTracks) && maybe.publishedTracks.includes("audio")) return true;
+    return false;
+  };
+
+  return (
+    agentPool.find((p) => getHasVideo(p)) ??
+    agentPool.find((p) => getHasAudio(p)) ??
+    agentPool[0] ??
+    null
   );
 }
 
@@ -66,113 +122,122 @@ type StreamTokenErrorPayload = {
 
 type AvatarCallBodyProps = {
   showStreamToolbar: boolean;
+  /** Stream call id (same as meetingId in product). */
   meetingId: string;
+  /** OpenAI / gateway realtime session id — used to match `agent_${sessionId}` publisher. */
+  realtimeSessionId?: string | null;
   onLeave?: (err?: Error) => void | Promise<void>;
 };
 
-function AvatarCallBody({ showStreamToolbar, meetingId, onLeave }: AvatarCallBodyProps) {
-    const { useCallCallingState, useParticipants } = useCallStateHooks();
-    const state = useCallCallingState();
-    const participants = useParticipants();
+function AvatarCallBody({ showStreamToolbar, meetingId, realtimeSessionId, onLeave }: AvatarCallBodyProps) {
+  const { useCallCallingState, useParticipants } = useCallStateHooks();
+  const state = useCallCallingState();
+  const participants = useParticipants();
 
-    const debugAvatar = useMemo(() => getQueryFlag("debugAvatar"), []);
-    const muteAvatar = useMemo(() => getQueryFlag("muteAvatar"), []);
+  const debugAvatar = useMemo(() => getQueryFlag("debugAvatar"), []);
+  const muteAvatar = useMemo(() => getQueryFlag("muteAvatar"), []);
 
-    const avatarParticipant = useMemo(() => {
-      // HR tile: only pod agent ids (`agent_*` or legacy `agent-<meetingId>`). No fallback to other remotes (would duplicate candidate video).
-      const agentMatches = participants.filter((participant) => {
-        const id = participant.userId ?? "";
-        const name = (participant.name ?? "").toLowerCase();
-        return (
-          id.startsWith("agent_") ||
-          id === `agent-${meetingId}` ||
-          id.startsWith("agent-") ||
-          name.includes("hr avatar") ||
-          name.includes("hr ассист")
-        );
-      });
+  const streamCallId = meetingId;
 
-      const getHasVideo = (p: unknown): boolean => {
-        const maybe = p as { videoStream?: unknown; publishedTracks?: unknown };
-        if (Boolean(maybe?.videoStream)) return true;
-        if (Array.isArray(maybe?.publishedTracks) && maybe.publishedTracks.includes("video")) return true;
-        return false;
-      };
-      const getHasAudio = (p: unknown): boolean => {
-        const maybe = p as { audioStream?: unknown; publishedTracks?: unknown };
-        if (Boolean(maybe?.audioStream)) return true;
-        if (Array.isArray(maybe?.publishedTracks) && maybe.publishedTracks.includes("audio")) return true;
-        return false;
-      };
+  useEffect(() => {
+    for (const p of participants) {
+      const id = p.userId ?? "";
+      if (id && shouldExcludeFromHrAvatarAgentPick(id)) {
+        logHrAvatarEvent("hr_avatar_ignored_participant", {
+          meetingId: streamCallId,
+          userId: id,
+          reason: "excluded_internal_viewer_or_candidate"
+        });
+      }
+    }
+  }, [participants, streamCallId]);
 
-      // Prefer agent with video; then agent with audio; else first match.
-      return (
-        agentMatches.find((p) => getHasVideo(p)) ??
-        agentMatches.find((p) => getHasAudio(p)) ??
-        agentMatches[0] ??
-        null
-      );
-    }, [meetingId, participants]);
+  const avatarParticipant = useMemo(
+    () => pickHrAvatarStreamAgentParticipant(participants, streamCallId, realtimeSessionId),
+    [participants, realtimeSessionId, streamCallId]
+  );
 
-    const trackSummary = useMemo(() => {
-      if (!avatarParticipant) return null;
-      const p = avatarParticipant as unknown as { userId?: string; name?: string; publishedTracks?: unknown; videoStream?: unknown; audioStream?: unknown };
-      const publishedTracks = Array.isArray(p.publishedTracks) ? p.publishedTracks : [];
-      return {
+  const trackSummary = useMemo(() => {
+    if (!avatarParticipant) return null;
+    const p = avatarParticipant as unknown as {
+      userId?: string;
+      name?: string;
+      publishedTracks?: unknown;
+      videoStream?: unknown;
+      audioStream?: unknown;
+    };
+    const publishedTracks = Array.isArray(p.publishedTracks) ? p.publishedTracks : [];
+    return {
+      userId: p.userId,
+      name: p.name,
+      publishedTracks,
+      hasVideoStream: Boolean(p.videoStream) || publishedTracks.includes("video"),
+      hasAudioStream: Boolean(p.audioStream) || publishedTracks.includes("audio")
+    };
+  }, [avatarParticipant]);
+
+  useEffect(() => {
+    logHrAvatarEvent("hr_avatar_participant_search", {
+      meetingId: streamCallId,
+      realtimeSessionId: realtimeSessionId ?? null,
+      participants: participants.map((p) => ({
         userId: p.userId,
         name: p.name,
-        publishedTracks,
-        hasVideoStream: Boolean(p.videoStream) || publishedTracks.includes("video"),
-        hasAudioStream: Boolean(p.audioStream) || publishedTracks.includes("audio")
-      };
-    }, [avatarParticipant]);
+        publishedTracks: (p as unknown as { publishedTracks?: unknown })?.publishedTracks
+      }))
+    });
+  }, [meetingId, participants, realtimeSessionId, streamCallId]);
 
-    useEffect(() => {
-      logHrAvatarEvent("hr_avatar_participant_search", {
-        meetingId,
-        participants: participants.map((p) => ({
-          userId: p.userId,
-          name: p.name,
-          publishedTracks: (p as unknown as { publishedTracks?: unknown })?.publishedTracks
-        }))
-      });
-    }, [meetingId, participants]);
+  useEffect(() => {
+    if (!avatarParticipant) {
+      logHrAvatarEvent("hr_avatar_agent_found", { meetingId: streamCallId, agentFound: false });
+      return;
+    }
+    logHrAvatarEvent("hr_avatar_agent_found", { meetingId: streamCallId, agentFound: true, ...(trackSummary ?? {}) });
+  }, [avatarParticipant, meetingId, streamCallId, trackSummary]);
 
-    useEffect(() => {
-      if (!avatarParticipant) {
-        logHrAvatarEvent("hr_avatar_agent_found", { meetingId, agentFound: false });
-        return;
-      }
-      logHrAvatarEvent("hr_avatar_agent_found", { meetingId, agentFound: true, ...(trackSummary ?? {}) });
-    }, [avatarParticipant, meetingId, trackSummary]);
+  const lastTrackKeyRef = useRef<string>("");
+  useEffect(() => {
+    const key = trackSummary ? JSON.stringify(trackSummary) : "none";
+    if (key === lastTrackKeyRef.current) return;
+    lastTrackKeyRef.current = key;
+    logHrAvatarEvent("hr_avatar_agent_tracks_changed", { meetingId: streamCallId, tracks: trackSummary });
+  }, [meetingId, streamCallId, trackSummary]);
 
-    const lastTrackKeyRef = useRef<string>("");
-    useEffect(() => {
-      const key = trackSummary ? JSON.stringify(trackSummary) : "none";
-      if (key === lastTrackKeyRef.current) return;
-      lastTrackKeyRef.current = key;
-      logHrAvatarEvent("hr_avatar_agent_tracks_changed", { meetingId, tracks: trackSummary });
-    }, [meetingId, trackSummary]);
+  const liveVideoLoggedRef = useRef(false);
+  const staticFallbackLoggedForAgentRef = useRef<string | null>(null);
+  useEffect(() => {
+    const hasVideo = Boolean(trackSummary?.hasVideoStream);
+    const uid = trackSummary?.userId ?? "";
+    if (hasVideo && !liveVideoLoggedRef.current) {
+      liveVideoLoggedRef.current = true;
+      logHrAvatarEvent("hr_avatar_live_video_rendered", { meetingId: streamCallId, ...(trackSummary ?? {}) });
+    }
+    if (!hasVideo) {
+      liveVideoLoggedRef.current = false;
+    }
+    if (hasVideo) {
+      staticFallbackLoggedForAgentRef.current = null;
+    }
+    if (avatarParticipant && !hasVideo && uid && staticFallbackLoggedForAgentRef.current !== uid) {
+      staticFallbackLoggedForAgentRef.current = uid;
+      logHrAvatarEvent("hr_avatar_static_fallback_rendered", { meetingId: streamCallId, ...(trackSummary ?? {}) });
+    }
+  }, [avatarParticipant, meetingId, streamCallId, trackSummary]);
 
   if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
     return <div className="flex h-full items-center justify-center text-sm text-slate-600">Ожидание потока аватара…</div>;
   }
 
   return (
-    <div className="stream-call-ui h-full w-full">
+    <div className="stream-call-ui relative h-full w-full">
       <div className="stream-call-layout">
         {avatarParticipant ? (
-          (() => {
-            const hasVideo = Boolean(trackSummary?.hasVideoStream);
-            if (hasVideo) {
-              logHrAvatarEvent("hr_avatar_live_video_rendered", { meetingId, ...(trackSummary ?? {}) });
-              return <ParticipantView participant={avatarParticipant} trackType="videoTrack" />;
-            }
-            logHrAvatarEvent("hr_avatar_static_fallback_rendered", { meetingId, ...(trackSummary ?? {}) });
-            // If agent exists but video isn't published yet (or degraded), show static fallback.
-            // Once video appears, `useParticipants()` will update and we will switch to ParticipantView automatically.
-            return <AvatarPlaceholder />;
-          })()
+          Boolean(trackSummary?.hasVideoStream) ? (
+            <ParticipantView participant={avatarParticipant} trackType="videoTrack" />
+          ) : (
+            <AvatarPlaceholder />
+          )
         ) : STREAM_OPENAI_AGENT_MODE_ENABLED ? (
           <AvatarPlaceholder />
         ) : (
@@ -188,6 +253,7 @@ function AvatarCallBody({ showStreamToolbar, meetingId, onLeave }: AvatarCallBod
         <div className="pointer-events-none absolute left-3 top-3 z-10 max-w-[90%] rounded-xl bg-black/55 px-3 py-2 text-[11px] text-white backdrop-blur-sm">
           <div className="font-semibold">debugAvatar</div>
           <div>agentFound: {avatarParticipant ? "true" : "false"}</div>
+          <div>realtimeSessionId: {String(realtimeSessionId ?? "")}</div>
           {trackSummary ? (
             <>
               <div>agentUserId: {String(trackSummary.userId ?? "")}</div>
@@ -209,6 +275,8 @@ type AvatarStreamCardProps = {
   avatarReady: boolean;
   telemetryUnavailable?: boolean;
   meetingId: string | null;
+  /** Matches gateway Stream agent id `agent_${sessionId}` when set. */
+  realtimeSessionId?: string | null;
   showStreamToolbar?: boolean;
   showStatusBadge?: boolean;
   showPauseAI?: boolean;
@@ -231,6 +299,7 @@ export function AvatarStreamCard({
   avatarReady,
   telemetryUnavailable = false,
   meetingId,
+  realtimeSessionId = null,
   showStreamToolbar = false,
   showStatusBadge = true,
   showPauseAI = false,
@@ -560,6 +629,7 @@ export function AvatarStreamCard({
                 <AvatarCallBody
                   showStreamToolbar={showStreamToolbar}
                   meetingId={callRoomId}
+                  realtimeSessionId={realtimeSessionId}
                   onLeave={handleLeaveFromControls}
                 />
               </StreamCall>
