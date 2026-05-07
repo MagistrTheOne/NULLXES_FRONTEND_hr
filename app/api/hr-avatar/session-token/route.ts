@@ -47,33 +47,32 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         avatarId,
         voiceId,
         llmId: CUSTOMER_CLIENT_LLM_ID,
-        systemPrompt: "Custom client LLM is provided by NULLXES HR. Do not generate autonomous replies.",
         skipGreeting: true,
-        languageCode: "ru",
-        maxSessionLengthSeconds,
-        voiceDetectionOptions: {
-          endOfSpeechSensitivity: 0.5,
-          silenceBeforeSkipTurnSeconds: 10,
-          silenceBeforeSessionEndSeconds: Math.max(maxSessionLengthSeconds, 60),
-          silenceBeforeAutoEndTurnSeconds: 5,
-          speechEnhancementLevel: 0.8
-        }
-      },
-      sessionOptions: {
-        videoQuality: "auto",
-        sessionReplay: { enableSessionReplay: false }
+        maxSessionLengthSeconds
       }
     })
   });
 
-  const data = (await response.json().catch(() => ({}))) as { sessionToken?: unknown; error?: unknown; message?: unknown };
+  const data = (await response.json().catch(() => ({}))) as {
+    sessionToken?: unknown;
+    error?: unknown;
+    message?: unknown;
+    detail?: unknown;
+  };
   if (!response.ok || typeof data.sessionToken !== "string") {
     return NextResponse.json(
       {
         message: "Failed to create Anam session token",
         code: "anam.session_token_failed",
         status: response.status,
-        detail: typeof data.message === "string" ? data.message : typeof data.error === "string" ? data.error : undefined
+        detail:
+          typeof data.detail === "string"
+            ? data.detail
+            : typeof data.message === "string"
+              ? data.message
+              : typeof data.error === "string"
+                ? data.error
+                : data.detail ?? data.error
       },
       { status: response.ok ? 502 : response.status }
     );
