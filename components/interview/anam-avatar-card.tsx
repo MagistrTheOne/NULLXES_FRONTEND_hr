@@ -214,7 +214,7 @@ export function AnamAvatarCard({
       }
 
       const client = createClient(payload.sessionToken, {
-        disableInputAudio: true,
+        disableInputAudio: false,
         voiceDetection: {
           endOfSpeechSensitivity: 0.5
         }
@@ -229,6 +229,19 @@ export function AnamAvatarCard({
       });
       client.addListener(AnamEvent.VIDEO_PLAY_STARTED, () => {
         logAnamAvatarEvent("anam_avatar_video_started", { meetingId, sessionId: realtimeSessionId });
+      });
+      client.addListener(AnamEvent.USER_SPEECH_STARTED, (correlationId: string) => {
+        logAnamAvatarEvent("anam_avatar_user_speech_started", { meetingId, sessionId: realtimeSessionId, correlationId });
+      });
+      client.addListener(AnamEvent.USER_SPEECH_ENDED, (correlationId: string) => {
+        logAnamAvatarEvent("anam_avatar_user_speech_ended", { meetingId, sessionId: realtimeSessionId, correlationId });
+      });
+      client.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, (messages: unknown[]) => {
+        logAnamAvatarEvent("anam_avatar_message_history_updated", {
+          meetingId,
+          sessionId: realtimeSessionId,
+          messageCount: Array.isArray(messages) ? messages.length : 0
+        });
       });
       client.addListener(AnamEvent.CONNECTION_CLOSED, (reason: unknown, details?: string) => {
         setAnamReady(false);
