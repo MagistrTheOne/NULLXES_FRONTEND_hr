@@ -41,7 +41,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       Authorization: `Bearer ${apiKey}`
     },
     body: JSON.stringify({
-      clientLabel: `nullxes-hr-${meetingId}`,
       personaConfig: {
         name: "NULLXES HR ассистент",
         avatarId,
