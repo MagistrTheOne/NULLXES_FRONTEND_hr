@@ -51,7 +51,7 @@ import {
 import { deriveSessionUiState, type SessionUIState } from "@/lib/session-ui-state";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { AnamAvatarCard } from "./anam-avatar-card";
+import { AnamAvatarCard, type AnamAvailability } from "./anam-avatar-card";
 import { CandidateStreamCard } from "./candidate-stream-card";
 import { InterviewsTablePreview } from "./interviews-table-preview";
 import { MeetingHeader } from "./meeting-header";
@@ -174,6 +174,7 @@ export function InterviewShell() {
   void questionsAsked;
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const candidateRuntimeBootstrapRef = useRef(false);
+  const [anamAvailability, setAnamAvailability] = useState<AnamAvailability>("idle");
   const [origin, setOrigin] = useState("");
   const [rows, setRows] = useState<InterviewListRow[]>([]);
   const [rowsTotalCount, setRowsTotalCount] = useState(0);
@@ -231,10 +232,11 @@ export function InterviewShell() {
     if (!audioRef.current) {
       return;
     }
+    const anamLive = ANAM_AVATAR_OVERLAY_ENABLED && anamAvailability === "live";
     audioRef.current.srcObject = voiceProvider === "openai" ? remoteAudioStream : null;
-    audioRef.current.muted = ANAM_AVATAR_OVERLAY_ENABLED || voiceProvider !== "openai";
-    audioRef.current.volume = ANAM_AVATAR_OVERLAY_ENABLED ? 0 : voiceProvider === "openai" ? 1 : 0;
-  }, [remoteAudioStream, voiceProvider]);
+    audioRef.current.muted = anamLive || voiceProvider !== "openai";
+    audioRef.current.volume = anamLive ? 0 : voiceProvider === "openai" ? 1 : 0;
+  }, [anamAvailability, remoteAudioStream, voiceProvider]);
 
   const busy = phase === "starting" || phase === "stopping";
 
@@ -1178,6 +1180,7 @@ export function InterviewShell() {
             uiState={sessionUiState}
             emphasizePrimary
             mobilePip={isCandidateFlow}
+            onAvailabilityChange={setAnamAvailability}
           />
           </div>
           {isCandidateFlow ? null : OBSERVER_PANEL_ENABLED ? (

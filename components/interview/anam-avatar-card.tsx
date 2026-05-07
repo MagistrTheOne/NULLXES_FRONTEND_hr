@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient, AnamEvent, type AnamClient } from "@anam-ai/js-sdk";
 import Image from "next/image";
 import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
 import { Badge } from "@/components/ui/badge";
 import type { SessionUIState } from "@/lib/session-ui-state";
@@ -12,6 +11,8 @@ import { cn } from "@/lib/utils";
 import type { AgentSpeechEvent } from "@/hooks/use-interview-session";
 
 const AVATAR_PLACEHOLDER_SRC = "/anna.jpg";
+const ANAM_STARTUP_TIMEOUT_MS = 10_000;
+const DEBUG_ANAM_AVATAR = process.env.NEXT_PUBLIC_INTERNAL_DEBUG_UI === "1";
 
 type AnamSessionTokenResponse = {
   sessionToken: string;
@@ -20,9 +21,8 @@ type AnamSessionTokenResponse = {
   sessionId: string | null;
 };
 
-type PendingAgentSpeechEvent = AgentSpeechEvent;
-
-type AnamAvatarStatus = "idle" | "connecting" | "ready" | "speaking" | "error" | "ended";
+type AnamAvatarStatus = "idle" | "connecting" | "ready" | "speaking" | "fallback" | "ended";
+export type AnamAvailability = "idle" | "connecting" | "live" | "fallback" | "ended";
 
 type AnamAvatarCardProps = {
   participantName: string;
@@ -43,11 +43,17 @@ type AnamAvatarCardProps = {
   uiState?: SessionUIState;
   emphasizePrimary?: boolean;
   mobilePip?: boolean;
+  onAvailabilityChange?: (availability: AnamAvailability) => void;
 };
 
 function logAnamAvatarEvent(event: string, payload: Record<string, unknown>) {
+  if (!DEBUG_ANAM_AVATAR) return;
   if (typeof console === "undefined") return;
   console.info(JSON.stringify({ msg: event, event, ...payload }));
+}
+
+function shouldFallbackFromWarning(message: string): boolean {
+  return /quota|limit|credit|billing|expired|session|disconnect|unavailable/i.test(message);
 }
 
 function AnamAvatarPlaceholder({ emphasize }: { emphasize?: boolean }) {
@@ -84,7 +90,8 @@ export function AnamAvatarCard({
   sessionEnded = false,
   uiState,
   emphasizePrimary = true,
-  mobilePip = false
+  mobilePip = false,
+  onAvailabilityChange
 }: AnamAvatarCardProps) {
   const ended = Boolean(sessionEnded) || uiState === "completed";
   const videoElementId = useMemo(() => `anam-hr-avatar-${meetingId ?? "idle"}`, [meetingId]);
@@ -94,23 +101,33 @@ export function AnamAvatarCard({
   const clientRef = useRef<AnamClient | null>(null);
   const connectInFlightRef = useRef(false);
   const connectEpochRef = useRef(0);
+  const startupTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const processedSpeechSeqRef = useRef(0);
-  const pendingEventsRef = useRef<PendingAgentSpeechEvent[]>([]);
   const activeTalkStreamRef = useRef<{ itemId: string; stream: ReturnType<AnamClient["createTalkMessageStream"]> } | null>(null);
 
   const hrStatusLabel = useMemo(() => {
     if (ended || status === "ended") return "Сессия завершена";
-    if (status === "ready") return "В эфире";
+    if (status === "ready" || status === "fallback") return "В эфире";
     if (status === "speaking") return "Говорит";
-    if (status === "error") return "Аватар недоступен";
     if (status === "connecting") return "Подключаемся…";
     if (!enabled || !meetingId) return "Ожидаем запуск";
     return "Ожидаем запуск";
   }, [enabled, ended, meetingId, status]);
 
-  const disconnect = useCallback(async () => {
+  const clearStartupTimeout = useCallback(() => {
+    if (startupTimeoutRef.current) {
+      clearTimeout(startupTimeoutRef.current);
+      startupTimeoutRef.current = null;
+    }
+  }, []);
+
+  const reportAvailability = useCallback((availability: AnamAvailability) => {
+    onAvailabilityChange?.(availability);
+  }, [onAvailabilityChange]);
+
+  const disconnect = useCallback(async (availability?: AnamAvailability) => {
     connectEpochRef.current += 1;
-    pendingEventsRef.current = [];
+    clearStartupTimeout();
     activeTalkStreamRef.current = null;
     processedSpeechSeqRef.current = 0;
     setAnamReady(false);
@@ -120,13 +137,18 @@ export function AnamAvatarCard({
       await client.stopStreaming().catch(() => undefined);
     }
     setInlineStatus(null);
-    setStatus(ended ? "ended" : "idle");
-  }, [ended]);
+    setStatus(ended ? "ended" : availability === "fallback" ? "fallback" : "idle");
+    reportAvailability(availability ?? (ended ? "ended" : "idle"));
+  }, [clearStartupTimeout, ended, reportAvailability]);
+
+  const enterFallback = useCallback(async (reason: string, payload: Record<string, unknown> = {}) => {
+    logAnamAvatarEvent("hr_avatar_overlay_fallback", { meetingId, sessionId: realtimeSessionId, reason, ...payload });
+    await disconnect("fallback");
+  }, [disconnect, meetingId, realtimeSessionId]);
 
   const processSpeechEvent = useCallback(async (event: AgentSpeechEvent) => {
     const client = clientRef.current;
     if (!client || !anamReady) {
-      pendingEventsRef.current.push(event);
       return;
     }
 
@@ -171,21 +193,6 @@ export function AnamAvatarCard({
     }
   }, [aiPaused, anamReady, meetingId, realtimeSessionId]);
 
-  const flushPendingSpeechEvents = useCallback(() => {
-    if (!anamReady || !clientRef.current) return;
-    const events = pendingEventsRef.current;
-    pendingEventsRef.current = [];
-    for (const event of events) {
-      void processSpeechEvent(event).catch((err: unknown) => {
-        logAnamAvatarEvent("anam_avatar_error", {
-          meetingId,
-          sessionId: realtimeSessionId,
-          message: err instanceof Error ? err.message : String(err)
-        });
-      });
-    }
-  }, [anamReady, meetingId, processSpeechEvent, realtimeSessionId]);
-
   const startAnam = useCallback(async () => {
     if (!enabled || !meetingId || ended) return;
     if (connectInFlightRef.current || clientRef.current) return;
@@ -193,10 +200,18 @@ export function AnamAvatarCard({
     connectInFlightRef.current = true;
     const epoch = ++connectEpochRef.current;
     setStatus("connecting");
-    setInlineStatus("Подключаем Anam…");
+    setInlineStatus("Подключаемся…");
+    reportAvailability("connecting");
     logAnamAvatarEvent("anam_avatar_token_requested", { meetingId, sessionId: realtimeSessionId });
 
     try {
+      clearStartupTimeout();
+      startupTimeoutRef.current = setTimeout(() => {
+        if (connectEpochRef.current === epoch) {
+          void enterFallback("startup_timeout");
+        }
+      }, ANAM_STARTUP_TIMEOUT_MS);
+
       const response = await fetch("/api/hr-avatar/session-token", {
         method: "POST",
         credentials: "include",
@@ -222,12 +237,14 @@ export function AnamAvatarCard({
       clientRef.current = client;
 
       client.addListener(AnamEvent.SESSION_READY, (anamSessionId: string) => {
-        setAnamReady(true);
-        setStatus("ready");
-        setInlineStatus(null);
         logAnamAvatarEvent("anam_avatar_session_ready", { meetingId, sessionId: realtimeSessionId, anamSessionId });
       });
       client.addListener(AnamEvent.VIDEO_PLAY_STARTED, () => {
+        clearStartupTimeout();
+        setAnamReady(true);
+        setStatus("ready");
+        setInlineStatus(null);
+        reportAvailability("live");
         logAnamAvatarEvent("anam_avatar_video_started", { meetingId, sessionId: realtimeSessionId });
       });
       client.addListener(AnamEvent.USER_SPEECH_STARTED, (correlationId: string) => {
@@ -244,9 +261,10 @@ export function AnamAvatarCard({
         });
       });
       client.addListener(AnamEvent.CONNECTION_CLOSED, (reason: unknown, details?: string) => {
-        setAnamReady(false);
-        setStatus(ended ? "ended" : "idle");
         logAnamAvatarEvent("anam_avatar_connection_closed", { meetingId, sessionId: realtimeSessionId, reason, details });
+        if (!ended) {
+          void enterFallback("connection_closed", { reason, details });
+        }
       });
       client.addListener(AnamEvent.TALK_STREAM_INTERRUPTED, (correlationId: string) => {
         activeTalkStreamRef.current = null;
@@ -255,24 +273,24 @@ export function AnamAvatarCard({
       });
       client.addListener(AnamEvent.SERVER_WARNING, (message: string) => {
         logAnamAvatarEvent("anam_avatar_warning", { meetingId, sessionId: realtimeSessionId, message });
+        if (shouldFallbackFromWarning(message)) {
+          void enterFallback("server_warning", { message });
+        }
       });
 
       await client.streamToVideoElement(videoElementId);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Не удалось подключить Anam";
-      setStatus("error");
-      setInlineStatus(message);
-      toast.error("Anam HR аватар", { description: message });
       logAnamAvatarEvent("anam_avatar_error", { meetingId, sessionId: realtimeSessionId, message });
-      await disconnect();
+      await enterFallback("start_failed", { message });
     } finally {
       connectInFlightRef.current = false;
     }
-  }, [disconnect, enabled, ended, meetingId, realtimeSessionId, videoElementId]);
+  }, [clearStartupTimeout, enabled, ended, enterFallback, meetingId, realtimeSessionId, reportAvailability, videoElementId]);
 
   useEffect(() => {
     if (!enabled || !meetingId || ended) {
-      void disconnect();
+      void disconnect(ended ? "ended" : "idle");
       return;
     }
     void startAnam();
@@ -285,17 +303,12 @@ export function AnamAvatarCard({
   }, [disconnect]);
 
   useEffect(() => {
-    flushPendingSpeechEvents();
-  }, [flushPendingSpeechEvents]);
-
-  useEffect(() => {
     if (!agentSpeechEvent || agentSpeechEvent.seq <= processedSpeechSeqRef.current) {
       return;
     }
     processedSpeechSeqRef.current = agentSpeechEvent.seq;
     void processSpeechEvent(agentSpeechEvent).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
-      setInlineStatus(message);
       logAnamAvatarEvent("anam_avatar_error", { meetingId, sessionId: realtimeSessionId, message });
     });
   }, [agentSpeechEvent, meetingId, processSpeechEvent, realtimeSessionId]);
