@@ -29,10 +29,10 @@ export type AvatarSessionTransport = {
 };
 
 export const AVATAR_WARMUP_LOG_LINES = [
-  "Connecting neural stream…",
-  "Loading behavioral profile…",
-  "Synchronizing voice model…",
-  "Preparing facial animation…"
+  "Connecting neural stream...",
+  "Loading behavioral profile...",
+  "Synchronizing voice model...",
+  "Preparing facial animation..."
 ] as const;
 
 const RUNPOD_URL_PATTERN = /(?:https?:\/\/)?[\w.-]*runpod\.net[^\s]*/gi;

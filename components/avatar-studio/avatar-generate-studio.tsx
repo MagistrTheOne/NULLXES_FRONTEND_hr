@@ -258,7 +258,7 @@ export function AvatarGenerateStudio() {
           ) : null}
           {generatedElapsedSec != null ? (
             <p className="text-sm font-medium text-emerald-700">
-              Сгенерировано за {generatedElapsedSec < 10 ? generatedElapsedSec.toFixed(1) : Math.round(generatedElapsedSec)} с
+              Generated in {generatedElapsedSec < 10 ? generatedElapsedSec.toFixed(1) : Math.round(generatedElapsedSec)}s
             </p>
           ) : null}
 
