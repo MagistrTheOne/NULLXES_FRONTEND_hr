@@ -1,0 +1,21 @@
+{
+  "metadata": {
+    "tool": "hand-authored-for-mvp-spike",
+    "duration": 3.2,
+    "soundFile": "optional-place-demo-wav-here.wav",
+    "note": "Rhubarb CLI produces the same mouthCues[] shape; run: rhubarb -f json -o cues.json your.wav"
+  },
+  "mouthCues": [
+    { "start": 0, "end": 0.2, "value": "X" },
+    { "start": 0.2, "end": 0.45, "value": "A" },
+    { "start": 0.45, "end": 0.7, "value": "E" },
+    { "start": 0.7, "end": 0.95, "value": "O" },
+    { "start": 0.95, "end": 1.2, "value": "F" },
+    { "start": 1.2, "end": 1.45, "value": "X" },
+    { "start": 1.45, "end": 1.75, "value": "B" },
+    { "start": 1.75, "end": 2.05, "value": "C" },
+    { "start": 2.05, "end": 2.35, "value": "D" },
+    { "start": 2.35, "end": 2.65, "value": "H" },
+    { "start": 2.65, "end": 3.2, "value": "X" }
+  ]
+}

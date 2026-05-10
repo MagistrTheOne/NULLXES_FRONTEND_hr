@@ -1,0 +1,23 @@
+{
+  "format_version": "1.0",
+  "bundle_id": "bnd_example_001",
+  "avatar_id": "avt_demo",
+  "checksum": "replace-with-sha256-of-canonical-json",
+  "rendering_profile": "client_r3f",
+  "glb_url": "https://raw.githubusercontent.com/khaledalam/avatoon/main/test/assets/placeholder-avatar.glb",
+  "glb_checksum": "optional-sha256-of-glb",
+  "viseme_map": {
+    "X": "viseme_sil",
+    "A": "viseme_aa",
+    "B": "viseme_E",
+    "C": "viseme_I",
+    "D": "viseme_O",
+    "E": "viseme_U",
+    "F": "viseme_PP",
+    "G": "viseme_FF",
+    "H": "viseme_TH"
+  },
+  "head_limits": { "yaw": 0.15, "pitch": 0.08 },
+  "mouth_cues_url": "https://your.cdn.example/avatars/avt_demo/v1/greeting.cues.json",
+  "created_at": "2026-05-10T12:00:00.000Z"
+}

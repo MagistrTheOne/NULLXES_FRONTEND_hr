@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nullxes.local/schemas/avatar-bundle.manifest.v1.schema.json",
+  "title": "AvatarBundleManifestV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format_version",
+    "bundle_id",
+    "avatar_id",
+    "checksum",
+    "rendering_profile",
+    "glb_url",
+    "created_at"
+  ],
+  "properties": {
+    "format_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "bundle_id": { "type": "string", "minLength": 4 },
+    "avatar_id": { "type": "string", "minLength": 2 },
+    "checksum": { "type": "string", "minLength": 16 },
+    "rendering_profile": {
+      "type": "string",
+      "enum": ["client_r3f", "client_2d", "server_light", "server_neuro", "anam"]
+    },
+    "glb_url": { "type": "string", "format": "uri" },
+    "glb_checksum": { "type": "string" },
+    "viseme_map": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "head_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "yaw": { "type": "number", "minimum": 0 },
+        "pitch": { "type": "number", "minimum": 0 }
+      }
+    },
+    "mouth_cues_url": { "type": "string", "format": "uri" },
+    "emotion_presets": {
+      "type": "object",
+      "additionalProperties": { "type": "object" }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}
