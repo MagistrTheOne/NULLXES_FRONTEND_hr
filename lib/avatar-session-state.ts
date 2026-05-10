@@ -17,7 +17,18 @@ export type AvatarSessionState =
 /** Snapshot for UI + future WebSocket adapter (same shape as poll tick). */
 export type AvatarJobSnapshot = Pick<
   AvatarGenerateJob,
-  "id" | "state" | "createdAtMs" | "updatedAtMs" | "videoUrl" | "resultVideoUrl" | "errorMessage" | "completedAt"
+  | "id"
+  | "state"
+  | "createdAtMs"
+  | "updatedAtMs"
+  | "videoUrl"
+  | "resultVideoUrl"
+  | "errorMessage"
+  | "completedAt"
+  | "startedAt"
+  | "processingStartedAt"
+  | "failedAt"
+  | "retryCount"
 >;
 
 /**

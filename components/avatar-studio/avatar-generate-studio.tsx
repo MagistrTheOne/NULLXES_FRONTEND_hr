@@ -189,10 +189,11 @@ export function AvatarGenerateStudio() {
         {healthError ? <p className="mt-2 text-rose-600">{healthError}</p> : null}
         {health ? (
           <ul className="mt-2 space-y-1 font-mono text-xs">
-            <li>GPU worker configured: {String(health.runpod.configured)}</li>
-            <li>GPU worker reachable: {String(health.ok)}</li>
-            <li>redis: {String(health.redis)}</li>
-            <li>stream credentials: {String(health.getstream.configured)}</li>
+            <li>gpuReachable: {String(health.gpuReachable)}</li>
+            <li>redisReachable: {String(health.redisReachable)}</li>
+            <li>streamConfigured: {String(health.streamConfigured)}</li>
+            <li>runtimeLatencyMs: {health.runtimeLatencyMs == null ? "null" : String(health.runtimeLatencyMs)}</li>
+            <li>lastSuccessfulGenerationAt: {health.lastSuccessfulGenerationAt ?? "null"}</li>
           </ul>
         ) : (
           <p className="mt-2 text-slate-500">Загрузка…</p>
@@ -252,7 +253,13 @@ export function AvatarGenerateStudio() {
               {sessionLabel(sessionState)}
             </span>
           </div>
-          {job?.id ? <p className="font-mono text-[10px] text-slate-500">job: {job.id}</p> : null}
+          {job?.id ? (
+            <div className="space-y-0.5 font-mono text-[10px] text-slate-500">
+              <p>job: {job.id}</p>
+              {job.state ? <p>backend: {job.state}</p> : null}
+              {typeof job.retryCount === "number" ? <p>retryCount: {job.retryCount}</p> : null}
+            </div>
+          ) : null}
           {sessionBusy ? (
             <p className="text-xs text-slate-500">Опрос состояния каждые 2 с (безопасно при переподключении)</p>
           ) : null}

@@ -58,7 +58,6 @@ export function useAvatarGenerateSession(): UseAvatarGenerateSessionResult {
   const hydrateRef = useRef<BrowserTimeout | null>(null);
   const bootLineIndexRef = useRef(0);
   const hydrationDoneRef = useRef(false);
-  const enteredHydratingForJobIdRef = useRef<string | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current !== null) {
@@ -79,7 +78,6 @@ export function useAvatarGenerateSession(): UseAvatarGenerateSessionResult {
     jobIdRef.current = null;
     sessionStartMsRef.current = null;
     hydrationDoneRef.current = false;
-    enteredHydratingForJobIdRef.current = null;
     setJob(null);
     setBootLogs([]);
     setGeneratedElapsedSec(null);
@@ -184,6 +182,13 @@ export function useAvatarGenerateSession(): UseAvatarGenerateSessionResult {
       setSessionState("processing");
       return;
     }
+    if (job.state === "hydrating") {
+      const url = pickAvatarVideoUrl(job);
+      if (!url) return;
+      stopBootLogTicker();
+      setSessionState((prev) => (prev === "failed" ? prev : "hydrating"));
+      return;
+    }
     if (job.state === "completed") {
       const url = pickAvatarVideoUrl(job);
       if (!url) {
@@ -193,8 +198,6 @@ export function useAvatarGenerateSession(): UseAvatarGenerateSessionResult {
         setSessionState("failed");
         return;
       }
-      if (enteredHydratingForJobIdRef.current === job.id) return;
-      enteredHydratingForJobIdRef.current = job.id;
       stopPolling();
       stopBootLogTicker();
       setSessionState((prev) => {

@@ -1,26 +1,31 @@
-export type AvatarGenerateJobState = "queued" | "processing" | "completed" | "failed";
+export type AvatarGenerateJobState = "queued" | "processing" | "hydrating" | "completed" | "failed";
 
 export type AvatarGenerateJob = {
   id: string;
   state: AvatarGenerateJobState;
   createdAtMs: number;
   updatedAtMs: number;
+  startedAt?: string;
+  processingStartedAt?: string;
+  completedAt?: string;
+  failedAt?: string;
+  retryCount?: number;
   prompt: string;
   errorMessage?: string;
-  /** Absolute public URL (gateway builds from RunPod base + result[0]). */
+  /** Absolute public URL (gateway builds from GPU worker base + result[0]). */
   videoUrl?: string;
-  /** ISO 8601 when job completed. */
-  completedAt?: string;
   /** @deprecated use videoUrl */
   resultVideoUrl?: string;
   resultPayload?: unknown;
 };
 
+/** GET /avatar/health — stable production shape (no raw worker URLs). */
 export type AvatarHealthResponse = {
-  ok: boolean;
-  runpod: { configured: boolean; baseUrl?: string; status?: number; detail?: string };
-  redis: boolean;
-  getstream: { configured: boolean };
+  gpuReachable: boolean;
+  redisReachable: boolean;
+  streamConfigured: boolean;
+  runtimeLatencyMs: number | null;
+  lastSuccessfulGenerationAt: string | null;
 };
 
 export async function fetchAvatarHealth(): Promise<AvatarHealthResponse> {
