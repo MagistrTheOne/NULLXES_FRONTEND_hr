@@ -171,8 +171,9 @@ function AvatarPlaceholder({
         fill
         sizes="(max-width: 1024px) 100vw, 480px"
         priority
+        unoptimized
         className={cn(
-          "object-cover object-center transition-transform duration-100",
+          "object-cover object-center transition-transform duration-100 rotate-180",
           animation && "scale-[calc(1.01+var(--avatar-smile)*0.015)]",
           emphasize ? "scale-[1.02]" : undefined
         )}
@@ -180,7 +181,7 @@ function AvatarPlaceholder({
           animation
             ? {
                 transform:
-                  "translateY(calc(var(--avatar-mouth-open) * -3px)) rotate(var(--avatar-head-tilt)) scale(calc(1 + var(--avatar-smile) * 0.02))"
+                  "rotate(180deg) translateY(calc(var(--avatar-mouth-open) * -3px)) rotate(var(--avatar-head-tilt)) scale(calc(1 + var(--avatar-smile) * 0.02))"
               }
             : undefined
         }
