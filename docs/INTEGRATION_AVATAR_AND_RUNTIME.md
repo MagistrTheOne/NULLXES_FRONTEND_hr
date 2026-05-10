@@ -161,7 +161,7 @@
 
 - Токен: **`POST /api/stream/token`** с телом `role: "spectator"`, `viewerKind: "hr_avatar_panel"`, `meetingId`, `userId: "avatar-viewer-${meetingId}"`, `userName`.
 - **`StreamVideoClient`** → `call(callType, callId)` → **`join({ create: false, video: false })`** — слушатель комнаты, **без** публикации своей камеры.
-- Видео агента в UI: через **`StreamVideo` / `ParticipantView`** (внутри компонента — рендер участника с видео-треком). Пока нет трека — плейсхолдер **`/anna.jpg`** (`AvatarPlaceholder`).
+- Видео агента в UI: через **`StreamVideo` / `ParticipantView`** (внутри компонента — рендер участника с видео-треком). Пока нет трека — **`RealtimeAvatarViewport`** со стилем «камера» и **`/luna.jpg`**.
 - Проп **`avatarReady`** (из родителя, обычно из `useInterviewSession`) влияет на то, **когда** считается окно «В эфире» / разрешён ли рендер видео (`canRenderAvatarWindow`), совместно с `call` и `enabled`.
 
 ### 5.2. Наблюдатель

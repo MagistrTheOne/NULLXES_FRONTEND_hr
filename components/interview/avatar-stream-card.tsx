@@ -15,7 +15,8 @@ import { resolveRunpodBridgeWebSocketUrl } from "@/lib/realtime-avatar-socket";
 import type { SessionUIState } from "@/lib/session-ui-state";
 import { cn } from "@/lib/utils";
 
-const AVATAR_PLACEHOLDER_SRC = "/luna.jpg";
+/** Default Luna still for HR runtime viewport (Stream video replaces when live). */
+const HR_RUNTIME_AVATAR_IMAGE_SRC = "/luna.jpg";
 const STREAM_OPENAI_AGENT_MODE_ENABLED = process.env.NEXT_PUBLIC_STREAM_OPENAI_AGENT_MODE === "1";
 
 function getQueryFlag(name: string): boolean {
@@ -144,17 +145,17 @@ function toFallbackAnimation(frame: RuntimeFrameEnvelope): AvatarFallbackAnimati
   };
 }
 
-function AvatarPlaceholder({
+/** HR tile when Stream agent video is not yet shown — framed like a camera viewport, not a raw placeholder. */
+function RealtimeAvatarViewport({
   emphasize,
   animation,
-  imageSrc = AVATAR_PLACEHOLDER_SRC
+  imageSrc = HR_RUNTIME_AVATAR_IMAGE_SRC
 }: {
   emphasize?: boolean;
   animation?: AvatarFallbackAnimationState;
-  /** Static HR identity when Stream video is not ready (default Luna). */
   imageSrc?: string;
 }) {
-  const style = animation
+  const cssVars = animation
     ? ({
         "--avatar-mouth-open": String(animation.mouthOpen),
         "--avatar-brow-raise": String(animation.browRaise),
@@ -163,8 +164,19 @@ function AvatarPlaceholder({
         "--avatar-head-tilt": `${animation.headTiltDeg}deg`
       } as CSSProperties)
     : undefined;
+
+  const imageTransform =
+    animation != null
+      ? `translateY(calc(var(--avatar-mouth-open) * -2px)) translateX(calc(var(--avatar-smile) * 1.5px)) rotate(${animation.headTiltDeg * 0.35}deg) scale(calc(${emphasize ? 1.02 : 1} * (1 + var(--avatar-smile) * 0.012)))`
+      : emphasize
+        ? "scale(1.02)"
+        : undefined;
+
   return (
-    <div className="relative h-full w-full overflow-hidden" style={style}>
+    <div
+      className="relative h-full w-full overflow-hidden rounded-xl border border-white/10 shadow-[0_20px_80px_rgba(0,0,0,0.35)]"
+      style={cssVars}
+    >
       <Image
         src={imageSrc}
         alt="HR Luna NULLXES"
@@ -173,19 +185,16 @@ function AvatarPlaceholder({
         priority
         unoptimized
         className={cn(
-          "object-cover object-center transition-transform duration-100 rotate-180",
-          animation && "scale-[calc(1.01+var(--avatar-smile)*0.015)]",
-          emphasize ? "scale-[1.02]" : undefined
+          "object-cover object-[58%_35%] transition-transform duration-75 [image-orientation:from-image]",
+          !animation && emphasize ? "scale-[1.02]" : undefined
         )}
-        style={
-          animation
-            ? {
-                transform:
-                  "rotate(180deg) translateY(calc(var(--avatar-mouth-open) * -3px)) rotate(var(--avatar-head-tilt)) scale(calc(1 + var(--avatar-smile) * 0.02))"
-              }
-            : undefined
-        }
+        style={imageTransform ? { transform: imageTransform } : undefined}
       />
+      <div
+        className="pointer-events-none absolute inset-0 bg-linear-to-br from-white/8 via-transparent to-black/10 mix-blend-soft-light"
+        aria-hidden
+      />
+      <div className="pointer-events-none absolute inset-0 backdrop-blur-[0.5px]" aria-hidden />
       <div className="pointer-events-none absolute inset-0 bg-linear-to-t from-black/35 via-transparent to-transparent" />
       {animation ? (
         <div
@@ -391,18 +400,18 @@ function AvatarCallBody({ showStreamToolbar, meetingId, realtimeSessionId, onLea
             </div>
           ) : (
             <div className="relative h-full w-full">
-              <AvatarPlaceholder />
+              <RealtimeAvatarViewport />
               {runpodHud ? <HrRunpodStreamPill hud={runpodHud} /> : null}
             </div>
           )
         ) : STREAM_OPENAI_AGENT_MODE_ENABLED ? (
           <div className="relative h-full w-full">
-            <AvatarPlaceholder />
+            <RealtimeAvatarViewport />
             {runpodHud ? <HrRunpodStreamPill hud={runpodHud} /> : null}
           </div>
         ) : (
           <div className="relative h-full w-full">
-            <AvatarPlaceholder />
+            <RealtimeAvatarViewport />
             {runpodHud ? <HrRunpodStreamPill hud={runpodHud} /> : null}
           </div>
         )}
@@ -858,7 +867,7 @@ export function AvatarStreamCard({
         </div>
       ) : (
         <div className="relative h-full w-full">
-          <AvatarPlaceholder emphasize={emphasizePrimary} animation={placeholderMotion} />
+          <RealtimeAvatarViewport emphasize={emphasizePrimary} animation={placeholderMotion} />
           {runpodHud ? <HrRunpodStreamPill hud={runpodHud} /> : null}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 px-4 pb-3 text-center">
             {(busy || (enabled && meetingId && !call)) ? (
