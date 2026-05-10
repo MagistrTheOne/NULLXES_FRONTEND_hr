@@ -51,7 +51,7 @@ import {
 import { deriveSessionUiState, type SessionUIState } from "@/lib/session-ui-state";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { AnamAvatarCard, type AnamAvailability } from "./anam-avatar-card";
+import { AvatarStreamCard } from "./avatar-stream-card";
 import { CandidateStreamCard } from "./candidate-stream-card";
 import { InterviewsTablePreview } from "./interviews-table-preview";
 import { MeetingHeader } from "./meeting-header";
@@ -90,7 +90,6 @@ const OBSERVER_PANEL_ENABLED =
   process.env.NEXT_PUBLIC_ENABLE_OBSERVER_PANEL !== "0";
 const HR_INSIGHT_PANEL_ENABLED =
   process.env.NEXT_PUBLIC_ENABLE_HR_INSIGHT_PANEL === "1";
-const ANAM_AVATAR_OVERLAY_ENABLED = true;
 const INTERVIEWS_PAGE_SIZE = 8;
 const DEFAULT_OBSERVER_CONTROL: ObserverControlState = {
   visibility: "visible",
@@ -174,7 +173,6 @@ export function InterviewShell() {
   void questionsAsked;
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const candidateRuntimeBootstrapRef = useRef(false);
-  const [anamAvailability, setAnamAvailability] = useState<AnamAvailability>("idle");
   const [origin, setOrigin] = useState("");
   const [rows, setRows] = useState<InterviewListRow[]>([]);
   const [rowsTotalCount, setRowsTotalCount] = useState(0);
@@ -232,11 +230,10 @@ export function InterviewShell() {
     if (!audioRef.current) {
       return;
     }
-    const anamLive = ANAM_AVATAR_OVERLAY_ENABLED && anamAvailability === "live";
     audioRef.current.srcObject = voiceProvider === "openai" ? remoteAudioStream : null;
-    audioRef.current.muted = anamLive || voiceProvider !== "openai";
-    audioRef.current.volume = anamLive ? 0 : voiceProvider === "openai" ? 1 : 0;
-  }, [anamAvailability, remoteAudioStream, voiceProvider]);
+    audioRef.current.muted = voiceProvider !== "openai";
+    audioRef.current.volume = voiceProvider === "openai" ? 1 : 0;
+  }, [remoteAudioStream, voiceProvider]);
 
   const busy = phase === "starting" || phase === "stopping";
 
@@ -1150,12 +1147,13 @@ export function InterviewShell() {
                 "absolute z-20 h-36 w-28 sm:h-44 sm:w-32 lg:relative lg:right-auto lg:top-auto lg:z-auto lg:h-auto lg:w-auto right-[max(0.75rem,env(safe-area-inset-right,0px))] top-[max(0.75rem,env(safe-area-inset-top,0px))]"
             )}
           >
-          <AnamAvatarCard
+          <AvatarStreamCard
             participantName="HR ассистент"
             enabled={streamSurfaceEnabled}
+            avatarReady={avatarReady}
+            telemetryUnavailable={degradationState.telemetryUnavailable}
             meetingId={recoveredMeetingId}
             realtimeSessionId={recoveredSessionId}
-            agentSpeechEvent={agentSpeechEvent}
             showStatusBadge
             showPauseAI={phase === "connected" && Boolean(recoveredMeetingId) && !completedInterviewLocked}
             pauseResumeCopy={isCandidateFlow ? "stop_bot" : "pause"}
@@ -1180,7 +1178,6 @@ export function InterviewShell() {
             uiState={sessionUiState}
             emphasizePrimary
             mobilePip={isCandidateFlow}
-            onAvailabilityChange={setAnamAvailability}
           />
           </div>
           {isCandidateFlow ? null : OBSERVER_PANEL_ENABLED ? (
