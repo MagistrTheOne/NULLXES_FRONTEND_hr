@@ -15,7 +15,7 @@ import { resolveRunpodBridgeWebSocketUrl } from "@/lib/realtime-avatar-socket";
 import type { SessionUIState } from "@/lib/session-ui-state";
 import { cn } from "@/lib/utils";
 
-const AVATAR_PLACEHOLDER_SRC = "/anna.jpg";
+const AVATAR_PLACEHOLDER_SRC = "/luna.jpg";
 const STREAM_OPENAI_AGENT_MODE_ENABLED = process.env.NEXT_PUBLIC_STREAM_OPENAI_AGENT_MODE === "1";
 
 function getQueryFlag(name: string): boolean {
@@ -146,10 +146,13 @@ function toFallbackAnimation(frame: RuntimeFrameEnvelope): AvatarFallbackAnimati
 
 function AvatarPlaceholder({
   emphasize,
-  animation
+  animation,
+  imageSrc = AVATAR_PLACEHOLDER_SRC
 }: {
   emphasize?: boolean;
   animation?: AvatarFallbackAnimationState;
+  /** Static HR identity when Stream video is not ready (default Luna). */
+  imageSrc?: string;
 }) {
   const style = animation
     ? ({
@@ -163,8 +166,8 @@ function AvatarPlaceholder({
   return (
     <div className="relative h-full w-full overflow-hidden" style={style}>
       <Image
-        src={AVATAR_PLACEHOLDER_SRC}
-        alt="HR ассистент NULLXES"
+        src={imageSrc}
+        alt="HR Luna NULLXES"
         fill
         sizes="(max-width: 1024px) 100vw, 480px"
         priority
