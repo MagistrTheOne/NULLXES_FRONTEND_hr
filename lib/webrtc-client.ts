@@ -193,6 +193,8 @@ export class WebRtcInterviewClient {
   private dataChannel: RTCDataChannel | null = null;
   private pendingEvents: Array<Record<string, unknown>> = [];
   private sessionId: string | null = null;
+  /** When set, forwarded OpenAI audio deltas include this for gateway `AvatarRuntimeSessionManager`. */
+  private gatewayMeetingId: string | null = null;
   private audioInputEnabled = true;
   private state: WebRtcConnectionState = "idle";
   private lastBrowserAudioDeltaLogMs = 0;
@@ -228,6 +230,11 @@ export class WebRtcInterviewClient {
   /** Замена listener'а после конструктора (например React effect, который пере-биндит). */
   setOpenAiEventListener(listener: ((event: OpenAiServerEvent) => void) | undefined): void {
     this.onOpenAiEvent = listener;
+  }
+
+  /** Binds Realtime gateway avatar runtime to this browser session (PCM / events by `meetingId`). */
+  setGatewayMeetingId(meetingId: string | null): void {
+    this.gatewayMeetingId = meetingId?.trim() ? meetingId.trim() : null;
   }
 
   private setState(nextState: WebRtcConnectionState): void {
@@ -295,7 +302,8 @@ export class WebRtcInterviewClient {
         void sendRealtimeEvent(this.sessionId, {
           type: "session.update",
           source: "frontend",
-          message: "datachannel_open"
+          message: "datachannel_open",
+          ...(this.gatewayMeetingId ? { meetingId: this.gatewayMeetingId } : {})
         });
       }
       this.flushPendingEvents();
@@ -374,7 +382,16 @@ export class WebRtcInterviewClient {
         void sendRealtimeEvent(this.sessionId, {
           type: `openai.${type}`,
           source: "openai",
-          payload: parsed
+          payload: parsed,
+          ...(this.gatewayMeetingId ? { meetingId: this.gatewayMeetingId } : {})
+        }).catch(() => undefined);
+      }
+      if (isAudioDelta && this.sessionId && this.gatewayMeetingId) {
+        void sendRealtimeEvent(this.sessionId, {
+          ...parsed,
+          type,
+          source: "openai",
+          meetingId: this.gatewayMeetingId
         }).catch(() => undefined);
       }
       if (this.onOpenAiEvent) {
@@ -459,7 +476,10 @@ export class WebRtcInterviewClient {
       this.sendToOpenAiDataChannel(openAiPayload);
     }
     if (this.sessionId) {
-      await sendRealtimeEvent(this.sessionId, openAiPayload ?? payload);
+      await sendRealtimeEvent(this.sessionId, {
+        ...(openAiPayload ?? payload),
+        ...(this.gatewayMeetingId ? { meetingId: this.gatewayMeetingId } : {})
+      });
     }
   }
 
@@ -479,6 +499,7 @@ export class WebRtcInterviewClient {
     this.dataChannel = null;
     this.pendingEvents = [];
     this.sessionId = null;
+    this.gatewayMeetingId = null;
     this.setState("closed");
   }
 

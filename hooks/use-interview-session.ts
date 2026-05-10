@@ -468,6 +468,11 @@ export function useInterviewSession(options?: { isCandidateFlow?: boolean }) {
   const voiceProvider: VoiceProvider = "openai";
 
   const rtcRef = useRef<WebRtcInterviewClient | null>(null);
+
+  useEffect(() => {
+    rtcRef.current?.setGatewayMeetingId(meetingId ?? null);
+  }, [meetingId]);
+
   const reconnectAttemptForSessionRef = useRef<string | null>(null);
   const avatarPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastInterviewContextRef = useRef<InterviewStartContext | null>(null);

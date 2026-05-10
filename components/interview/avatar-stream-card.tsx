@@ -215,6 +215,22 @@ type StreamTokenErrorPayload = {
   code?: string;
 };
 
+function streamTokenErrorHint(payload: StreamTokenErrorPayload, status: number): string {
+  const code = (payload.code ?? "").toLowerCase();
+  if (status === 409) {
+    if (code === "meeting.not_active") {
+      return "Встреча ещё не в статусе «в эфире» — дождитесь запуска кандидатом.";
+    }
+    if (code === "meeting.closed") {
+      return "Сессия завершена, токен Stream для HR-аватара недоступен.";
+    }
+  }
+  if (payload.message?.trim()) {
+    return payload.message.trim();
+  }
+  return `Ошибка выдачи Stream-токена (${status})`;
+}
+
 type HrRunpodStreamHud = {
   connected: boolean;
   reconnecting: boolean;
@@ -496,7 +512,8 @@ export function AvatarStreamCard({
     const message = (input.message ?? "").toLowerCase();
     if (status === 401 || status === 403) return false;
     if (status === 400) return false;
-    if (status === 409 || status === 423 || status === 503) return true;
+    if (status === 423 || status === 503) return true;
+    if (status === 409 && code !== "meeting.closed") return true;
 
     if (
       code === "runtime.not_ready" ||
@@ -604,14 +621,15 @@ export function AvatarStreamCard({
         if (!response.ok) {
           const payload = (await response.json().catch(() => ({}))) as StreamTokenErrorPayload;
           lastFailure = { status: response.status, code: payload.code, message: payload.message };
+          setInlineStatus(streamTokenErrorHint(payload, response.status));
           const transient = isAvatarStreamTransientError(lastFailure);
           if (!transient) {
-            throw new Error(payload.message ?? "Failed to issue HR stream token");
+            throw new Error(streamTokenErrorHint(payload, response.status));
           }
           if (attempt >= maxAttempts) {
-            throw new Error(payload.message ?? "Stream is not ready yet");
+            throw new Error(streamTokenErrorHint(payload, response.status));
           }
-          setInlineStatus("Видео HR-аватара подключится автоматически.");
+          setInlineStatus("Видео HR-аватара подключится автоматически…");
           await new Promise((resolve) => setTimeout(resolve, backoffMs[Math.min(attempt - 1, backoffMs.length - 1)]));
           continue;
         }
