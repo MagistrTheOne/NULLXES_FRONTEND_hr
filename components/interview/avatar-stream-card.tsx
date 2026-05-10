@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { StreamVideoParticipant } from "@stream-io/video-client";
 import { CallControls, CallingState, ParticipantView, StreamCall, StreamTheme, StreamVideo, StreamVideoClient, useCallStateHooks } from "@stream-io/video-react-sdk";
 import Image from "next/image";
@@ -85,9 +85,79 @@ function pickHrAvatarStreamAgentParticipant(
   );
 }
 
-function AvatarPlaceholder({ emphasize }: { emphasize?: boolean }) {
+type RuntimeFrameEnvelope = {
+  meetingId: string;
+  timestamp: number;
+  blendshapes: Array<{ name: string; value: number }>;
+  emotions: Record<string, number>;
+  audioPower: number;
+  latencyMs: number;
+};
+
+type AvatarFallbackAnimationState = {
+  mouthOpen: number;
+  browRaise: number;
+  smile: number;
+  eyeBlink: number;
+  headTiltDeg: number;
+};
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function readBlendshape(blendshapes: RuntimeFrameEnvelope["blendshapes"], key: RegExp): number {
+  const hit = blendshapes.find((item) => key.test(item.name));
+  return clamp01(hit?.value ?? 0);
+}
+
+function toFallbackAnimation(frame: RuntimeFrameEnvelope): AvatarFallbackAnimationState {
+  const mouthOpen = Math.max(
+    readBlendshape(frame.blendshapes, /jaw.*open/i),
+    readBlendshape(frame.blendshapes, /mouth.*open/i)
+  );
+  const browRaise = Math.max(
+    readBlendshape(frame.blendshapes, /brow.*inner.*up/i),
+    readBlendshape(frame.blendshapes, /brow.*outer.*up/i)
+  );
+  const smile = Math.max(
+    readBlendshape(frame.blendshapes, /mouth.*smile.*left/i),
+    readBlendshape(frame.blendshapes, /mouth.*smile.*right/i)
+  );
+  const eyeBlink = Math.max(
+    readBlendshape(frame.blendshapes, /eye.*blink.*left/i),
+    readBlendshape(frame.blendshapes, /eye.*blink.*right/i)
+  );
+  const tiltWeight = readBlendshape(frame.blendshapes, /head.*roll/i);
+  const tiltSign = frame.emotions?.calm && frame.emotions.calm > 0.5 ? 1 : -1;
+  return {
+    mouthOpen,
+    browRaise,
+    smile,
+    eyeBlink,
+    headTiltDeg: Number((tiltWeight * tiltSign * 6).toFixed(2))
+  };
+}
+
+function AvatarPlaceholder({
+  emphasize,
+  animation
+}: {
+  emphasize?: boolean;
+  animation?: AvatarFallbackAnimationState;
+}) {
+  const style = animation
+    ? ({
+        "--avatar-mouth-open": String(animation.mouthOpen),
+        "--avatar-brow-raise": String(animation.browRaise),
+        "--avatar-smile": String(animation.smile),
+        "--avatar-eye-blink": String(animation.eyeBlink),
+        "--avatar-head-tilt": `${animation.headTiltDeg}deg`
+      } as CSSProperties)
+    : undefined;
   return (
-    <div className="relative h-full w-full overflow-hidden">
+    <div className="relative h-full w-full overflow-hidden" style={style}>
       <Image
         src={AVATAR_PLACEHOLDER_SRC}
         alt="HR ассистент NULLXES"
@@ -95,11 +165,32 @@ function AvatarPlaceholder({ emphasize }: { emphasize?: boolean }) {
         sizes="(max-width: 1024px) 100vw, 480px"
         priority
         className={cn(
-          "object-cover object-center",
+          "object-cover object-center transition-transform duration-100",
+          animation && "scale-[calc(1.01+var(--avatar-smile)*0.015)]",
           emphasize ? "scale-[1.02]" : undefined
         )}
+        style={
+          animation
+            ? {
+                transform:
+                  "translateY(calc(var(--avatar-mouth-open) * -3px)) rotate(var(--avatar-head-tilt)) scale(calc(1 + var(--avatar-smile) * 0.02))"
+              }
+            : undefined
+        }
       />
       <div className="pointer-events-none absolute inset-0 bg-linear-to-t from-black/35 via-transparent to-transparent" />
+      {animation ? (
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-2 mx-auto h-1.5 w-20 rounded-full bg-black/35"
+          style={{ opacity: Math.max(0.15, animation.mouthOpen) }}
+          aria-hidden
+        >
+          <div
+            className="h-full rounded-full bg-emerald-300/80 transition-[width] duration-75"
+            style={{ width: `${Math.max(8, animation.mouthOpen * 100)}%` }}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -320,6 +411,7 @@ export function AvatarStreamCard({
   const canRenderAvatarWindow = enabled && Boolean(client && call);
   const [busy, setBusy] = useState(false);
   const [inlineStatus, setInlineStatus] = useState<string | null>(null);
+  const [fallbackAnimation, setFallbackAnimation] = useState<AvatarFallbackAnimationState | undefined>(undefined);
   const ended = Boolean(sessionEnded) || uiState === "completed";
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
   const autoJoinAttemptForRef = useRef<string | null>(null);
@@ -519,6 +611,33 @@ export function AvatarStreamCard({
   }, [busy, call, canRenderAvatarWindow, enabled, ended, meetingId]);
 
   useEffect(() => {
+    if (!enabled || !meetingId || ended || canRenderAvatarWindow) {
+      setFallbackAnimation(undefined);
+      return;
+    }
+    if (typeof window === "undefined") {
+      return;
+    }
+    const source = new EventSource(`/api/gateway/runtime/${encodeURIComponent(meetingId)}/facial-stream`);
+    const onFrame = (event: MessageEvent<string>) => {
+      try {
+        const frame = JSON.parse(event.data) as RuntimeFrameEnvelope;
+        setFallbackAnimation(toFallbackAnimation(frame));
+      } catch {
+        // Keep placeholder static on malformed payload.
+      }
+    };
+    source.addEventListener("frame", onFrame as EventListener);
+    source.onerror = () => {
+      source.close();
+    };
+    return () => {
+      source.removeEventListener("frame", onFrame as EventListener);
+      source.close();
+    };
+  }, [canRenderAvatarWindow, enabled, ended, meetingId]);
+
+  useEffect(() => {
     if (!enabled || ended || !meetingId || call || busy) {
       return;
     }
@@ -642,7 +761,7 @@ export function AvatarStreamCard({
         </div>
       ) : (
         <div className="relative h-full w-full">
-          <AvatarPlaceholder emphasize={emphasizePrimary} />
+          <AvatarPlaceholder emphasize={emphasizePrimary} animation={fallbackAnimation} />
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 px-4 pb-3 text-center">
             {(busy || (enabled && meetingId && !call)) ? (
               <Loader2 className="h-5 w-5 shrink-0 animate-spin text-white/90" aria-hidden />
