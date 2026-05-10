@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { RealtimeFacialMotionHud } from "@/components/avatar-studio/realtime-facial-motion-hud";
 import { useAvatarGenerateSession } from "@/hooks/useAvatarGenerateSession";
+import { useRealtimeFacialMotion } from "@/hooks/useRealtimeFacialMotion";
 import { fetchAvatarHealth, type AvatarHealthResponse } from "@/lib/avatarGenerateApi";
 import { pickAvatarVideoUrl, type AvatarSessionState } from "@/lib/avatar-session-state";
 
@@ -54,7 +56,7 @@ function AvatarWarmupPlaceholder({
   bootLogs: readonly string[];
 }) {
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden rounded-xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-slate-100">
+    <div className="relative flex h-full w-full flex-col overflow-hidden rounded-xl bg-linear-to-br from-slate-900 via-indigo-950 to-slate-900 text-slate-100">
       <div className="pointer-events-none absolute inset-0 opacity-40">
         <div className="absolute -left-1/4 top-1/4 size-64 rounded-full bg-indigo-500/30 blur-3xl animate-pulse" />
         <div className="absolute -right-1/4 bottom-0 size-72 rounded-full bg-violet-500/25 blur-3xl animate-pulse" style={{ animationDelay: "0.4s" }} />
@@ -113,6 +115,8 @@ export function AvatarGenerateStudio() {
     onHydrationReady
   } = useAvatarGenerateSession();
 
+  const facialMotion = useRealtimeFacialMotion({ enabled: true });
+
   const loadHealth = useCallback(async () => {
     try {
       setHealthError(null);
@@ -122,10 +126,6 @@ export function AvatarGenerateStudio() {
       setHealthError(e instanceof Error ? e.message : "health_failed");
     }
   }, []);
-
-  useEffect(() => {
-    void loadHealth();
-  }, [loadHealth]);
 
   useEffect(() => {
     if (sessionState === "hydrating") {
@@ -165,6 +165,9 @@ export function AvatarGenerateStudio() {
   const showVideoLayer = Boolean(videoUrl && (sessionState === "hydrating" || sessionState === "completed"));
   const isUploading = sessionState === "uploading";
   const sessionBusy = sessionState !== "idle" && sessionState !== "completed" && sessionState !== "failed";
+  const showSessionStage = sessionState !== "idle" || Boolean(job);
+  const showBridgeOnlyPreview = Boolean(facialMotion.bridgeWsUrl) && !showSessionStage;
+  const showFacialHud = Boolean(facialMotion.bridgeWsUrl);
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -177,13 +180,48 @@ export function AvatarGenerateStudio() {
 
       <section className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-700">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="font-medium">Статус сервисов</span>
+          <span className="font-medium">Realtime runtimes (bridge)</span>
+          <span className="text-[10px] font-normal text-slate-500">WebSocket only — no HTTP polling</span>
+        </div>
+        <ul className="mt-2 space-y-1 font-mono text-xs">
+          <li>
+            EchoMimic: <span className="text-slate-900">{facialMotion.bridgeRuntime.echoMimic ?? "—"}</span>
+            <span className="text-slate-400"> (optional bridge JSON: runtimes.echoMimic)</span>
+          </li>
+          <li>
+            A2F: <span className="text-slate-900">{facialMotion.bridgeRuntime.a2f ?? "—"}</span>
+          </li>
+          <li>
+            WS stream:{" "}
+            <span className="text-slate-900">
+              {!facialMotion.bridgeWsUrl
+                ? "not configured (set NEXT_PUBLIC_RUNPOD_BRIDGE_WS_URL)"
+                : facialMotion.connected
+                  ? "live"
+                  : facialMotion.reconnecting
+                    ? "reconnecting"
+                    : "down"}
+            </span>
+          </li>
+          <li>
+            WS RTT:{" "}
+            <span className="text-slate-900">{facialMotion.latency == null ? "—" : `${facialMotion.latency} ms`}</span>
+          </li>
+          <li className="break-all text-slate-500">
+            bridge: {facialMotion.bridgeWsUrl ?? "(null)"}
+          </li>
+        </ul>
+      </section>
+
+      <section className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-medium">Gateway /avatar/health</span>
           <button
             type="button"
             onClick={() => void loadHealth()}
             className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
           >
-            Обновить
+            Загрузить
           </button>
         </div>
         {healthError ? <p className="mt-2 text-rose-600">{healthError}</p> : null}
@@ -196,9 +234,30 @@ export function AvatarGenerateStudio() {
             <li>lastSuccessfulGenerationAt: {health.lastSuccessfulGenerationAt ?? "null"}</li>
           </ul>
         ) : (
-          <p className="mt-2 text-slate-500">Загрузка…</p>
+          <p className="mt-2 text-slate-500">Нажмите «Загрузить» для одноразового запроса к gateway.</p>
         )}
       </section>
+
+      {showBridgeOnlyPreview ? (
+        <section className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-800">Realtime facial stream (debug)</h2>
+          <p className="text-xs text-slate-600">
+            Пока сессия генерации не запущена — превью коэффициентов с моста <span className="font-mono">/ws/live</span>.
+          </p>
+          <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-slate-200 bg-black shadow-inner">
+            <div className="absolute inset-0 bg-linear-to-br from-slate-900 via-indigo-950 to-slate-900 opacity-90" />
+            {showFacialHud ? (
+              <RealtimeFacialMotionHud
+                coefficients={facialMotion.coefficients}
+                connected={facialMotion.connected}
+                reconnecting={facialMotion.reconnecting}
+                latencyMs={facialMotion.latency}
+                bridgeRuntime={facialMotion.bridgeRuntime}
+              />
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="space-y-4">
         <label className="block space-y-1">
@@ -297,11 +356,21 @@ export function AvatarGenerateStudio() {
                 onLoadedData={() => onHydrationReady()}
               />
             ) : null}
+            {showFacialHud ? (
+              <RealtimeFacialMotionHud
+                coefficients={facialMotion.coefficients}
+                connected={facialMotion.connected}
+                reconnecting={facialMotion.reconnecting}
+                latencyMs={facialMotion.latency}
+                bridgeRuntime={facialMotion.bridgeRuntime}
+              />
+            ) : null}
           </div>
 
           <p className="text-[11px] leading-snug text-slate-500">
-            Транспорт: HTTP poll 2 с. Тип <span className="font-mono">AvatarSessionTransport</span> в{" "}
-            <span className="font-mono">lib/avatar-session-state.ts</span> — точка расширения под WebSocket‑стрим.
+            Генерация: HTTP poll 2 с для job state. Лицо в реальном времени:{" "}
+            <span className="font-mono">lib/realtime-avatar-socket.ts</span> +{" "}
+            <span className="font-mono">useRealtimeFacialMotion</span> (только WebSocket).
           </p>
         </section>
       ) : null}
