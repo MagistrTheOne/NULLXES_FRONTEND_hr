@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  async redirects() {
+    return [{ source: "/avatar-generate-studio", destination: "/avatar-studio", permanent: true }];
+  },
   async headers() {
     return [
       {

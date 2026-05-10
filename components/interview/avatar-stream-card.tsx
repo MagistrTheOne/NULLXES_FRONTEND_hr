@@ -8,6 +8,10 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { StreamParticipantShell } from "@/components/interview/stream-participant-shell";
 import { Badge } from "@/components/ui/badge";
+import { useRealtimeFacialMotion } from "@/hooks/useRealtimeFacialMotion";
+import { mapRealtimeCoefficientsToHrPlaceholder } from "@/lib/realtime-avatar-facial-mapper";
+import type { RealtimeFacialCoefficients } from "@/lib/realtime-avatar-socket";
+import { resolveRunpodBridgeWebSocketUrl } from "@/lib/realtime-avatar-socket";
 import type { SessionUIState } from "@/lib/session-ui-state";
 import { cn } from "@/lib/utils";
 
@@ -211,6 +215,40 @@ type StreamTokenErrorPayload = {
   code?: string;
 };
 
+type HrRunpodStreamHud = {
+  connected: boolean;
+  reconnecting: boolean;
+  latency: number | null;
+  coefficients: RealtimeFacialCoefficients;
+};
+
+function HrRunpodStreamPill({ hud }: { hud: HrRunpodStreamHud }) {
+  const { mouthOpen, browRaise, emotionIntensity } = {
+    mouthOpen: hud.coefficients.mouthOpen,
+    browRaise: hud.coefficients.browRaise,
+    emotionIntensity: hud.coefficients.emotionIntensity
+  };
+  const mouthPct = Math.round(Math.min(1, Math.max(0, mouthOpen)) * 100);
+  return (
+    <div className="pointer-events-none absolute bottom-2 right-2 z-20 max-w-[min(100%,220px)] rounded-lg border border-white/20 bg-black/55 px-2 py-1.5 text-[10px] text-white shadow-md backdrop-blur-sm">
+      <div className="flex items-center justify-between gap-2 font-mono">
+        <span className="text-emerald-200/90">RunPod</span>
+        <span>
+          {hud.connected ? "live" : hud.reconnecting ? "…" : "off"}
+          {hud.latency != null ? ` · ${hud.latency}ms` : ""}
+        </span>
+      </div>
+      <div className="mt-1 h-1 overflow-hidden rounded-full bg-white/15">
+        <div className="h-full rounded-full bg-emerald-400/90 transition-[width] duration-75" style={{ width: `${mouthPct}%` }} />
+      </div>
+      <div className="mt-0.5 flex justify-between text-[9px] text-white/60">
+        <span>brow {Math.round(browRaise * 100)}%</span>
+        <span>emo {Math.round(emotionIntensity * 100)}%</span>
+      </div>
+    </div>
+  );
+}
+
 type AvatarCallBodyProps = {
   showStreamToolbar: boolean;
   /** Stream call id (same as meetingId in product). */
@@ -218,9 +256,11 @@ type AvatarCallBodyProps = {
   /** OpenAI / gateway realtime session id — used to match `agent_${sessionId}` publisher. */
   realtimeSessionId?: string | null;
   onLeave?: (err?: Error) => void | Promise<void>;
+  /** Direct RunPod bridge facial stream (optional). */
+  runpodHud?: HrRunpodStreamHud | null;
 };
 
-function AvatarCallBody({ showStreamToolbar, meetingId, realtimeSessionId, onLeave }: AvatarCallBodyProps) {
+function AvatarCallBody({ showStreamToolbar, meetingId, realtimeSessionId, onLeave, runpodHud }: AvatarCallBodyProps) {
   const { useCallCallingState, useParticipants } = useCallStateHooks();
   const state = useCallCallingState();
   const participants = useParticipants();
@@ -322,17 +362,29 @@ function AvatarCallBody({ showStreamToolbar, meetingId, realtimeSessionId, onLea
 
   return (
     <div className="stream-call-ui relative h-full w-full">
-      <div className="stream-call-layout">
+      <div className="stream-call-layout relative">
         {avatarParticipant ? (
           Boolean(trackSummary?.hasVideoStream) ? (
-            <ParticipantView participant={avatarParticipant} trackType="videoTrack" />
+            <div className="relative h-full w-full">
+              <ParticipantView participant={avatarParticipant} trackType="videoTrack" />
+              {runpodHud ? <HrRunpodStreamPill hud={runpodHud} /> : null}
+            </div>
           ) : (
-            <AvatarPlaceholder />
+            <div className="relative h-full w-full">
+              <AvatarPlaceholder />
+              {runpodHud ? <HrRunpodStreamPill hud={runpodHud} /> : null}
+            </div>
           )
         ) : STREAM_OPENAI_AGENT_MODE_ENABLED ? (
-          <AvatarPlaceholder />
+          <div className="relative h-full w-full">
+            <AvatarPlaceholder />
+            {runpodHud ? <HrRunpodStreamPill hud={runpodHud} /> : null}
+          </div>
         ) : (
-          <AvatarPlaceholder />
+          <div className="relative h-full w-full">
+            <AvatarPlaceholder />
+            {runpodHud ? <HrRunpodStreamPill hud={runpodHud} /> : null}
+          </div>
         )}
       </div>
       {showStreamToolbar ? (
@@ -411,8 +463,26 @@ export function AvatarStreamCard({
   const canRenderAvatarWindow = enabled && Boolean(client && call);
   const [busy, setBusy] = useState(false);
   const [inlineStatus, setInlineStatus] = useState<string | null>(null);
-  const [fallbackAnimation, setFallbackAnimation] = useState<AvatarFallbackAnimationState | undefined>(undefined);
+  const [sseFallbackAnimation, setSseFallbackAnimation] = useState<AvatarFallbackAnimationState | undefined>(undefined);
   const ended = Boolean(sessionEnded) || uiState === "completed";
+  const bridgeWsUrl = useMemo(() => resolveRunpodBridgeWebSocketUrl(), []);
+  const runpodMotion = useRealtimeFacialMotion({
+    enabled: Boolean(bridgeWsUrl) && enabled && !ended
+  });
+  const placeholderMotion = useMemo(() => {
+    if (bridgeWsUrl) {
+      return mapRealtimeCoefficientsToHrPlaceholder(runpodMotion.coefficients);
+    }
+    return sseFallbackAnimation;
+  }, [bridgeWsUrl, runpodMotion.coefficients, sseFallbackAnimation]);
+  const runpodHud: HrRunpodStreamHud | null = bridgeWsUrl
+    ? {
+        connected: runpodMotion.connected,
+        reconnecting: runpodMotion.reconnecting,
+        latency: runpodMotion.latency,
+        coefficients: runpodMotion.coefficients
+      }
+    : null;
   const streamViewportRef = useRef<HTMLDivElement | null>(null);
   const autoJoinAttemptForRef = useRef<string | null>(null);
   const connectInFlightRef = useRef(false);
@@ -612,7 +682,11 @@ export function AvatarStreamCard({
 
   useEffect(() => {
     if (!enabled || !meetingId || ended || canRenderAvatarWindow) {
-      setFallbackAnimation(undefined);
+      setSseFallbackAnimation(undefined);
+      return;
+    }
+    if (bridgeWsUrl) {
+      setSseFallbackAnimation(undefined);
       return;
     }
     if (typeof window === "undefined") {
@@ -622,7 +696,7 @@ export function AvatarStreamCard({
     const onFrame = (event: MessageEvent<string>) => {
       try {
         const frame = JSON.parse(event.data) as RuntimeFrameEnvelope;
-        setFallbackAnimation(toFallbackAnimation(frame));
+        setSseFallbackAnimation(toFallbackAnimation(frame));
       } catch {
         // Keep placeholder static on malformed payload.
       }
@@ -635,7 +709,7 @@ export function AvatarStreamCard({
       source.removeEventListener("frame", onFrame as EventListener);
       source.close();
     };
-  }, [canRenderAvatarWindow, enabled, ended, meetingId]);
+  }, [bridgeWsUrl, canRenderAvatarWindow, enabled, ended, meetingId]);
 
   useEffect(() => {
     if (!enabled || ended || !meetingId || call || busy) {
@@ -750,6 +824,7 @@ export function AvatarStreamCard({
                   meetingId={callRoomId}
                   realtimeSessionId={realtimeSessionId}
                   onLeave={handleLeaveFromControls}
+                  runpodHud={runpodHud}
                 />
               </StreamCall>
             </StreamTheme>
@@ -761,7 +836,8 @@ export function AvatarStreamCard({
         </div>
       ) : (
         <div className="relative h-full w-full">
-          <AvatarPlaceholder emphasize={emphasizePrimary} animation={fallbackAnimation} />
+          <AvatarPlaceholder emphasize={emphasizePrimary} animation={placeholderMotion} />
+          {runpodHud ? <HrRunpodStreamPill hud={runpodHud} /> : null}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 px-4 pb-3 text-center">
             {(busy || (enabled && meetingId && !call)) ? (
               <Loader2 className="h-5 w-5 shrink-0 animate-spin text-white/90" aria-hidden />
