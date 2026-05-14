@@ -103,7 +103,7 @@ export function RealtimeFacialMotionHud({
         <div className="mt-2 border-t border-white/10 pt-2 font-mono text-[9px] text-white/55">
           <div className="flex flex-wrap gap-x-3 gap-y-0.5">
             <span>RTT {latencyMs == null ? "—" : `${latencyMs}ms`}</span>
-            <span>EchoMimic {bridgeRuntime.echoMimic ?? "—"}</span>
+            <span>ARACHNE {bridgeRuntime.arachne ?? "—"}</span>
             <span>A2F {bridgeRuntime.a2f ?? "—"}</span>
           </div>
         </div>

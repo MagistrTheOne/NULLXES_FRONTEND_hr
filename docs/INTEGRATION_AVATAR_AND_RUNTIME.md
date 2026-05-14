@@ -61,7 +61,7 @@
 
 ### 1.3. Вызов pod со стороны gateway (контекст ARACHNE в теле)
 
-`AvatarClient.createSession` (`avatarClient.ts`) шлёт на **`POST {AVATAR_POD_URL}/sessions`** с `Authorization: Bearer AVATAR_SHARED_TOKEN` и JSON, где уже есть блок **`arachne`** (prompt, resolution, steps, guidance) плюс `meeting_id`, `session_id`, `openai`, `sfu` (Stream token для `agent_<sessionId>`), опционально `reference_image`, `emotion`. Это **не** тот же JSON, что в `POST /avatar/events` callback.
+`AvatarClient.createSession` (`avatarClient.ts`) шлёт на **`POST {AVATAR_POD_URL}/sessions`** с `Authorization: Bearer AVATAR_SHARED_TOKEN` и JSON, где явно указан **`engine: "arachne"`** (или профиль `arachne_ultra_avatar` / `arachne_ultra_video`) плюс `meeting_id`, `session_id`, `openai`, `sfu` (Stream token для `agent_<sessionId>`), опционально `reference_image`, `emotion`. Нейро-кадры для realtime идут отдельным JSON/NDJSON контрактом **`POST {AVATAR_POD_URL}{AVATAR_FRAMES_PATH}`** (`/v1/realtime/avatar_frames`) и публикуются в SFU не самим worker-инференсом.
 
 ---
 

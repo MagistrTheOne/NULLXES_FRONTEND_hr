@@ -22,7 +22,7 @@ export const DEFAULT_REALTIME_FACIAL_COEFFICIENTS: RealtimeFacialCoefficients = 
 };
 
 export type BridgeRuntimeSnapshot = {
-  echoMimic: string | null;
+  arachne: string | null;
   a2f: string | null;
 };
 
@@ -110,7 +110,7 @@ export function parseBridgeWebSocketMessage(raw: unknown): ParsedBridgeMessage {
 
   if (t === "runtime" || t === "runtimes" || t === "status") {
     const snap = extractRuntimeSnapshot(root);
-    if (snap.echoMimic != null || snap.a2f != null) {
+    if (snap.arachne != null || snap.a2f != null) {
       return { kind: "runtime", snapshot: snap, raw };
     }
   }
@@ -135,7 +135,7 @@ export function parseBridgeWebSocketMessage(raw: unknown): ParsedBridgeMessage {
   }
 
   const snap = extractRuntimeSnapshot(root);
-  if (snap.echoMimic != null || snap.a2f != null) {
+  if (snap.arachne != null || snap.a2f != null) {
     return { kind: "runtime", snapshot: snap, raw };
   }
 
@@ -143,18 +143,18 @@ export function parseBridgeWebSocketMessage(raw: unknown): ParsedBridgeMessage {
 }
 
 function extractRuntimeSnapshot(root: Record<string, unknown>): BridgeRuntimeSnapshot {
-  let echo: string | null = null;
+  let arachne: string | null = null;
   let a2f: string | null = null;
 
   const runtimes = unwrapRecord(root.runtimes);
   if (runtimes) {
-    echo = readRuntimeField(runtimes, ["echoMimic", "echomimic", "echo_mimic", "gpu8889"]);
+    arachne = readRuntimeField(runtimes, ["arachne", "arachneWorker", "arachne_worker", "gpuArachne"]);
     a2f = readRuntimeField(runtimes, ["a2f", "A2F", "gpu8890"]);
   }
-  echo ??= readRuntimeField(root, ["echoMimic", "echomimic", "echo_mimic"]);
+  arachne ??= readRuntimeField(root, ["arachne", "arachneWorker", "arachne_worker", "arachneWorkerReachable"]);
   a2f ??= readRuntimeField(root, ["a2f", "A2F"]);
 
-  return { echoMimic: echo, a2f };
+  return { arachne, a2f };
 }
 
 function readRuntimeField(obj: Record<string, unknown>, keys: string[]): string | null {

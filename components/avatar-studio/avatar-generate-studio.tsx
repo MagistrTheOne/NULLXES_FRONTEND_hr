@@ -185,8 +185,8 @@ export function AvatarGenerateStudio() {
         </div>
         <ul className="mt-2 space-y-1 font-mono text-xs">
           <li>
-            EchoMimic: <span className="text-slate-900">{facialMotion.bridgeRuntime.echoMimic ?? "—"}</span>
-            <span className="text-slate-400"> (optional bridge JSON: runtimes.echoMimic)</span>
+            ARACHNE: <span className="text-slate-900">{facialMotion.bridgeRuntime.arachne ?? "—"}</span>
+            <span className="text-slate-400"> (optional bridge JSON: runtimes.arachne)</span>
           </li>
           <li>
             A2F: <span className="text-slate-900">{facialMotion.bridgeRuntime.a2f ?? "—"}</span>

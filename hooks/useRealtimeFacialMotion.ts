@@ -30,7 +30,7 @@ export type UseRealtimeFacialMotionResult = {
   bridgeWsUrl: string | null;
 };
 
-const EMPTY_RUNTIME: BridgeRuntimeSnapshot = { echoMimic: null, a2f: null };
+const EMPTY_RUNTIME: BridgeRuntimeSnapshot = { arachne: null, a2f: null };
 
 export function useRealtimeFacialMotion(options?: UseRealtimeFacialMotionOptions): UseRealtimeFacialMotionResult {
   const enabled = options?.enabled ?? true;
@@ -64,7 +64,7 @@ export function useRealtimeFacialMotion(options?: UseRealtimeFacialMotionOptions
       }
       if (msg.kind === "runtime") {
         setBridgeRuntime((prev) => ({
-          echoMimic: msg.snapshot.echoMimic ?? prev.echoMimic,
+          arachne: msg.snapshot.arachne ?? prev.arachne,
           a2f: msg.snapshot.a2f ?? prev.a2f
         }));
       }
