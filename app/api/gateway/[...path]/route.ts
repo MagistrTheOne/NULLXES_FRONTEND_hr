@@ -11,7 +11,18 @@ function isGatewayPathAllowed(segments: string[]): boolean {
   if (a === "api" && b === "v1" && c === "questions" && d === "general" && segments.length === 4) {
     return true;
   }
-  const roots = new Set(["realtime", "runtime", "meetings", "interviews", "join", "avatar"]);
+  const roots = new Set([
+    "realtime",
+    "runtime",
+    "meetings",
+    "interviews",
+    "join",
+    "avatar",
+    "livekit",
+    "get-interview-livekit-data",
+    "deinit",
+    "meeting"
+  ]);
   return roots.has(a);
 }
 
