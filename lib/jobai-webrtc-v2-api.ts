@@ -83,7 +83,8 @@ export type LiveKitRoomPayload = {
   configured: boolean;
   roomName: string;
   serverUrl?: string;
-  roomCreated?: boolean;
+  /** RTMP/ingress от контура JobAI (webhook), gateway только пробрасывает ключи. */
+  ingress?: Record<string, string>;
   tokenPath?: string;
   controlWebSocketPath?: string;
   message?: string;

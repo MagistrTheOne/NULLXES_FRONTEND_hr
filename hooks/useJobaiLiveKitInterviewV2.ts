@@ -94,14 +94,15 @@ export function useJobaiLiveKitInterviewV2(options: UseJobaiLiveKitInterviewV2Op
       if (!bootstrap) throw new Error("bootstrap_required");
       setIsBusy(true);
       try {
+        const lk = bootstrap.liveKitResponse;
+        const agentRtmpFromIngress = lk.ingress?.agentRTMPURL ?? lk.ingress?.livekitIngressRtmpUrl;
         await postMeetingsStartV2({
           meetingId: bootstrap.meetingId,
           meetingControlKey: bootstrap.meetingControlKey,
-          agentRTMPURL: opts?.agentRTMPURL
+          agentRTMPURL: opts?.agentRTMPURL ?? agentRtmpFromIngress
         });
         setHasStartedSession(true);
 
-        const lk = bootstrap.liveKitResponse;
         if (lk.configured && lk.serverUrl && lk.roomName) {
           const tokenPayload = await postLivekitToken({
             meetingId: lk.roomName,
